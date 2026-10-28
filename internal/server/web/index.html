@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Filebox</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <header class="bar">
+      <h1>Filebox</h1>
+      <button class="link" id="logout" type="button">Sign out</button>
+    </header>
+    <p class="error" id="status" role="status"></p>
+    <div class="grid">
+      <section class="card">
+        <div class="label">CPU</div>
+        <div class="value" id="cpu-value">-</div>
+        <div class="meter"><span id="cpu-bar"></span></div>
+      </section>
+      <section class="card">
+        <div class="label">Memory</div>
+        <div class="value" id="mem-value">-</div>
+        <div class="meter"><span id="mem-bar"></span></div>
+        <div class="detail" id="mem-detail"></div>
+      </section>
+      <section class="card">
+        <div class="label">Disk</div>
+        <div class="value" id="disk-value">-</div>
+        <div class="meter"><span id="disk-bar"></span></div>
+        <div class="detail" id="disk-detail"></div>
+      </section>
+      <section class="card">
+        <div class="label">Uptime</div>
+        <div class="value" id="uptime-value">-</div>
+      </section>
+      <section class="card">
+        <div class="label">Temperature</div>
+        <div class="value" id="temp-value">-</div>
+      </section>
+    </div>
+  </main>
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>
