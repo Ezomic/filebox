@@ -2,8 +2,11 @@ package server
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,9 +21,21 @@ type harness struct {
 	store   *auth.Store
 	host    *system.Fake
 	users   *spyUsers
+	files   system.Files
+	logs    *spyLogs
+	root    string
+	outside string
 }
 
+const testMaxUpload = 1024
+
 func newHarness(t *testing.T) *harness {
+	t.Helper()
+
+	return newHarnessWithFiles(t, func(files system.Files) system.Files { return files })
+}
+
+func newHarnessWithFiles(t *testing.T, wrap func(system.Files) system.Files) *harness {
 	t.Helper()
 
 	store, err := auth.Open(t.TempDir())
@@ -31,7 +46,23 @@ func newHarness(t *testing.T) *harness {
 
 	users := &spyUsers{FakeUsers: system.NewFakeUsers("amy", "bob")}
 
-	return &harness{handler: New(store, host, users), store: store, host: host, users: users}
+	base := t.TempDir()
+	root, outside := filepath.Join(base, "root"), filepath.Join(base, "outside")
+	for _, dir := range []string{root, outside} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := system.NewDirFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = files.(io.Closer).Close() })
+	logs := &spyLogs{FakeLogs: system.NewFakeLogs()}
+
+	handler := New(store, Deps{Host: host, Users: users, Files: wrap(files), Logs: logs, MaxUpload: testMaxUpload})
+
+	return &harness{handler: handler, store: store, host: host, users: users, files: files, logs: logs, root: root, outside: outside}
 }
 
 func (h *harness) do(method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {

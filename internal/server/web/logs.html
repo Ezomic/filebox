@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Filebox logs</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="wide">
+    <header class="bar">
+      <h1>Logs</h1>
+      <nav class="actions">
+        <a class="link" href="/">Dashboard</a>
+        <a class="link" href="/users">Users</a>
+        <a class="link" href="/files">Files</a>
+        <button class="link" id="logout" type="button">Sign out</button>
+      </nav>
+    </header>
+    <form class="card" id="log-form" autocomplete="off">
+      <div class="toolbar">
+        <label for="log-source">Log</label>
+        <select id="log-source">
+          <option value="sshd">sshd</option>
+          <option value="panel">Panel</option>
+        </select>
+        <label for="log-lines">Lines</label>
+        <input type="number" id="log-lines" min="1" max="500" value="100">
+        <label for="log-filter">Filter</label>
+        <input type="text" id="log-filter" maxlength="100" spellcheck="false">
+        <button type="submit">Refresh</button>
+      </div>
+    </form>
+    <p class="error" id="status" role="status"></p>
+    <pre class="card log" id="log-output" tabindex="0"></pre>
+  </main>
+  <script src="/static/logs.js"></script>
+</body>
+</html>
