@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Filebox setup</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <form class="card auth" id="auth-form" data-endpoint="/api/setup" data-min-length="12">
+      <h1>Set admin password</h1>
+      <p>Choose the password for the panel. At least 12 characters.</p>
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="new-password" minlength="12" required autofocus>
+      <label for="confirm">Repeat password</label>
+      <input id="confirm" type="password" autocomplete="new-password" minlength="12" required>
+      <p class="error" id="error" role="alert"></p>
+      <button type="submit">Save and continue</button>
+    </form>
+  </main>
+  <script src="/static/auth.js"></script>
+</body>
+</html>
