@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const sweepThreshold = 1024
+
 type attempts struct {
 	count int
 	since time.Time
@@ -22,36 +24,37 @@ func newLoginLimiter(max int, window time.Duration) *loginLimiter {
 	return &loginLimiter{max: max, window: window, failed: map[string]attempts{}}
 }
 
-func (l *loginLimiter) allowed(key string) bool {
+func (l *loginLimiter) reserve(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	entry, found := l.failed[key]
-	if !found {
-		return true
+	if len(l.failed) > sweepThreshold {
+		l.sweep()
 	}
-	if time.Since(entry.since) > l.window {
-		delete(l.failed, key)
-		return true
-	}
-
-	return entry.count < l.max
-}
-
-func (l *loginLimiter) recordFailure(key string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 
 	entry, found := l.failed[key]
 	if !found || time.Since(entry.since) > l.window {
 		entry = attempts{since: time.Now()}
 	}
+	if entry.count >= l.max {
+		return false
+	}
 	entry.count++
 	l.failed[key] = entry
+
+	return true
 }
 
 func (l *loginLimiter) reset(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.failed, key)
+}
+
+func (l *loginLimiter) sweep() {
+	for key, entry := range l.failed {
+		if time.Since(entry.since) > l.window {
+			delete(l.failed, key)
+		}
+	}
 }

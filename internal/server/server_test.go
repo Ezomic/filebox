@@ -210,6 +210,20 @@ func TestDashboardPageNeedsSession(t *testing.T) {
 	}
 }
 
+func TestStaticServesOnlyAssets(t *testing.T) {
+	h := newHarness(t)
+	_ = h.store.SetInitialPassword(testPassword)
+
+	if rec := h.do("GET", "/static/style.css", "", nil); rec.Code != http.StatusOK {
+		t.Fatalf("css: got %d", rec.Code)
+	}
+	for _, path := range []string{"/static/index.html", "/static/", "/static/login.html"} {
+		if rec := h.do("GET", path, "", nil); rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: got %d", path, rec.Code)
+		}
+	}
+}
+
 func TestSecurityHeadersPresent(t *testing.T) {
 	h := newHarness(t)
 	rec := h.do("GET", "/setup", "", nil)

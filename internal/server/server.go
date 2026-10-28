@@ -48,7 +48,7 @@ func New(store *auth.Store, host system.Host) http.Handler {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(s.pages)))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(s.pages))))
 	mux.HandleFunc("GET /{$}", s.dashboardPage)
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("GET /setup", s.setupPage)
@@ -67,6 +67,16 @@ func securityHeaders(next http.Handler) http.Handler {
 		header.Set("X-Content-Type-Options", "nosniff")
 		header.Set("Referrer-Policy", "no-referrer")
 		header.Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func assetsOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, ".css") && !strings.HasSuffix(r.URL.Path, ".js") {
+			http.NotFound(w, r)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -134,12 +144,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := clientIP(r)
-	if !s.limiter.allowed(key) {
+	if !s.limiter.reserve(key) {
 		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
 	if !s.store.Verify(body.Password) {
-		s.limiter.recordFailure(key)
 		writeError(w, http.StatusUnauthorized, "wrong password")
 		return
 	}

@@ -3,7 +3,7 @@ package system
 import "testing"
 
 func TestParseCPUStat(t *testing.T) {
-	sample, err := parseCPUStat("cpu  100 0 50 800 50 0 0 0 0 0\ncpu0 1 2 3 4 5\n")
+	sample, err := parseCPUStat("cpu  100 0 50 800 50 0 0 0 99 99\ncpu0 1 2 3 4 5\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,9 +45,26 @@ func TestParseMeminfo(t *testing.T) {
 	}
 }
 
-func TestParseMeminfoRejectsMissingFields(t *testing.T) {
-	if _, _, err := parseMeminfo("MemTotal: 10 kB\n"); err == nil {
+func TestParseMeminfoRejectsMissingTotal(t *testing.T) {
+	if _, _, err := parseMeminfo("MemAvailable: 10 kB\n"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestParseMeminfoFallsBackWithoutMemAvailable(t *testing.T) {
+	total, used, err := parseMeminfo("MemTotal: 1000 kB\nMemFree: 100 kB\nBuffers: 50 kB\nCached: 150 kB\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1000*1024 || used != 700*1024 {
+		t.Fatalf("got %d %d", total, used)
+	}
+}
+
+func TestParseMeminfoClampsOversizedAvailable(t *testing.T) {
+	_, used, err := parseMeminfo("MemTotal: 100 kB\nMemAvailable: 200 kB\n")
+	if err != nil || used != 0 {
+		t.Fatalf("got %d, %v", used, err)
 	}
 }
 

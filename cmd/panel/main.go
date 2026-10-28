@@ -22,6 +22,7 @@ import (
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8443", "address to listen on, normally the Tailscale IP")
 	dataDir := flag.String("data", "./data", "directory for the admin password and TLS certificate")
+	disk := flag.String("disk", "/", "path on the filesystem whose usage the dashboard shows, normally the SFTP storage")
 	sans := flag.String("san", "localhost,127.0.0.1", "comma-separated hostnames and IPs for the self-signed certificate")
 	flag.Parse()
 
@@ -36,7 +37,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           server.New(store, system.NewHost(*dataDir)),
+		Handler:           server.New(store, system.NewHost(*disk)),
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -46,7 +47,9 @@ func main() {
 
 	stop, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		<-stop.Done()
 		shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
@@ -57,4 +60,5 @@ func main() {
 	if err := srv.ListenAndServeTLS("", ""); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+	<-drained
 }

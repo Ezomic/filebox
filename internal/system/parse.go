@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const guestFieldIndex = 8
+
 type cpuSample struct {
 	idle  uint64
 	total uint64
@@ -22,6 +24,9 @@ func parseCPUStat(content string) (cpuSample, error) {
 
 	var sample cpuSample
 	for i, field := range fields[1:] {
+		if i >= guestFieldIndex {
+			break
+		}
 		value, err := strconv.ParseUint(field, 10, 64)
 		if err != nil {
 			return cpuSample{}, fmt.Errorf("parse /proc/stat: %w", err)
@@ -49,7 +54,7 @@ func cpuPercent(previous, current cpuSample) float64 {
 }
 
 func parseMeminfo(content string) (total, used uint64, err error) {
-	var available uint64
+	var available, free, buffers, cached uint64
 	var haveTotal, haveAvailable bool
 
 	scanner := bufio.NewScanner(strings.NewReader(content))
@@ -71,14 +76,23 @@ func parseMeminfo(content string) (total, used uint64, err error) {
 			total, haveTotal = kilobytes*1024, true
 		case "MemAvailable":
 			available, haveAvailable = kilobytes*1024, true
+		case "MemFree":
+			free = kilobytes * 1024
+		case "Buffers":
+			buffers = kilobytes * 1024
+		case "Cached":
+			cached = kilobytes * 1024
 		}
 	}
 
-	if !haveTotal || !haveAvailable || available > total {
+	if !haveTotal {
 		return 0, 0, errors.New("unexpected /proc/meminfo format")
 	}
+	if !haveAvailable {
+		available = free + buffers + cached
+	}
 
-	return total, total - available, nil
+	return total, total - min(available, total), nil
 }
 
 func parseUptime(content string) (uint64, error) {

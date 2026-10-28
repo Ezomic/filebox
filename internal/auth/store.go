@@ -120,7 +120,19 @@ func (s *Store) persist(r *record) error {
 	}
 
 	temp := s.path + ".tmp"
-	if err := os.WriteFile(temp, content, 0o600); err != nil {
+	file, err := os.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(content); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
 		return err
 	}
 

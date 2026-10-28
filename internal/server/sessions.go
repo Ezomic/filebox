@@ -27,7 +27,13 @@ func (s *sessions) create() (string, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expires[token] = time.Now().Add(s.ttl)
+	now := time.Now()
+	for existing, expiry := range s.expires {
+		if now.After(expiry) {
+			delete(s.expires, existing)
+		}
+	}
+	s.expires[token] = now.Add(s.ttl)
 
 	return token, nil
 }
