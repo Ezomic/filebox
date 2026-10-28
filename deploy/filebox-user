@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# Manages SFTP users for filebox. Installed as /usr/local/sbin/filebox-user and
+# run by the panel through sudo. Usage:
+#   filebox-user create <name>   new password on stdin
+#   filebox-user delete <name>
+#   filebox-user passwd <name>   new password on stdin
+#   filebox-user list
+# Exit 0 on success; non-zero with a short reason on stderr otherwise.
+set -euo pipefail
+
+export LC_ALL=C
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+umask 022
+
+readonly GROUP=sftpusers
+readonly BASE=/srv/sftp
+readonly NAME_RE='^[a-z][a-z0-9_-]{2,31}$'
+readonly MIN_PASSWORD=12
+readonly MAX_PASSWORD=128
+readonly RESERVED=" root admin administrator filebox sftp sftpusers sshd ssh daemon bin sys sync games man lp mail news uucp proxy backup list irc www-data nobody tailscale fail2ban systemd-network systemd-resolve messagebus "
+
+die() {
+	echo "filebox-user: $*" >&2
+	exit 1
+}
+
+[ "$(id -u)" -eq 0 ] || die "must run as root"
+
+valid_name() {
+	[[ $1 =~ $NAME_RE ]] || die "invalid name: use 3-32 chars of a-z, 0-9, _ or -, starting with a letter"
+	[[ $RESERVED != *" $1 "* ]] || die "name is reserved"
+}
+
+group_gid() {
+	local entry
+	entry=$(getent group "$GROUP") || die "group $GROUP does not exist"
+	IFS=: read -r _ _ gid _ <<<"$entry"
+	echo "$gid"
+}
+
+# Succeeds only for accounts that look exactly like ones this tool creates.
+is_sftp_user() {
+	local entry uid gid home shell
+	entry=$(getent passwd -- "$1") || return 1
+	IFS=: read -r _ _ uid gid _ home shell <<<"$entry"
+	[ "$gid" = "$(group_gid)" ] && [ "$uid" -ge 1000 ] &&
+		[ "$home" = "$BASE/$1" ] && [ "$shell" = /usr/sbin/nologin ]
+}
+
+require_sftp_user() {
+	getent passwd -- "$1" >/dev/null || die "no such user"
+	is_sftp_user "$1" || die "not an SFTP user"
+}
+
+read_password() {
+	local extra=""
+	PASSWORD=""
+	IFS= read -r PASSWORD || [ -n "$PASSWORD" ] || die "password required on stdin"
+	if IFS= read -r extra || [ -n "$extra" ]; then
+		die "password must be a single line"
+	fi
+	[ "${#PASSWORD}" -ge "$MIN_PASSWORD" ] || die "password must be at least $MIN_PASSWORD characters"
+	[ "${#PASSWORD}" -le "$MAX_PASSWORD" ] || die "password must be at most $MAX_PASSWORD characters"
+	[[ $PASSWORD != *[[:cntrl:]]* ]] || die "password must not contain control characters"
+}
+
+set_password() {
+	printf '%s:%s\n' "$1" "$PASSWORD" | chpasswd
+}
+
+cmd_create() {
+	local name=$1
+	valid_name "$name"
+	read_password
+	getent passwd -- "$name" >/dev/null && die "user already exists"
+	getent group -- "$name" >/dev/null && die "name is taken by a group"
+
+	local home=$BASE/$name created=0
+	# shellcheck disable=SC2329 # invoked by the EXIT trap
+	cleanup() {
+		if [ "$created" -eq 1 ]; then
+			userdel -- "$name" >/dev/null 2>&1 || true
+			rm -rf --one-file-system -- "$home"
+		fi
+	}
+	trap cleanup EXIT
+
+	[ ! -e "$home" ] && [ ! -L "$home" ] || die "home directory already exists"
+	useradd --no-create-home --no-user-group --gid "$GROUP" --home-dir "$home" \
+		--shell /usr/sbin/nologin --comment "filebox SFTP user" -- "$name" ||
+		die "could not create user"
+	created=1
+	install -d -o root -g root -m 0755 -- "$home"
+	install -d -o "$name" -g "$GROUP" -m 0700 -- "$home/files"
+	set_password "$name" || die "could not set password"
+	created=0
+	trap - EXIT
+}
+
+cmd_delete() {
+	local name=$1 uid
+	valid_name "$name"
+	require_sftp_user "$name"
+	uid=$(id -u -- "$name")
+	pkill -KILL -U "$uid" 2>/dev/null || true
+	userdel --remove -- "$name" >/dev/null || die "could not delete user"
+}
+
+cmd_passwd() {
+	local name=$1
+	valid_name "$name"
+	read_password
+	require_sftp_user "$name"
+	set_password "$name" || die "could not set password"
+}
+
+cmd_list() {
+	local gid name egid home entry
+	gid=$(group_gid)
+	while IFS= read -r entry; do
+		IFS=: read -r name _ _ egid _ home _ <<<"$entry"
+		if [ "$egid" = "$gid" ] && [[ $name =~ $NAME_RE ]] && [ "$home" = "$BASE/$name" ]; then
+			echo "$name"
+		fi
+	done < <(getent passwd) | sort
+}
+
+main() {
+	local cmd=${1:-}
+	case $cmd in
+	list)
+		[ $# -eq 1 ] || die "usage: filebox-user list"
+		cmd_list
+		;;
+	create | delete | passwd)
+		[ $# -eq 2 ] || die "usage: filebox-user $cmd <name>"
+		"cmd_$cmd" "$2"
+		;;
+	*) die "usage: filebox-user create|delete|passwd <name> | list" ;;
+	esac
+}
+
+main "$@"
