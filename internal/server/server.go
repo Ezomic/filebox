@@ -28,12 +28,13 @@ const (
 type Server struct {
 	store    *auth.Store
 	host     system.Host
+	users    system.Users
 	sessions *sessions
 	limiter  *loginLimiter
 	pages    fs.FS
 }
 
-func New(store *auth.Store, host system.Host) http.Handler {
+func New(store *auth.Store, host system.Host, users system.Users) http.Handler {
 	pages, err := fs.Sub(webFiles, "web")
 	if err != nil {
 		panic(err)
@@ -42,6 +43,7 @@ func New(store *auth.Store, host system.Host) http.Handler {
 	s := &Server{
 		store:    store,
 		host:     host,
+		users:    users,
 		sessions: newSessions(sessionTTL),
 		limiter:  newLoginLimiter(maxLoginFails, failWindow),
 		pages:    pages,
@@ -50,12 +52,17 @@ func New(store *auth.Store, host system.Host) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(s.pages))))
 	mux.HandleFunc("GET /{$}", s.dashboardPage)
+	mux.HandleFunc("GET /users", s.usersPage)
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("GET /setup", s.setupPage)
 	mux.HandleFunc("POST /api/setup", s.setup)
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", s.requireSession(s.logout))
 	mux.HandleFunc("GET /api/metrics", s.requireSession(s.metrics))
+	mux.HandleFunc("GET /api/users", s.requireSession(s.listUsers))
+	mux.HandleFunc("POST /api/users", s.requireSession(s.createUser))
+	mux.HandleFunc("PUT /api/users/{name}/password", s.requireSession(s.changeUserPassword))
+	mux.HandleFunc("DELETE /api/users/{name}", s.requireSession(s.deleteUser))
 
 	return securityHeaders(mux)
 }
