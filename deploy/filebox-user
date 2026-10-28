@@ -98,15 +98,18 @@ cmd_create() {
 }
 
 cmd_delete() {
-	local name=$1 uid
+	local name=$1 uid archive
 	valid_name "$name"
 	require_sftp_user "$name"
 	uid=$(id -u -- "$name")
 	pkill -KILL -U "$uid" 2>/dev/null || true
 	userdel -- "$name" >/dev/null || die "could not delete user"
-	# userdel --remove skips homes not owned by the user, and these are root-owned.
-	# rm does not follow symlinks, so links planted in files/ are removed, not followed.
-	[ -L "$BASE/$name" ] || rm -rf --one-file-system -- "${BASE:?}/${name:?}"
+	# Data is kept so a mistaken delete is recoverable; remove the directory by hand to free space.
+	if [ -d "$BASE/$name" ] && [ ! -L "$BASE/$name" ]; then
+		archive=$BASE/$name.deleted-$(date +%Y%m%d%H%M%S)
+		mv -T -- "$BASE/$name" "$archive" || die "user deleted but could not archive the home"
+		chmod 0700 -- "$archive"
+	fi
 }
 
 cmd_passwd() {
