@@ -18,7 +18,7 @@ UMask=0077
 # writable only so the root helper can edit the account files and create homes;
 # the filebox user itself has no permission to write there.
 ProtectSystem=strict
-ReadWritePaths=/var/lib/filebox /srv/sftp /etc
+ReadWritePaths=/var/lib/filebox /srv/sftp /etc /var/log
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true

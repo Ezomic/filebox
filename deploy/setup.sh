@@ -42,9 +42,12 @@ preflight() {
 	[ "$SFTP_PORT" != "$PANEL_PORT" ] || die "SFTP_PORT clashes with the panel port"
 
 	# Password login is switched off below, so a missing key would end in lockout.
-	if [ -z "$(find /root/.ssh /home -maxdepth 3 -name authorized_keys -size +0 2>/dev/null)" ]; then
-		die "no authorized_keys found; add your SSH public key to root or an admin user first"
-	fi
+	local has_key=0 u
+	[ -s /root/.ssh/authorized_keys ] && has_key=1
+	for u in $(getent group sudo | cut -d: -f4 | tr ',' ' '); do
+		[ -s "$(getent passwd "$u" | cut -d: -f6)/.ssh/authorized_keys" ] && has_key=1
+	done
+	[ "$has_key" -eq 1 ] || die "no authorized_keys for root or a sudo user; add your SSH public key first"
 }
 
 install_packages() {
@@ -100,14 +103,15 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
 PermitEmptyPasswords no
-MaxAuthTries 3
-LoginGraceTime 30
-X11Forwarding no
 
 # The internet-facing port serves SFTP users only. Admin shells use port 22,
-# which the firewall limits to the LAN and the tailnet.
+# which the firewall limits to the LAN and the tailnet; SFTP users get no
+# password surface there.
 Match LocalPort $SFTP_PORT
     AllowGroups sftpusers
+
+Match LocalPort 22
+    DenyGroups sftpusers
 
 # These settings confine SFTP users: the chroot is their root-owned home, the
 # forced command is the SFTP server only (no shell, whatever the client asks
@@ -123,7 +127,6 @@ Match Group sftpusers
     AllowAgentForwarding no
     GatewayPorts no
     PermitTunnel no
-    PermitUserRC no
     X11Forwarding no
 EOF
 
@@ -135,13 +138,17 @@ EOF
 
 	# With socket activation sshd ignores Port, so switch to the plain service.
 	if systemctl is-enabled --quiet ssh.socket 2>/dev/null || systemctl is-active --quiet ssh.socket 2>/dev/null; then
-		systemctl disable --now ssh.socket
+		systemctl mask --now ssh.socket
 		systemctl enable ssh.service
 		systemctl restart ssh.service
 	else
 		systemctl enable ssh.service
 		systemctl reload-or-restart ssh.service
 	fi
+	local p
+	for p in 22 "$SFTP_PORT"; do
+		ss -ltn "sport = :$p" | grep -q LISTEN || die "sshd is not listening on port $p"
+	done
 }
 
 configure_fail2ban() {
@@ -159,11 +166,9 @@ port = 22,$SFTP_PORT
 maxretry = 5
 findtime = 10m
 bantime = 1h
-bantime.increment = true
-bantime.maxtime = 1w
 EOF
-	systemctl enable fail2ban
-	systemctl restart fail2ban
+	systemctl enable --now fail2ban
+	fail2ban-client reload >/dev/null
 }
 
 configure_firewall() {
@@ -191,6 +196,7 @@ table inet filebox {
 		udp sport 67 udp dport 68 accept
 		udp sport 547 udp dport 546 accept
 		tcp dport $SFTP_PORT accept
+		ip6 saddr { fe80::/10, fc00::/7 } tcp dport 22 accept
 		$lan_rule
 	}
 }

@@ -1,6 +1,7 @@
 [Unit]
 Description=Update the filebox A record in DigitalOcean DNS
 After=network-online.target
+ConditionPathExists=/etc/filebox/do-token
 Wants=network-online.target
 
 [Service]
