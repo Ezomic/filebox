@@ -64,7 +64,8 @@ form.auth p { color: var(--muted); margin: 0 0 12px; }
 
 label { display: block; margin-bottom: 4px; font-size: 0.9rem; }
 
-input[type="password"] {
+input[type="password"],
+input[type="text"] {
   width: 100%;
   padding: 10px 12px;
   margin-bottom: 12px;
@@ -86,6 +87,33 @@ button {
 }
 
 button.link { background: none; color: var(--muted); padding: 6px 8px; border: 1px solid var(--border); }
+
+a.link {
+  display: inline-block;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+button.danger { color: var(--danger); }
+button.danger-solid { background: var(--danger); }
+
+nav.actions { display: flex; gap: 8px; }
+
+.stacked { margin-top: 12px; }
+.stacked button[type="submit"] { margin-top: 4px; }
+
+table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+td { padding: 10px 0; border-top: 1px solid var(--border); vertical-align: middle; }
+td.name { font-weight: 600; word-break: break-all; }
+td.row-actions { text-align: right; }
+td.row-actions > * { margin-left: 8px; }
+td.row-actions .error { min-height: 0; }
+
+form.inline { display: inline-flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; align-items: center; margin: 0; }
+form.inline input { width: 14rem; margin-bottom: 0; }
 button:disabled { opacity: 0.6; cursor: default; }
 
 .error { color: var(--danger); min-height: 1.5em; margin: 0 0 8px; }

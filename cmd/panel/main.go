@@ -37,7 +37,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           server.New(store, system.NewHost(*disk)),
+		Handler:           server.New(store, system.NewHost(*disk), system.NewUsers()),
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,

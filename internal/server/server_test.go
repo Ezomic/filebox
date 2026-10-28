@@ -17,6 +17,7 @@ type harness struct {
 	handler http.Handler
 	store   *auth.Store
 	host    *system.Fake
+	users   *spyUsers
 }
 
 func newHarness(t *testing.T) *harness {
@@ -28,7 +29,9 @@ func newHarness(t *testing.T) *harness {
 	}
 	host := &system.Fake{Value: system.Metrics{CPUPercent: 12.5, MemTotal: 100, MemUsed: 40}}
 
-	return &harness{handler: New(store, host), store: store, host: host}
+	users := &spyUsers{FakeUsers: system.NewFakeUsers("amy", "bob")}
+
+	return &harness{handler: New(store, host, users), store: store, host: host, users: users}
 }
 
 func (h *harness) do(method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
