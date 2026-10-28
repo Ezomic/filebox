@@ -352,19 +352,30 @@ type errReader struct{ err error }
 
 func (e errReader) Read([]byte) (int, error) { return 0, e.err }
 
-func TestDirFilesHidesUploadTempFiles(t *testing.T) {
+func TestLeftoverUploadTempFilesAreListedAndDeletable(t *testing.T) {
 	dir := t.TempDir()
 	files, err := NewDirFiles(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer files.(io.Closer).Close()
-	if err := os.WriteFile(filepath.Join(dir, ".upload-123.tmp"), []byte("x"), 0o644); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	put(t, files, "real", "x")
-	if got := strings.Join(names(t, files, ""), ","); got != "real" {
-		t.Fatalf("got %s", got)
+	if err := os.WriteFile(filepath.Join(dir, "d", ".upload-123.tmp"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(names(t, files, "d"), ","); got != ".upload-123.tmp" {
+		t.Fatalf("a leftover temp file must be visible, got %q", got)
+	}
+	if err := files.Remove("d"); !errors.Is(err, ErrNotEmpty) {
+		t.Fatalf("got %v", err)
+	}
+	if err := files.Remove("d/.upload-123.tmp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := files.Remove("d"); err != nil {
+		t.Fatal(err)
 	}
 }
 

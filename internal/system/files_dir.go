@@ -60,9 +60,6 @@ func (d *dirFiles) List(dir string) ([]FileInfo, error) {
 
 	listing := make([]FileInfo, 0, len(entries))
 	for _, entry := range entries {
-		if isUploadTemp(entry.Name()) {
-			continue
-		}
 		entryInfo, err := entry.Info()
 		if err != nil {
 			continue
@@ -349,10 +346,6 @@ func rootRelative(dir string) string {
 	}
 
 	return dir
-}
-
-func isUploadTemp(name string) bool {
-	return strings.HasPrefix(name, uploadTempPrefix) && strings.HasSuffix(name, uploadTempSuffix)
 }
 
 func sortListing(listing []FileInfo) {

@@ -253,7 +253,7 @@ uploadStart.addEventListener('click', () => {
     try {
       message = JSON.parse(request.responseText).error || message;
     } catch {
-      // keep the generic message
+      message = 'The upload failed.';
     }
     finishUpload(message);
   });

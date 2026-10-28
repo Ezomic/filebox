@@ -81,7 +81,7 @@ func (f *FakeFiles) List(dir string) ([]FileInfo, error) {
 
 	listing := []FileInfo{}
 	for path, entry := range f.entries {
-		if parentOf(path) == dir && !isUploadTemp(baseOf(path)) {
+		if parentOf(path) == dir {
 			listing = append(listing, FileInfo{Name: baseOf(path), IsDir: entry.isDir, Size: int64(len(entry.data)), Modified: entry.modified})
 		}
 	}
