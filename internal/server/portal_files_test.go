@@ -344,3 +344,35 @@ func TestPortalPasswordChangeReportsAHelperFailure(t *testing.T) {
 type failingUsers struct{ *system.FakeUsers }
 
 func (f *failingUsers) SetPassword(string, string) error { return errors.New("useradd: secret detail") }
+
+func TestPortalPasswordChangeFailuresCountWithLoginFailures(t *testing.T) {
+	h := newPortalFilesHarness(t)
+	amy := h.signedIn(t, "amy", amyPassword)
+
+	for range portalIPFails - 1 {
+		h.login("bob", "wrong password here", "192.0.2.10")
+	}
+	h.do("PUT", "/api/me/password", `{"current":"wrong guess here","password":"a brand new password"}`, "192.0.2.10", amy)
+
+	rec := h.do("PUT", "/api/me/password", `{"current":"`+amyPassword+`","password":"a brand new password"}`, "192.0.2.10", amy)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("one shared failure budget per IP, got %d", rec.Code)
+	}
+}
+
+func TestPortalPasswordChangeSuccessDoesNotResetTheIPCounter(t *testing.T) {
+	h := newPortalFilesHarness(t)
+	amy := h.signedIn(t, "amy", amyPassword)
+	bob := h.signedIn(t, "bob", bobPassword)
+
+	for range portalIPFails - 1 {
+		h.do("PUT", "/api/me/password", `{"current":"wrong guess here","password":"a brand new password"}`, "192.0.2.10", bob)
+	}
+	if rec := h.do("PUT", "/api/me/password", `{"current":"`+amyPassword+`","password":"a brand new password"}`, "192.0.2.10", amy); rec.Code != http.StatusNoContent {
+		t.Fatalf("got %d", rec.Code)
+	}
+	h.do("PUT", "/api/me/password", `{"current":"wrong guess here","password":"a brand new password"}`, "192.0.2.10", bob)
+	if rec := h.do("PUT", "/api/me/password", `{"current":"`+bobPassword+`","password":"a brand new password"}`, "192.0.2.10", bob); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("an own successful change must not reset the guess budget, got %d", rec.Code)
+	}
+}

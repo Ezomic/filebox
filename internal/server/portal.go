@@ -316,9 +316,9 @@ func (p *Portal) changePassword(w http.ResponseWriter, r *http.Request, user str
 		return
 	}
 
-	ip := clientIP(r)
-	if !p.ipLimit.reserve(ip) || !p.userLimit.reserve(user) {
-		log.Printf("portal: password change blocked user=%q ip=%s", user, ip)
+	ip := ipKey(r)
+	if p.ipLimit.blocked(ip) || p.userLimit.blocked(user) {
+		log.Printf("portal: password change blocked user=%s ip=%s", logName(user), ip)
 		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
@@ -332,15 +332,15 @@ func (p *Portal) changePassword(w http.ResponseWriter, r *http.Request, user str
 		writeError(w, http.StatusInternalServerError, "could not check the password right now")
 		return
 	case !ok:
-		log.Printf("portal: password change failed user=%q ip=%s", user, ip)
+		p.ipLimit.fail(ip)
+		p.userLimit.fail(user)
+		log.Printf("portal: password change failed user=%s ip=%s", logName(user), ip)
 		writeError(w, http.StatusUnauthorized, "your current password is wrong")
 		return
 	}
-	p.ipLimit.reset(ip)
-	p.userLimit.reset(user)
 
 	if err := p.users.SetPassword(user, body.Password); err != nil {
-		log.Printf("portal: change password for %q: %v", user, err)
+		log.Printf("portal: change password for %s: %v", logName(user), err)
 		writeError(w, http.StatusInternalServerError, "could not change the password")
 		return
 	}
