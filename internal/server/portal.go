@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	portalCookieName   = "filebox_portal"
+	portalCookieName   = "__Host-filebox_portal"
 	portalIdleTTL      = time.Hour
 	portalAbsoluteTTL  = 12 * time.Hour
 	portalIPFails      = 5
@@ -171,22 +171,24 @@ func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ip := ipKey(r)
-	if p.ipLimit.blocked(ip) {
+	if !p.ipLimit.begin(ip) {
 		log.Printf("portal: login blocked ip=%s", ip)
 		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
+	defer p.ipLimit.end(ip)
 	if !system.ValidUsername(body.Username) {
 		p.ipLimit.fail(ip)
 		log.Printf("portal: login failed user=%s ip=%s", logName(body.Username), ip)
 		writeError(w, http.StatusUnauthorized, "wrong username or password")
 		return
 	}
-	if p.userLimit.blocked(body.Username) {
+	if !p.userLimit.begin(body.Username) {
 		log.Printf("portal: login blocked user=%s ip=%s", logName(body.Username), ip)
 		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
+	defer p.userLimit.end(body.Username)
 
 	generation := p.sessions.generation(body.Username)
 	ok, err := p.verify(body.Username, body.Password)
@@ -336,11 +338,18 @@ func (p *Portal) changePassword(w http.ResponseWriter, r *http.Request, user str
 	}
 
 	ip := ipKey(r)
-	if p.ipLimit.blocked(ip) || p.userLimit.blocked(user) {
+	if !p.ipLimit.begin(ip) {
 		log.Printf("portal: password change blocked user=%s ip=%s", logName(user), ip)
 		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
+	defer p.ipLimit.end(ip)
+	if !p.userLimit.begin(user) {
+		log.Printf("portal: password change blocked user=%s ip=%s", logName(user), ip)
+		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return
+	}
+	defer p.userLimit.end(user)
 	ok, err := p.verify(user, body.Current)
 	switch {
 	case errors.Is(err, errPortalBusy):

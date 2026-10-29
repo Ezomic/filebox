@@ -22,11 +22,12 @@ type loginLimiter struct {
 
 	mu        sync.Mutex
 	failed    map[string]attempts
+	inflight  map[string]int
 	lastSweep time.Time
 }
 
 func newLoginLimiter(max int, window time.Duration) *loginLimiter {
-	return &loginLimiter{max: max, window: window, failed: map[string]attempts{}}
+	return &loginLimiter{max: max, window: window, failed: map[string]attempts{}, inflight: map[string]int{}}
 }
 
 func (l *loginLimiter) reserve(key string) bool {
@@ -46,6 +47,36 @@ func (l *loginLimiter) reserve(key string) bool {
 	l.failed[key] = entry
 
 	return true
+}
+
+// begin reserves a slot for a check that may still fail, so a burst of parallel guesses
+// cannot all pass blocked() before the first failure is recorded. Every true must be paired with end.
+func (l *loginLimiter) begin(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	failures := 0
+	if entry, found := l.failed[key]; found && time.Since(entry.since) <= l.window {
+		failures = entry.count
+	}
+	if failures+l.inflight[key] >= l.max {
+		return false
+	}
+	l.inflight[key]++
+
+	return true
+}
+
+func (l *loginLimiter) end(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.inflight[key] <= 1 {
+		delete(l.inflight, key)
+
+		return
+	}
+	l.inflight[key]--
 }
 
 // blocked and fail count only real failures, unlike reserve, which counts every attempt.
