@@ -25,34 +25,50 @@ const (
 	maxBodyBytes  = 4096
 )
 
-type Server struct {
-	store    *auth.Store
-	host     system.Host
-	users    system.Users
-	sessions *sessions
-	limiter  *loginLimiter
-	pages    fs.FS
+type Deps struct {
+	Host      system.Host
+	Users     system.Users
+	Files     system.Files
+	Logs      system.Logs
+	MaxUpload int64
 }
 
-func New(store *auth.Store, host system.Host, users system.Users) http.Handler {
+type Server struct {
+	store     *auth.Store
+	host      system.Host
+	users     system.Users
+	files     system.Files
+	logs      system.Logs
+	maxUpload int64
+	sessions  *sessions
+	limiter   *loginLimiter
+	pages     fs.FS
+}
+
+func New(store *auth.Store, deps Deps) http.Handler {
 	pages, err := fs.Sub(webFiles, "web")
 	if err != nil {
 		panic(err)
 	}
 
 	s := &Server{
-		store:    store,
-		host:     host,
-		users:    users,
-		sessions: newSessions(sessionTTL),
-		limiter:  newLoginLimiter(maxLoginFails, failWindow),
-		pages:    pages,
+		store:     store,
+		host:      deps.Host,
+		users:     deps.Users,
+		files:     deps.Files,
+		logs:      deps.Logs,
+		maxUpload: deps.MaxUpload,
+		sessions:  newSessions(sessionTTL),
+		limiter:   newLoginLimiter(maxLoginFails, failWindow),
+		pages:     pages,
 	}
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(s.pages))))
 	mux.HandleFunc("GET /{$}", s.dashboardPage)
 	mux.HandleFunc("GET /users", s.usersPage)
+	mux.HandleFunc("GET /files", s.filesPage)
+	mux.HandleFunc("GET /logs", s.logsPage)
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("GET /setup", s.setupPage)
 	mux.HandleFunc("POST /api/setup", s.setup)
@@ -63,6 +79,13 @@ func New(store *auth.Store, host system.Host, users system.Users) http.Handler {
 	mux.HandleFunc("POST /api/users", s.requireSession(s.createUser))
 	mux.HandleFunc("PUT /api/users/{name}/password", s.requireSession(s.changeUserPassword))
 	mux.HandleFunc("DELETE /api/users/{name}", s.requireSession(s.deleteUser))
+	mux.HandleFunc("GET /api/files", s.requireSession(s.listFiles))
+	mux.HandleFunc("DELETE /api/files", s.requireSession(s.deleteFile))
+	mux.HandleFunc("GET /api/files/download", s.requireSession(s.downloadFile))
+	mux.HandleFunc("PUT /api/files/content", s.requireSession(s.uploadFile))
+	mux.HandleFunc("POST /api/files/folder", s.requireSession(s.createFolder))
+	mux.HandleFunc("POST /api/files/rename", s.requireSession(s.renameFile))
+	mux.HandleFunc("GET /api/logs", s.requireSession(s.readLogs))
 
 	return securityHeaders(mux)
 }
@@ -116,6 +139,17 @@ func (s *Server) setupPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.servePage(w, r, "setup.html")
+}
+
+func (s *Server) protectedPage(w http.ResponseWriter, r *http.Request, name string) {
+	switch {
+	case !s.store.Configured():
+		http.Redirect(w, r, "/setup", http.StatusSeeOther)
+	case !s.hasSession(r):
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+	default:
+		s.servePage(w, r, name)
+	}
 }
 
 func (s *Server) servePage(w http.ResponseWriter, r *http.Request, name string) {

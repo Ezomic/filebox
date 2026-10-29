@@ -116,5 +116,46 @@ form.inline { display: inline-flex; flex-wrap: wrap; gap: 8px; justify-content: 
 form.inline input { width: 14rem; margin-bottom: 0; }
 button:disabled { opacity: 0.6; cursor: default; }
 
+main.wide { max-width: 960px; }
+header.bar { flex-wrap: wrap; gap: 8px; }
+nav.actions { flex-wrap: wrap; }
+
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.crumbs .sep { color: var(--muted); }
+button.folder { background: none; color: var(--accent); padding: 0; font-weight: 600; text-align: left; overflow-wrap: anywhere; }
+td.meta { color: var(--muted); font-size: 0.85rem; white-space: nowrap; padding-left: 12px; text-align: right; }
+#files td.name { min-width: 9rem; overflow-wrap: anywhere; word-break: normal; }
+td.row-actions a.link { margin-left: 8px; }
+#files td.row-actions .error { display: block; margin: 0 0 4px; }
+#files td.row-actions .error:empty { display: none; }
+#files td.row-actions { min-width: 15rem; }
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.toolbar label { margin: 0; }
+.toolbar input[type="text"],
+.toolbar input[type="number"] { width: auto; margin-bottom: 0; flex: 1 1 10rem; }
+label.check { display: inline-flex; align-items: center; gap: 6px; }
+
+input[type="number"],
+select {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+input[type="number"] { width: 6rem; }
+progress { width: 100%; margin-top: 8px; }
+
+pre.log {
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  font: 0.8rem/1.4 ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .error { color: var(--danger); min-height: 1.5em; margin: 0 0 8px; }
 .stale { color: var(--danger); }

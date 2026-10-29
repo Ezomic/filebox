@@ -24,11 +24,17 @@ func main() {
 	dataDir := flag.String("data", "./data", "directory for the admin password and TLS certificate")
 	disk := flag.String("disk", "/", "path on the filesystem whose usage the dashboard shows, normally the SFTP storage")
 	sans := flag.String("san", "localhost,127.0.0.1", "comma-separated hostnames and IPs for the self-signed certificate")
+	filesDir := flag.String("files", "/srv/sftp", "directory the file browser is confined to")
+	maxUpload := flag.Int64("max-upload", 4<<30, "largest file the file browser accepts, in bytes")
 	flag.Parse()
 
 	store, err := auth.Open(*dataDir)
 	if err != nil {
 		log.Fatalf("open admin store: %v", err)
+	}
+	files, err := system.NewFiles(*filesDir)
+	if err != nil {
+		log.Fatalf("open file root %s: %v", *filesDir, err)
 	}
 	cert, err := tlsutil.LoadOrCreate(*dataDir, strings.Split(*sans, ","))
 	if err != nil {
@@ -36,8 +42,14 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:              *listen,
-		Handler:           server.New(store, system.NewHost(*disk), system.NewUsers()),
+		Addr: *listen,
+		Handler: server.New(store, server.Deps{
+			Host:      system.NewHost(*disk),
+			Users:     system.NewUsers(),
+			Files:     files,
+			Logs:      system.NewLogs(),
+			MaxUpload: *maxUpload,
+		}),
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
