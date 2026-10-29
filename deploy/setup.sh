@@ -2,6 +2,11 @@
 # Provisions a fresh Debian 12/13 box as a filebox: hardened SFTP, fail2ban,
 # Tailscale, the admin panel and the DNS updater. Run as root; safe to re-run.
 #   ./setup.sh /path/to/filebox-panel
+#
+# Get the binary from the latest GitHub release and check it before running:
+#   curl -fLO https://github.com/Ezomic/filebox/releases/latest/download/filebox-panel
+#   curl -fLO https://github.com/Ezomic/filebox/releases/latest/download/filebox-panel.sha256
+#   sha256sum -c filebox-panel.sha256
 set -euo pipefail
 
 SFTP_PORT=${SFTP_PORT:-2222}
@@ -26,7 +31,7 @@ log() {
 preflight() {
 	[ "$(id -u)" -eq 0 ] || die "run as root"
 	[ $# -eq 1 ] || die "usage: $0 /path/to/filebox-panel"
-	[ -f "$1" ] || die "panel binary not found: $1"
+	[ -f "$1" ] || die "panel binary not found: $1 (download it from https://github.com/Ezomic/filebox/releases, see the top of this script)"
 	[ "$(head -c 4 "$1")" = $'\177ELF' ] || die "$1 is not a Linux executable"
 
 	# shellcheck disable=SC1091
