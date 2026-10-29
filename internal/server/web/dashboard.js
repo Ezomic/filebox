@@ -119,3 +119,42 @@ byId('power-actions').addEventListener('click', (event) => {
   }
   runPower(button);
 });
+
+const DISK_REFRESH_MS = 60000;
+
+function diskRow(disk) {
+  const row = document.createElement('div');
+  row.className = 'disk';
+  const health = disk.healthy === null ? 'unknown' : disk.healthy ? 'healthy' : 'FAILING';
+  const cells = [
+    [disk.device, 'name'],
+    [disk.model || '-', 'detail'],
+    [disk.tempCelsius === null ? 'n/a' : `${disk.tempCelsius.toFixed(0)} °C`, 'detail'],
+    [health, disk.healthy === false ? 'stale' : 'detail'],
+  ];
+  for (const [text, className] of cells) {
+    const cell = document.createElement('span');
+    cell.textContent = text;
+    cell.className = className;
+    row.append(cell);
+  }
+  return row;
+}
+
+async function refreshDisks() {
+  const empty = byId('disks-empty');
+  try {
+    const response = await fetch('/api/disks');
+    if (!response.ok) throw new Error('bad status');
+    const { available, disks } = await response.json();
+    byId('disk-rows').replaceChildren(...disks.map(diskRow));
+    empty.hidden = disks.length > 0;
+    empty.textContent = available ? 'No disks reported.' : 'Disk health is not available on this machine.';
+  } catch {
+    empty.hidden = false;
+    empty.textContent = 'Could not load disk health.';
+  }
+}
+
+refreshDisks();
+setInterval(refreshDisks, DISK_REFRESH_MS);

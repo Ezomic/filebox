@@ -24,6 +24,8 @@ type harness struct {
 	files   system.Files
 	logs    *spyLogs
 	power   *system.FakePower
+	smart   *system.FakeSmart
+	usage   *system.FakeUsage
 	root    string
 	outside string
 }
@@ -61,10 +63,12 @@ func newHarnessWithFiles(t *testing.T, wrap func(system.Files) system.Files) *ha
 	t.Cleanup(func() { _ = files.(io.Closer).Close() })
 	logs := &spyLogs{FakeLogs: system.NewFakeLogs()}
 	power := &system.FakePower{}
+	smart := system.NewFakeSmart()
+	usage := &system.FakeUsage{Bytes: map[string]uint64{"amy": 2048}, Ready: true}
 
-	handler := New(store, Deps{Host: host, Users: users, Files: wrap(files), Logs: logs, Power: power, MaxUpload: testMaxUpload})
+	handler := New(store, Deps{Host: host, Users: users, Files: wrap(files), Logs: logs, Power: power, Smart: smart, Usage: usage, MaxUpload: testMaxUpload})
 
-	return &harness{handler: handler, store: store, host: host, users: users, files: files, logs: logs, power: power, root: root, outside: outside}
+	return &harness{handler: handler, store: store, host: host, users: users, files: files, logs: logs, power: power, smart: smart, usage: usage, root: root, outside: outside}
 }
 
 func (h *harness) do(method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {

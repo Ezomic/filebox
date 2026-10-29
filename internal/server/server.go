@@ -31,6 +31,8 @@ type Deps struct {
 	Files     system.Files
 	Logs      system.Logs
 	Power     system.Power
+	Usage     system.Usage
+	Smart     system.Smart
 	MaxUpload int64
 	// PowerDelay is how long shutdown and reboot wait so the response can reach the browser first.
 	PowerDelay time.Duration
@@ -43,6 +45,8 @@ type Server struct {
 	files      system.Files
 	logs       system.Logs
 	power      system.Power
+	usage      system.Usage
+	smart      system.Smart
 	powerDelay time.Duration
 	maxUpload  int64
 	sessions   *sessions
@@ -63,6 +67,8 @@ func New(store *auth.Store, deps Deps) http.Handler {
 		files:      deps.Files,
 		logs:       deps.Logs,
 		power:      deps.Power,
+		usage:      deps.Usage,
+		smart:      deps.Smart,
 		powerDelay: deps.PowerDelay,
 		maxUpload:  deps.MaxUpload,
 		sessions:   newSessions(sessionTTL),
@@ -92,6 +98,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("PUT /api/files/content", s.requireSession(s.uploadFile))
 	mux.HandleFunc("POST /api/files/folder", s.requireSession(s.createFolder))
 	mux.HandleFunc("POST /api/files/rename", s.requireSession(s.renameFile))
+	mux.HandleFunc("GET /api/disks", s.requireSession(s.disks))
 	mux.HandleFunc("GET /api/logs", s.requireSession(s.readLogs))
 	mux.HandleFunc("POST /api/system/restart-sshd", s.requireSession(s.powerAction(system.RestartSSHD)))
 	mux.HandleFunc("POST /api/system/shutdown", s.requireSession(s.powerAction(system.Shutdown)))

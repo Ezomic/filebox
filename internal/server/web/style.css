@@ -161,3 +161,6 @@ pre.log {
 .stale { color: var(--danger); }
 
 .nav-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.disk { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+.disk .name { font-weight: 600; }

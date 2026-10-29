@@ -46,6 +46,11 @@
       </section>
     </div>
     <section class="card stacked">
+      <div class="label">Disk health</div>
+      <p class="detail" id="disks-empty">Checking...</p>
+      <div id="disk-rows"></div>
+    </section>
+    <section class="card stacked">
       <div class="label">Machine</div>
       <p class="detail">Restarting sshd keeps existing SFTP sessions. Shutdown and reboot take the panel offline; after a shutdown you must power the machine on by hand.</p>
       <p class="error" id="power-status" role="status"></p>
