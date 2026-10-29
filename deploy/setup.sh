@@ -60,7 +60,7 @@ install_packages() {
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update -qq
 	apt-get install -y -qq --no-install-recommends \
-		ca-certificates curl gnupg jq sudo openssh-server fail2ban nftables python3-systemd smartmontools
+		ca-certificates curl gnupg jq sudo openssh-server fail2ban nftables python3 python3-systemd smartmontools
 
 	log "Adding the Tailscale apt repository"
 	install -d -m 0755 /usr/share/keyrings
@@ -157,6 +157,11 @@ EOF
 	fi
 	local p
 	for p in 22 "$SFTP_PORT"; do
+		# A reload briefly closes and reopens the listening sockets.
+		for _ in 1 2 3 4 5 6 7 8 9 10; do
+			ss -ltn "sport = :$p" | grep -q LISTEN && break
+			sleep 0.5
+		done
 		ss -ltn "sport = :$p" | grep -q LISTEN || die "sshd is not listening on port $p"
 	done
 }
@@ -220,6 +225,7 @@ install_helpers() {
 	log "Installing the user helper and sudo rule"
 	install -m 0750 -o root -g filebox "$SRC/filebox-user" /usr/local/sbin/filebox-user
 	install -m 0750 -o root -g filebox "$SRC/filebox-smart" /usr/local/sbin/filebox-smart
+	install -m 0750 -o root -g filebox "$SRC/filebox-verify" /usr/local/sbin/filebox-verify
 	install -m 0750 -o root -g root "$SRC/filebox-dns-update" /usr/local/sbin/filebox-dns-update
 	install -m 0755 -o root -g root "$SRC/filebox-panel-start" /usr/local/libexec/filebox-panel-start
 
@@ -232,6 +238,7 @@ filebox ALL=(root) NOPASSWD: /usr/local/sbin/filebox-user list, \
 	/usr/local/sbin/filebox-user create *, \
 	/usr/local/sbin/filebox-user delete *, \
 	/usr/local/sbin/filebox-user passwd *, \
+	/usr/local/sbin/filebox-verify *, \
 	/usr/bin/systemctl restart ssh, \
 	/usr/bin/systemctl poweroff, \
 	/usr/bin/systemctl reboot, \

@@ -27,6 +27,9 @@ func main() {
 	sans := flag.String("san", "localhost,127.0.0.1", "comma-separated hostnames and IPs for the self-signed certificate")
 	filesDir := flag.String("files", "/srv/sftp", "directory the file browser is confined to")
 	maxUpload := flag.Int64("max-upload", 4<<30, "largest file the file browser accepts, in bytes")
+	portalListen := flag.String("portal-listen", "", "address for the public user portal, empty to disable it")
+	portalCert := flag.String("portal-cert", "", "PEM certificate for the portal")
+	portalKey := flag.String("portal-key", "", "PEM private key for the portal")
 	flag.Parse()
 
 	store, err := auth.Open(*dataDir)
@@ -45,6 +48,8 @@ func main() {
 		log.Fatalf("prepare certificate: %v", err)
 	}
 
+	portal := server.NewPortal(server.PortalDeps{Verifier: system.NewVerifier()})
+
 	srv := &http.Server{
 		Addr: *listen,
 		Handler: server.New(store, server.Deps{
@@ -57,6 +62,8 @@ func main() {
 			Smart:      system.NewSmart(),
 			PowerDelay: time.Second,
 			MaxUpload:  *maxUpload,
+
+			OnUserChanged: portal.EndSessions,
 		}),
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
@@ -65,20 +72,48 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 
+	servers := []*http.Server{srv}
+	if *portalListen != "" {
+		servers = append(servers, portalServer(*portalListen, *portalCert, *portalKey, portal))
+	}
+
 	stop, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		<-stop.Done()
-		shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
-		defer done()
-		_ = srv.Shutdown(shutdown)
-	}()
-
-	log.Printf("listening on https://%s", *listen)
-	if err := srv.ListenAndServeTLS("", ""); !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
+	failed := make(chan error, len(servers))
+	for _, s := range servers {
+		go func() {
+			log.Printf("listening on https://%s", s.Addr)
+			failed <- s.ListenAndServeTLS("", "")
+		}()
 	}
-	<-drained
+
+	select {
+	case err := <-failed:
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	case <-stop.Done():
+	}
+	shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
+	defer done()
+	for _, s := range servers {
+		_ = s.Shutdown(shutdown)
+	}
+}
+
+func portalServer(addr, certFile, keyFile string, portal http.Handler) *http.Server {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		log.Fatalf("load portal certificate: %v", err)
+	}
+
+	return &http.Server{
+		Addr:              addr,
+		Handler:           portal,
+		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 }

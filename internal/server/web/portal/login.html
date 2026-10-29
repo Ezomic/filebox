@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in to your files</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <form class="card auth" id="login-form">
+      <h1>Sign in to your files</h1>
+      <label for="username">Username</label>
+      <input id="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <p class="error" id="error" role="alert"></p>
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+  <script src="/static/login.js"></script>
+</body>
+</html>

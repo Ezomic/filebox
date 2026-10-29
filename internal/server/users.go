@@ -86,6 +86,7 @@ func (s *Server) changeUserPassword(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not change the password")
 			return
 		}
+		s.endUserSessions(name)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -106,7 +107,14 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not delete the user")
 			return
 		}
+		s.endUserSessions(name)
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (s *Server) endUserSessions(name string) {
+	if s.onUserChanged != nil {
+		s.onUserChanged(name)
 	}
 }
 

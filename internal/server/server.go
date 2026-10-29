@@ -36,6 +36,8 @@ type Deps struct {
 	MaxUpload int64
 	// PowerDelay is how long shutdown and reboot wait so the response can reach the browser first.
 	PowerDelay time.Duration
+	// OnUserChanged runs after an admin changes a user's password or deletes the user.
+	OnUserChanged func(name string)
 }
 
 type Server struct {
@@ -52,6 +54,8 @@ type Server struct {
 	sessions   *sessions
 	limiter    *loginLimiter
 	pages      fs.FS
+
+	onUserChanged func(name string)
 }
 
 func New(store *auth.Store, deps Deps) http.Handler {
@@ -74,6 +78,8 @@ func New(store *auth.Store, deps Deps) http.Handler {
 		sessions:   newSessions(sessionTTL),
 		limiter:    newLoginLimiter(maxLoginFails, failWindow),
 		pages:      pages,
+
+		onUserChanged: deps.OnUserChanged,
 	}
 
 	mux := http.NewServeMux()
