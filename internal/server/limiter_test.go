@@ -70,3 +70,19 @@ func TestLimiterMapStaysBounded(t *testing.T) {
 		t.Fatalf("tracking %d keys, cap is %d", len(limiter.failed), maxTracked)
 	}
 }
+
+func TestLimiterBeginCountsParallelAttemptsBeforeTheyFail(t *testing.T) {
+	l := newLoginLimiter(3, time.Minute)
+	for i := 0; i < 3; i++ {
+		if !l.begin("k") {
+			t.Fatalf("attempt %d must be allowed", i)
+		}
+	}
+	if l.begin("k") {
+		t.Fatal("a fourth parallel attempt must be refused before any has failed")
+	}
+	l.end("k")
+	if !l.begin("k") {
+		t.Fatal("a finished attempt frees its slot")
+	}
+}
