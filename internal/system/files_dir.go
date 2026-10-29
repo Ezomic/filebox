@@ -154,7 +154,7 @@ func (d *dirFiles) copyToTemp(dir string, content io.Reader) (string, error) {
 	}
 	temp := path.Join(rootRelative(dir), uploadTempPrefix+hex.EncodeToString(suffix)+uploadTempSuffix)
 
-	file, err := d.root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	file, err := d.root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o664)
 	if err != nil {
 		return "", d.classify(dir, err)
 	}
@@ -246,7 +246,7 @@ func (d *dirFiles) Mkdir(name string) error {
 	if err := d.requireAbsent(name); err != nil {
 		return err
 	}
-	if err := d.root.Mkdir(name, 0o755); err != nil {
+	if err := d.root.Mkdir(name, 0o775); err != nil {
 		return d.classify(name, err)
 	}
 
