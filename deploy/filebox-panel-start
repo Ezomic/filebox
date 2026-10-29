@@ -1,0 +1,22 @@
+#!/bin/sh
+# Starts the panel bound to the Tailscale IPv4 address and nothing else.
+set -eu
+
+DATA_DIR=/var/lib/filebox
+DISK_PATH=/srv/sftp
+PORT=8443
+
+ip=$(tailscale ip -4 2>/dev/null | head -n 1)
+case $ip in
+100.*.*.*) ;;
+*)
+	echo "filebox-panel: no Tailscale IPv4 address yet, run 'tailscale up'" >&2
+	exit 1
+	;;
+esac
+
+exec /usr/local/bin/filebox-panel \
+	-listen "$ip:$PORT" \
+	-data "$DATA_DIR" \
+	-disk "$DISK_PATH" \
+	-san "$ip,$(hostname -s)"

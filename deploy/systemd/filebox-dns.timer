@@ -1,0 +1,10 @@
+[Unit]
+Description=Update the filebox A record every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

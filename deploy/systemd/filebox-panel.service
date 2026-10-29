@@ -1,0 +1,39 @@
+[Unit]
+Description=filebox admin panel
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+User=filebox
+Group=filebox
+ExecStart=/usr/local/libexec/filebox-panel-start
+Restart=on-failure
+RestartSec=10
+UMask=0077
+
+# The panel runs the sudo helper (filebox-user) as a child, and that child
+# inherits every restriction below. So: no NoNewPrivileges (blocks sudo's setuid),
+# no PrivateUsers, no RestrictSUIDSGID, no SystemCallFilter and no capability
+# bounding set (useradd needs setuid, chown and friends). /etc and /srv/sftp stay
+# writable only so the root helper can edit the account files and create homes;
+# the filebox user itself has no permission to write there.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/filebox /srv/sftp /etc /var/log
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target
