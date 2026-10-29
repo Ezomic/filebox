@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>filebox install and update guide</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --text: #1c1c1a; --muted: #5f5f5a; --line: #deded8;
+    --accent: #1d6b52; --code-bg: #efefea; --warn-bg: #fff4e0; --warn-line: #e0b060;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151514; --card: #1e1e1c; --text: #ececE8; --muted: #a2a29a; --line: #34342f;
+      --accent: #4fc79d; --code-bg: #262623; --warn-bg: #2d2616; --warn-line: #7a5f22;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, sans-serif; }
+  .wrap { max-width: 800px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.9rem; margin: 8px 0 4px; }
+  h2 { font-size: 1.3rem; margin: 40px 0 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.05rem; margin: 24px 0 4px; }
+  p, li { color: var(--text); }
+  .lead { color: var(--muted); font-size: 1.1rem; margin-top: 0; }
+  nav { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 16px 0 0; padding: 12px 16px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+  a { color: var(--accent); }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font: 0.92em ui-monospace, Consolas, monospace; }
+  pre { background: var(--code-bg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; margin: 8px 0 16px; }
+  pre code { background: none; padding: 0; }
+  .note, .warn { padding: 10px 14px; border-radius: 8px; margin: 16px 0; border: 1px solid var(--line); background: var(--card); }
+  .warn { background: var(--warn-bg); border-color: var(--warn-line); }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; display: block; overflow-x: auto; }
+  td, th { min-width: 110px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  ol, ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>filebox</h1>
+  <p class="lead">A home file server on an old PC. Family members upload and download files over SFTP or from a website. You manage everything from an admin panel that is only reachable over Tailscale.</p>
+
+  <nav>
+    <a href="#what">What you get</a>
+    <a href="#need">What you need</a>
+    <a href="#windows">Replacing Windows</a>
+    <a href="#install">Install</a>
+    <a href="#portal">Web portal</a>
+    <a href="#update">Update</a>
+    <a href="#problems">Problems</a>
+    <a href="#security">Security</a>
+  </nav>
+
+  <h2 id="what">What you get</h2>
+  <table>
+    <tr><th>Part</th><th>Who uses it</th><th>How it is reached</th></tr>
+    <tr><td>SFTP server</td><td>Family, with any SFTP app</td><td>Public, port 2222, <code>files.thijssensoftware.nl</code></td></tr>
+    <tr><td>Web portal</td><td>Family, from any browser or phone</td><td>Public, port 443 (HTTPS), same address</td></tr>
+    <tr><td>Admin panel</td><td>You</td><td>Only over your Tailscale network, port 8443</td></tr>
+  </table>
+  <p>Every family member has their own private folder and cannot see anyone else's. The admin panel creates users, shows disk health and logs, and lets you browse everything.</p>
+
+  <h2 id="need">What you need</h2>
+  <ul>
+    <li>A spare PC that can stay on, with Debian 13 (Debian 12 also works, but the web portal certificate needs 13).</li>
+    <li>An SSH key on your own computer, to log in to the box.</li>
+    <li>A free Tailscale account.</li>
+    <li>The domain <code>thijssensoftware.nl</code> in DigitalOcean DNS, and a DigitalOcean token that is limited to domain records.</li>
+    <li>Access to your router to forward two ports.</li>
+  </ul>
+
+  <h2 id="windows">Replacing Windows on the old PC</h2>
+  <div class="warn"><strong>Back up first.</strong> Copy anything you care about to an external drive before changing partitions.</div>
+  <ol>
+    <li>Open Disk Management in Windows and note which partition holds the data and what filesystem it uses.</li>
+    <li>If the data partition is <strong>NTFS or exFAT</strong>, filebox cannot use it as it is. SFTP users live in root-owned folders with Linux permissions, and NTFS cannot hold those. Copy the data off, format that partition as <strong>ext4</strong> in the Debian installer, and copy it back after setup.</li>
+    <li>If it is already <strong>ext4</strong>, leave it alone.</li>
+    <li>Install Debian 13 from a USB stick (netinst). Choose manual partitioning, install onto the old Windows partition (plus the EFI partition on UEFI machines), and do not format the data partition. Select only "SSH server" and "standard system utilities".</li>
+    <li>Mount the data partition at <code>/srv/sftp</code> before running setup. Find its UUID with <code>lsblk -f</code>, add this line to <code>/etc/fstab</code>, then run <code>sudo mount -a</code>:
+<pre><code>UUID=&lt;uuid&gt; /srv/sftp ext4 defaults,nofail 0 2</code></pre></li>
+  </ol>
+
+  <h2 id="install">Install</h2>
+  <h3>1. Put your SSH key on the box</h3>
+  <p>From your own computer: <code>ssh-copy-id youruser@&lt;box-ip&gt;</code>. Setup refuses to continue without a key, because it turns password login off.</p>
+
+  <h3>2. Download the release and check it</h3>
+<pre><code>curl -fLO https://github.com/Ezomic/filebox/releases/latest/download/filebox-panel
+curl -fLO https://github.com/Ezomic/filebox/releases/latest/download/filebox-panel.sha256
+curl -fLO https://github.com/Ezomic/filebox/releases/latest/download/deploy.tar.gz
+curl -fLO https://github.com/Ezomic/filebox/releases/latest/download/deploy.tar.gz.sha256
+sha256sum -c filebox-panel.sha256 deploy.tar.gz.sha256
+tar -xzf deploy.tar.gz</code></pre>
+
+  <h3>3. Run setup</h3>
+<pre><code>cd deploy
+sudo ./setup.sh ../filebox-panel</code></pre>
+  <p>It installs and configures SSH, the firewall, fail2ban, Tailscale, the admin panel and the DNS updater. It is safe to run again at any time.</p>
+
+  <h3>4. Join Tailscale</h3>
+<pre><code>sudo tailscale up</code></pre>
+  <p>Open the login link it prints. Install Tailscale on your own computer too.</p>
+
+  <h3>5. Create the admin account</h3>
+  <p>On the box, read the one-time token:</p>
+<pre><code>sudo cat /var/lib/filebox/setup-token</code></pre>
+  <p>Then, from a device on your tailnet, open <code>https://&lt;tailscale ip of the box&gt;:8443/setup</code>, enter the token and choose a password of at least 12 characters. Your browser warns about the certificate because it is self-signed. That is expected for this admin address.</p>
+
+  <h3>6. Point the domain at your home</h3>
+<pre><code>umask 077 &amp;&amp; read -rsp 'token: ' t &amp;&amp; printf %s "$t" | sudo tee /etc/filebox/do-token &gt;/dev/null; unset t
+sudo systemctl start filebox-dns.service</code></pre>
+  <p>This keeps <code>files.thijssensoftware.nl</code> pointed at your current home IP address, even when your provider changes it.</p>
+
+  <h3>7. Router</h3>
+  <p>Forward TCP <strong>2222</strong> (SFTP) and TCP <strong>443</strong> (web portal), IPv4, to the box. <strong>Never forward 8443.</strong></p>
+
+  <h3>8. Close the LAN SSH door</h3>
+  <p>When you have confirmed you can log in to the box over Tailscale, run setup once more with LAN SSH switched off:</p>
+<pre><code>sudo LAN_SSH_CIDRS="" ./setup.sh ../filebox-panel</code></pre>
+
+  <h3>9. Add your family</h3>
+  <p>In the admin panel, open Users and create one account per person. Move any existing files into <code>/srv/sftp/&lt;name&gt;/files/</code> afterwards, then run <code>sudo chown -R &lt;name&gt;:sftpusers /srv/sftp/&lt;name&gt;/files</code>.</p>
+
+  <h2 id="portal">Turn on the web portal</h2>
+  <p>The portal starts by itself once it has a certificate. This needs step 6 (the DigitalOcean token) first.</p>
+<pre><code>sudo filebox-portal-cert issue you@example.com</code></pre>
+  <p>Running this accepts the Let's Encrypt terms of service. Your email is only used for expiry notices. When it finishes, <code>https://files.thijssensoftware.nl</code> shows a sign-in page. Family sign in with the same username and password they use for SFTP.</p>
+  <ul>
+    <li>The certificate renews itself (a daily timer checks it); the panel picks up the new one without a restart.</li>
+    <li>The admin dashboard shows how many days the certificate has left.</li>
+    <li>Family can change their own password on the portal. You can also change it in the admin panel, which signs them out of the website.</li>
+  </ul>
+  <div class="note">The portal must be exposed directly. Do not put it behind a reverse proxy, because it identifies visitors by their connecting address.</div>
+
+  <h2 id="update">Update</h2>
+  <p>One command on the box:</p>
+<pre><code>sudo filebox-update</code></pre>
+  <p>It finds the latest release, downloads the binary and the setup files, checks both against their published checksums, keeps the old binary as a backup, and re-runs setup. Your users, files, admin password, Tailscale login and certificate are untouched. The panel restarts, so people have to sign in again. SFTP keeps running.</p>
+  <table>
+    <tr><th>Command</th><th>What it does</th></tr>
+    <tr><td><code>sudo filebox-update</code></td><td>Install the latest release</td></tr>
+    <tr><td><code>sudo filebox-update v0.2.0</code></td><td>Install a specific release</td></tr>
+    <tr><td><code>sudo filebox-update rollback</code></td><td>Put the previous binary back</td></tr>
+    <tr><td><code>filebox-panel -version</code></td><td>Show the installed version (also at the bottom of the admin dashboard)</td></tr>
+  </table>
+  <div class="note">The first release that contains <code>filebox-update</code> must be installed by hand once (steps 2 and 3 above). From then on, use the command.</div>
+
+  <h2 id="problems">When something is wrong</h2>
+  <table>
+    <tr><th>Problem</th><th>What to do</th></tr>
+    <tr><td>Cannot open the admin panel</td><td>Check Tailscale is running on both devices. The panel only listens on the Tailscale address, port 8443.</td></tr>
+    <tr><td>A family member is "locked out"</td><td>After a few wrong passwords an address is blocked for a while. Wait 15 minutes, or unban it: <code>sudo fail2ban-client set filebox-portal unbanip &lt;ip&gt;</code> (SFTP uses the jail <code>sshd</code>).</td></tr>
+    <tr><td>Web portal does not load</td><td>Run <code>sudo filebox-portal-cert issue you@example.com</code> if you have not yet, check the router forwards 443, and look at <code>sudo journalctl -u filebox-panel -n 50</code>.</td></tr>
+    <tr><td>Domain points to the wrong IP</td><td><code>sudo systemctl start filebox-dns.service</code> and check <code>sudo journalctl -u filebox-dns -n 20</code>.</td></tr>
+    <tr><td>An update broke something</td><td><code>sudo filebox-update rollback</code></td></tr>
+    <tr><td>Disk getting full or failing</td><td>The admin dashboard shows disk usage and drive health.</td></tr>
+  </table>
+  <div class="warn"><strong>Backups.</strong> filebox does not back up the files. A copy of <code>/srv/sftp</code> on another disk is your responsibility.</div>
+
+  <h2 id="security">What is exposed</h2>
+  <ul>
+    <li>Public: port 2222 (SFTP, family accounts only, locked into their own folder) and port 443 (the web portal).</li>
+    <li>Not public: the admin panel (Tailscale only) and SSH on port 22 (Tailscale, and your home network until you close it in step 8).</li>
+    <li>Repeated wrong passwords are slowed by the portal itself and then banned at the firewall by fail2ban.</li>
+    <li>Passwords are never stored by the web portal. It asks the system to check the same password SFTP uses.</li>
+    <li>Keep the box updated: run <code>sudo apt update &amp;&amp; sudo apt upgrade</code> now and then, and <code>sudo filebox-update</code> when there is a new release.</li>
+  </ul>
+
+  <p style="color:var(--muted);margin-top:40px">Source and releases: <a href="https://github.com/Ezomic/filebox">github.com/Ezomic/filebox</a></p>
+</div>
+</body>
+</html>

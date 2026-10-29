@@ -40,6 +40,7 @@ type Deps struct {
 	OnUserChanged func(name string)
 	// PortalCertExpiry reports when the public portal certificate expires; nil when the portal is off.
 	PortalCertExpiry func() time.Time
+	Version          string
 }
 
 type Server struct {
@@ -60,6 +61,7 @@ type Server struct {
 
 	onUserChanged    func(name string)
 	portalCertExpiry func() time.Time
+	version          string
 }
 
 func New(store *auth.Store, deps Deps) http.Handler {
@@ -86,6 +88,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 
 		onUserChanged:    deps.OnUserChanged,
 		portalCertExpiry: deps.PortalCertExpiry,
+		version:          deps.Version,
 	}
 
 	mux := http.NewServeMux()
@@ -100,6 +103,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", s.requireSession(s.logout))
 	mux.HandleFunc("GET /api/metrics", s.requireSession(s.metrics))
+	mux.HandleFunc("GET /api/version", s.requireSession(s.versionInfo))
 	mux.HandleFunc("GET /api/portal", s.requireSession(s.portalStatus))
 	mux.HandleFunc("GET /api/users", s.requireSession(s.listUsers))
 	mux.HandleFunc("POST /api/users", s.requireSession(s.createUser))
@@ -241,6 +245,10 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) versionInfo(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"version": s.version})
 }
 
 func (s *Server) portalStatus(w http.ResponseWriter, _ *http.Request) {

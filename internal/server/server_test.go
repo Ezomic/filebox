@@ -362,3 +362,33 @@ func TestPortalStatusNeedsSessionAndReportsExpiry(t *testing.T) {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestVersionNeedsSession(t *testing.T) {
+	store, err := auth.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetInitialPassword(store.SetupToken(), testPassword); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(store, Deps{Host: &system.Fake{}, Version: "v9.9.9"})
+
+	anon := httptest.NewRecorder()
+	handler.ServeHTTP(anon, httptest.NewRequest("GET", "/api/version", nil))
+	if anon.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous got %d", anon.Code)
+	}
+
+	login := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"password":"`+testPassword+`"}`))
+	login.RemoteAddr = "192.0.2.10:5555"
+	login.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, login)
+	req := httptest.NewRequest("GET", "/api/version", nil)
+	req.AddCookie(sessionCookie(t, rec))
+	got := httptest.NewRecorder()
+	handler.ServeHTTP(got, req)
+	if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "v9.9.9") {
+		t.Fatalf("got %d %s", got.Code, got.Body)
+	}
+}

@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Updates filebox to the latest release (or a given one) and re-runs setup.sh from it.
+#   filebox-update              install the latest release
+#   filebox-update v0.2.0       install that release
+#   filebox-update rollback     put the previous binary back
+# The binary and deploy bundle are checked against the checksums published with the release.
+set -euo pipefail
+
+RELEASES=${RELEASES:-https://github.com/Ezomic/filebox/releases}
+BACKUP_DIR=/var/backups/filebox
+BIN=/usr/local/bin/filebox-panel
+
+die() {
+	echo "filebox-update: $*" >&2
+	exit 1
+}
+
+[ "$(id -u)" -eq 0 ] || die "run as root"
+
+work=""
+trap '[ -z "$work" ] || rm -rf "$work"' EXIT
+
+current() {
+	"$BIN" -version 2>/dev/null || echo unknown
+}
+
+rollback() {
+	[ -s "$BACKUP_DIR/filebox-panel.prev" ] || die "no previous binary in $BACKUP_DIR"
+	install -m 0755 -o root -g root "$BACKUP_DIR/filebox-panel.prev" "$BIN.new"
+	mv -f "$BIN.new" "$BIN"
+	systemctl restart --no-block filebox-panel.service
+	echo "Rolled back to $(current)."
+}
+
+latest_tag() {
+	local url
+	url=$(curl -fsSL --max-time 30 -o /dev/null -w '%{url_effective}' "$RELEASES/latest") ||
+		die "could not reach GitHub"
+	basename "$url"
+}
+
+update() {
+	local tag=${1:-}
+	[ -n "$tag" ] || tag=$(latest_tag)
+	[[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "unexpected release name: $tag"
+
+	if [ "$(current)" = "$tag" ]; then
+		echo "Already on $tag."
+		return
+	fi
+
+	local base
+	work=$(mktemp -d)
+	base=$RELEASES/download/$tag
+	echo "Downloading $tag"
+	local file
+	for file in filebox-panel filebox-panel.sha256 deploy.tar.gz deploy.tar.gz.sha256; do
+		curl -fsSL --max-time 300 -o "$work/$file" "$base/$file" || die "could not download $file from release $tag"
+	done
+	(cd "$work" && sha256sum -c filebox-panel.sha256 deploy.tar.gz.sha256) || die "checksum mismatch, nothing was changed"
+
+	tar -xzf "$work/deploy.tar.gz" -C "$work" --no-same-owner
+	[ -f "$work/deploy/setup.sh" ] || die "release $tag has no deploy/setup.sh"
+
+	install -d -m 0700 "$BACKUP_DIR"
+	if [ -x "$BIN" ]; then
+		install -m 0755 "$BIN" "$BACKUP_DIR/filebox-panel.prev"
+	fi
+	(cd "$work/deploy" && FILEBOX_UPDATE=1 bash ./setup.sh "$work/filebox-panel")
+	echo "Updated from $(cat "$BACKUP_DIR/version.prev" 2>/dev/null || echo unknown) to $(current)."
+}
+
+record_version() {
+	install -d -m 0700 "$BACKUP_DIR"
+	current >"$BACKUP_DIR/version.prev"
+}
+
+case ${1:-} in
+rollback) rollback ;;
+*)
+	record_version
+	update "${1:-}"
+	;;
+esac
+exit 0

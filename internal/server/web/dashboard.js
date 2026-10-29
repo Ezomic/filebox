@@ -72,6 +72,15 @@ async function refreshPortal() {
   }
 }
 
+async function showVersion() {
+  try {
+    const response = await fetch('/api/version');
+    if (response.ok) byId('version').textContent = `filebox ${(await response.json()).version}`;
+  } catch {
+    byId('version').textContent = '';
+  }
+}
+
 byId('logout').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
   window.location.href = '/login';
@@ -79,6 +88,7 @@ byId('logout').addEventListener('click', async () => {
 
 refresh();
 setInterval(refresh, REFRESH_MS);
+showVersion();
 refreshPortal();
 setInterval(refreshPortal, 60 * 60 * 1000);
 
