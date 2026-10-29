@@ -1,0 +1,20 @@
+[Unit]
+Description=Renew the filebox portal certificate
+After=network-online.target
+ConditionPathExists=/var/lib/lego/certificates
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/filebox-portal-cert renew
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lego /var/lib/filebox
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

@@ -57,6 +57,21 @@ async function refresh() {
   }
 }
 
+async function refreshPortal() {
+  try {
+    const response = await fetch('/api/portal');
+    if (!response.ok) return;
+    const portal = await response.json();
+    byId('portal-card').hidden = !portal.enabled;
+    if (!portal.enabled) return;
+    byId('portal-value').textContent = portal.certDaysLeft >= 0 ? `${portal.certDaysLeft} days` : 'expired';
+    byId('portal-detail').textContent = `Expires ${portal.certExpires.slice(0, 10)}`;
+    byId('portal-card').classList.toggle('warn', portal.certDaysLeft < 14);
+  } catch {
+    byId('portal-card').hidden = true;
+  }
+}
+
 byId('logout').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
   window.location.href = '/login';
@@ -64,6 +79,8 @@ byId('logout').addEventListener('click', async () => {
 
 refresh();
 setInterval(refresh, REFRESH_MS);
+refreshPortal();
+setInterval(refreshPortal, 60 * 60 * 1000);
 
 const POWER_MESSAGES = {
   'restart-sshd': 'sshd restarted.',

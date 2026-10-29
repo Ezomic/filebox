@@ -15,8 +15,16 @@ case $ip in
 	;;
 esac
 
+# The public portal only starts once its certificate has been issued.
+portal=""
+if [ -s "$DATA_DIR/portal/fullchain.pem" ] && [ -s "$DATA_DIR/portal/privkey.pem" ]; then
+	portal="1"
+fi
+
+# shellcheck disable=SC2086
 exec /usr/local/bin/filebox-panel \
 	-listen "$ip:$PORT" \
 	-data "$DATA_DIR" \
 	-disk "$DISK_PATH" \
-	-san "$ip,$(hostname -s)"
+	-san "$ip,$(hostname -s)" \
+	${portal:+-portal-listen 0.0.0.0:443 -portal-cert "$DATA_DIR/portal/fullchain.pem" -portal-key "$DATA_DIR/portal/privkey.pem"}

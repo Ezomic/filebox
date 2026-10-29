@@ -11,6 +11,8 @@ Restart=on-failure
 RestartSec=10
 # Group-writable so SFTP users (group sftpusers) can use what the panel creates.
 UMask=0007
+# Port 443 for the public portal. Sudo is setuid, so the helpers do not inherit this.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 # The panel runs the sudo helper (filebox-user) as a child, and that child
 # inherits every restriction below. So: no NoNewPrivileges (blocks sudo's setuid),

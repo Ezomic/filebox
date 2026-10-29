@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Provisions a fresh Debian 12/13 box as a filebox: hardened SFTP, fail2ban,
-# Tailscale, the admin panel and the DNS updater. Run as root; safe to re-run.
+# Tailscale, the admin panel, the DNS updater and the public user portal. Run as root; safe to re-run.
 #   ./setup.sh /path/to/filebox-panel
 #
 # Get the binary from the latest GitHub release and check it before running:
@@ -11,6 +11,7 @@ set -euo pipefail
 
 SFTP_PORT=${SFTP_PORT:-2222}
 PANEL_PORT=8443
+PORTAL_PORT=443
 # Admin SSH stays on port 22 and is reachable from these networks until you
 # have confirmed Tailscale access works (tailnet traffic is always allowed). A
 # firewall that dropped port 22 before you could test the tailnet would lock
@@ -61,6 +62,10 @@ install_packages() {
 	apt-get update -qq
 	apt-get install -y -qq --no-install-recommends \
 		ca-certificates curl gnupg jq sudo openssh-server fail2ban nftables python3 python3-systemd smartmontools
+
+	# Only in Debian 13: without it the panel works as before and the web portal stays off.
+	apt-get install -y -qq --no-install-recommends lego ||
+		echo "setup.sh: lego is not available on this Debian, the web portal certificate needs Debian 13" >&2
 
 	log "Adding the Tailscale apt repository"
 	install -d -m 0755 /usr/share/keyrings
@@ -181,6 +186,21 @@ port = 22,$SFTP_PORT
 maxretry = 5
 findtime = 10m
 bantime = 1h
+
+[filebox-portal]
+enabled = true
+filter = filebox-portal
+journalmatch = _SYSTEMD_UNIT=filebox-panel.service
+port = $PORTAL_PORT
+maxretry = 10
+findtime = 10m
+bantime = 1h
+EOF
+	# The portal logs the client address last on each failure line; anchoring on the end keeps a
+	# crafted username from planting a different address earlier in the line.
+	cat >/etc/fail2ban/filter.d/filebox-portal.conf <<'EOF'
+[Definition]
+failregex = portal: (login|password change) (failed|blocked) (user=.* )?ip=<HOST>$
 EOF
 	systemctl enable --now fail2ban
 	fail2ban-client reload >/dev/null
@@ -211,6 +231,7 @@ table inet filebox {
 		udp sport 67 udp dport 68 accept
 		udp sport 547 udp dport 546 accept
 		tcp dport $SFTP_PORT accept
+		meta nfproto ipv4 tcp dport $PORTAL_PORT accept
 		ip6 saddr { fe80::/10, fc00::/7 } tcp dport 22 accept
 		$lan_rule
 	}
@@ -227,6 +248,7 @@ install_helpers() {
 	install -m 0750 -o root -g filebox "$SRC/filebox-smart" /usr/local/sbin/filebox-smart
 	install -m 0750 -o root -g filebox "$SRC/filebox-verify" /usr/local/sbin/filebox-verify
 	install -m 0750 -o root -g root "$SRC/filebox-dns-update" /usr/local/sbin/filebox-dns-update
+	install -m 0750 -o root -g root "$SRC/filebox-portal-cert" /usr/local/sbin/filebox-portal-cert
 	install -m 0755 -o root -g root "$SRC/filebox-panel-start" /usr/local/libexec/filebox-panel-start
 
 	local tmp
@@ -255,12 +277,13 @@ install_services() {
 	mv -f /usr/local/bin/filebox-panel.new /usr/local/bin/filebox-panel
 
 	install -m 0644 -o root -g root "$SRC"/systemd/filebox-panel.service \
-		"$SRC"/systemd/filebox-dns.service "$SRC"/systemd/filebox-dns.timer /etc/systemd/system/
+		"$SRC"/systemd/filebox-dns.service "$SRC"/systemd/filebox-dns.timer \
+		"$SRC"/systemd/filebox-portal-cert.service "$SRC"/systemd/filebox-portal-cert.timer /etc/systemd/system/
 	systemctl daemon-reload
-	systemctl enable filebox-panel.service filebox-dns.timer
+	systemctl enable filebox-panel.service filebox-dns.timer filebox-portal-cert.timer
 	# The panel cannot start until Tailscale has an address, so do not wait on it.
 	systemctl restart --no-block filebox-panel.service
-	systemctl restart filebox-dns.timer
+	systemctl restart filebox-dns.timer filebox-portal-cert.timer
 }
 
 print_next_steps() {
@@ -281,9 +304,15 @@ Setup finished. Do these in order:
      umask 077 && read -rsp 'token: ' t && printf %s "\$t" > /etc/filebox/do-token; unset t
      systemctl start filebox-dns.service
 
-4. On your router forward only TCP $SFTP_PORT to this machine.
+4. On your router forward only TCP $SFTP_PORT and TCP $PORTAL_PORT (IPv4) to this machine. Never forward $PANEL_PORT.
 
-5. Once you have confirmed you can SSH in over the tailnet, re-run with LAN_SSH_CIDRS=""
+5. Get the certificate for the web portal at https://files.thijssensoftware.nl (needs step 3 first; running
+   this accepts the Let's Encrypt terms of service and uses your email for expiry notices):
+     filebox-portal-cert issue you@example.com
+   Renewal is automatic (filebox-portal-cert.timer) and the panel picks the new certificate up by itself. The
+   dashboard shows the days left.
+
+6. Once you have confirmed you can SSH in over the tailnet, re-run with LAN_SSH_CIDRS=""
    to close port 22 to the LAN:
      LAN_SSH_CIDRS="" ./setup.sh /path/to/filebox-panel
 EOF

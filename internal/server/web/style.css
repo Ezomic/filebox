@@ -159,6 +159,7 @@ pre.log {
 
 .error { color: var(--danger); min-height: 1.5em; margin: 0 0 8px; }
 .stale { color: var(--danger); }
+.card.warn .value { color: var(--danger); }
 
 .nav-row { display: flex; flex-wrap: wrap; gap: 8px; }
 

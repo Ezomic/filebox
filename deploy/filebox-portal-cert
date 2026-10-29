@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Gets and renews the public portal certificate (Let's Encrypt through lego, DNS challenge on DigitalOcean).
+#   filebox-portal-cert issue you@example.com   first certificate; running it accepts the Let's Encrypt terms
+#   filebox-portal-cert renew                   renews when under 30 days are left (run daily by a timer)
+# The panel reloads the copied files without a restart.
+# Needs a domain-scoped DigitalOcean token in /etc/filebox/do-token (the same one filebox-dns-update uses).
+set -euo pipefail
+
+DOMAIN=${DOMAIN:-thijssensoftware.nl}
+RECORD=${RECORD:-files}
+TOKEN_FILE=${TOKEN_FILE:-/etc/filebox/do-token}
+LEGO_DIR=${LEGO_DIR:-/var/lib/lego}
+OUT_DIR=${OUT_DIR:-/var/lib/filebox/portal}
+FQDN=$RECORD.$DOMAIN
+
+die() {
+	echo "filebox-portal-cert: $*" >&2
+	exit 1
+}
+
+# The token reaches lego through its environment, never its arguments.
+lego_cmd() {
+	command -v lego >/dev/null || die "lego is not installed (it is in Debian 13)"
+	[ -r "$TOKEN_FILE" ] || die "token file $TOKEN_FILE missing, see the setup instructions"
+	DO_AUTH_TOKEN=$(tr -d '[:space:]' <"$TOKEN_FILE")
+	[ -n "$DO_AUTH_TOKEN" ] || die "token file is empty"
+	export DO_AUTH_TOKEN
+	install -d -m 0700 "$LEGO_DIR"
+	lego --path "$LEGO_DIR" --dns digitalocean --domains "$FQDN" "$@"
+}
+
+install_files() {
+	local cert=$LEGO_DIR/certificates/$FQDN.crt key=$LEGO_DIR/certificates/$FQDN.key
+	[ -s "$cert" ] && [ -s "$key" ] || die "no certificate files in $LEGO_DIR/certificates"
+
+	install -d -o filebox -g filebox -m 0750 "$OUT_DIR"
+	# Each file is replaced atomically. If the panel reads between the two, the pair does not match and
+	# it keeps serving the old certificate until its next check.
+	install -o filebox -g filebox -m 0600 "$key" "$OUT_DIR/privkey.pem.new"
+	install -o filebox -g filebox -m 0644 "$cert" "$OUT_DIR/fullchain.pem.new"
+	mv -f "$OUT_DIR/privkey.pem.new" "$OUT_DIR/privkey.pem"
+	mv -f "$OUT_DIR/fullchain.pem.new" "$OUT_DIR/fullchain.pem"
+}
+
+case ${1:-} in
+issue)
+	email=${2:-}
+	[[ $email =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || die "usage: filebox-portal-cert issue you@example.com"
+	lego_cmd --accept-tos --email "$email" --dns.propagation-wait 60s run
+	install_files
+	systemctl restart filebox-panel.service
+	echo "Portal certificate for $FQDN installed, the panel now serves the portal on port 443."
+	;;
+renew)
+	[ -s "$LEGO_DIR/certificates/$FQDN.crt" ] || exit 0
+	# lego keeps its account under accounts/<server>/<email>/.
+	email=$(ls -d "$LEGO_DIR"/accounts/*/*/ 2>/dev/null | head -n 1 | xargs -r basename || true)
+	lego_cmd --accept-tos ${email:+--email "$email"} --dns.propagation-wait 60s renew --days 30
+	install_files
+	;;
+*) die "usage: filebox-portal-cert issue you@example.com | renew" ;;
+esac
