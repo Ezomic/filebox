@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Keeps an A record in DigitalOcean DNS pointed at this machine's public IPv4.
+# Needs a domain-scoped DigitalOcean token in /etc/filebox/do-token (mode 0600).
+set -euo pipefail
+
+DOMAIN=${DOMAIN:-thijssensoftware.nl}
+RECORD=${RECORD:-files}
+TTL=${TTL:-300}
+IP_URL=${IP_URL:-https://api.ipify.org}
+TOKEN_FILE=${TOKEN_FILE:-/etc/filebox/do-token}
+API=https://api.digitalocean.com/v2
+
+die() {
+	echo "filebox-dns-update: $*" >&2
+	exit 1
+}
+
+[ -r "$TOKEN_FILE" ] || die "token file $TOKEN_FILE missing or unreadable"
+token=$(tr -d '[:space:]' <"$TOKEN_FILE")
+[ -n "$token" ] || die "token file is empty"
+
+# The token goes to curl through stdin so it never appears in a process list.
+api() {
+	local method=$1 path=$2 body=${3:-}
+	local args=(--silent --show-error --fail --max-time 20 --request "$method" --config - "$API$path")
+	[ -z "$body" ] || args+=(--header "Content-Type: application/json" --data "$body")
+	printf 'header = "Authorization: Bearer %s"\n' "$token" | curl "${args[@]}"
+}
+
+ip=$(curl --silent --show-error --fail --max-time 20 "$IP_URL" | tr -d '[:space:]')
+[[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "lookup service did not return an IPv4 address"
+
+fqdn=$RECORD.$DOMAIN
+records=$(api GET "/domains/$DOMAIN/records?type=A&name=$fqdn") || die "could not read DNS records"
+id=$(jq -r '.domain_records[0].id // empty' <<<"$records")
+current=$(jq -r '.domain_records[0].data // empty' <<<"$records")
+
+if [ "$current" = "$ip" ]; then
+	exit 0
+fi
+
+body=$(jq -cn --arg ip "$ip" --argjson ttl "$TTL" --arg name "$RECORD" \
+	'{type: "A", name: $name, data: $ip, ttl: $ttl}')
+if [ -z "$id" ]; then
+	api POST "/domains/$DOMAIN/records" "$body" >/dev/null || die "could not create A record"
+	echo "created A record $fqdn -> $ip"
+else
+	api PUT "/domains/$DOMAIN/records/$id" "$body" >/dev/null || die "could not update A record"
+	echo "updated A record $fqdn: ${current:-none} -> $ip"
+fi
