@@ -151,18 +151,91 @@ func TestPortalBlocksAUserAttackedFromManyIPs(t *testing.T) {
 	}
 }
 
-func TestPortalSuccessfulLoginResetsTheCounters(t *testing.T) {
+func TestPortalSuccessfulLoginDoesNotResetTheIPCounter(t *testing.T) {
 	h := newPortalHarness(t)
 	for range portalIPFails - 1 {
 		h.login("amy", "wrong password here", "192.0.2.60")
 	}
-	h.login("amy", amyPassword, "192.0.2.60")
-	for range portalIPFails - 1 {
-		h.login("amy", "wrong password here", "192.0.2.60")
-	}
-	if rec := h.login("amy", amyPassword, "192.0.2.60"); rec.Code != http.StatusNoContent {
+	if rec := h.login("bob", bobPassword, "192.0.2.60"); rec.Code != http.StatusNoContent {
 		t.Fatalf("got %d", rec.Code)
 	}
+	h.login("amy", "wrong password here", "192.0.2.60")
+	if rec := h.login("bob", bobPassword, "192.0.2.60"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("an own account must not buy more guesses at others, got %d", rec.Code)
+	}
+}
+
+func TestPortalOnlyFailuresCountAgainstTheLimits(t *testing.T) {
+	h := newPortalHarness(t)
+	for range 3 * portalIPFails {
+		if rec := h.login("amy", amyPassword, "192.0.2.61"); rec.Code != http.StatusNoContent {
+			t.Fatalf("successful logins must never be limited, got %d", rec.Code)
+		}
+	}
+}
+
+func TestPortalSuccessResetsTheUserCounter(t *testing.T) {
+	h := newPortalHarness(t)
+	for i := range portalUserFails - 1 {
+		h.login("amy", "wrong password here", fmt.Sprintf("198.51.100.%d", i+1))
+	}
+	h.login("amy", amyPassword, "203.0.113.5")
+	for i := range portalUserFails - 1 {
+		h.login("amy", "wrong password here", fmt.Sprintf("198.51.101.%d", i+1))
+	}
+	if rec := h.login("amy", amyPassword, "203.0.113.5"); rec.Code != http.StatusNoContent {
+		t.Fatalf("got %d", rec.Code)
+	}
+}
+
+func TestPortalBadUsernamesCountAgainstTheIP(t *testing.T) {
+	h := newPortalHarness(t)
+	for range portalIPFails {
+		h.login("../x", "whatever password", "192.0.2.62")
+	}
+	if rec := h.login("amy", amyPassword, "192.0.2.62"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("got %d", rec.Code)
+	}
+}
+
+func TestPortalLimitsIPv6PerPrefix(t *testing.T) {
+	h := newPortalHarness(t)
+	for i := range portalIPFails {
+		h.login("amy", "wrong password here", fmt.Sprintf("[2001:db8:1:2::%x]", i+1))
+	}
+	if rec := h.login("amy", amyPassword, "[2001:db8:1:2:ffff::1]"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("the whole /64 shares one limit, got %d", rec.Code)
+	}
+	if rec := h.login("amy", amyPassword, "[2001:db8:1:3::1]"); rec.Code != http.StatusNoContent {
+		t.Fatalf("another /64 is unaffected, got %d", rec.Code)
+	}
+}
+
+func TestPortalSessionCannotStartIfTheAccountChangedMidLogin(t *testing.T) {
+	racing := &racingVerifier{}
+	h := &portalHarness{portal: NewPortal(PortalDeps{Verifier: racing})}
+	racing.portal = h.portal
+
+	if rec := h.login("amy", amyPassword, "192.0.2.10"); rec.Code != http.StatusConflict {
+		t.Fatalf("got %d", rec.Code)
+	}
+	if rec := h.login("amy", amyPassword, "192.0.2.10"); rec.Code != http.StatusNoContent {
+		t.Fatalf("a retry after the change must work, got %d", rec.Code)
+	}
+}
+
+type racingVerifier struct {
+	portal *Portal
+	calls  int
+}
+
+func (r *racingVerifier) Verify(string, string) (bool, error) {
+	r.calls++
+	if r.calls == 1 {
+		r.portal.EndSessions("amy")
+	}
+
+	return true, nil
 }
 
 func TestPortalReportsAFailedPasswordCheckAsAServerError(t *testing.T) {
@@ -189,6 +262,7 @@ func (b *blockingVerifier) Verify(string, string) (bool, error) {
 func TestPortalLimitsConcurrentPasswordChecks(t *testing.T) {
 	blocker := &blockingVerifier{started: make(chan struct{}, portalMaxVerifying), release: make(chan struct{})}
 	h := &portalHarness{portal: NewPortal(PortalDeps{Verifier: blocker})}
+	h.portal.verifyWait = 50 * time.Millisecond
 
 	done := make(chan struct{})
 	for i := range portalMaxVerifying {
@@ -364,7 +438,7 @@ func TestUserSessionsExpireWhenIdleAndAtTheAbsoluteLimit(t *testing.T) {
 	sessions := newUserSessions(time.Hour, 12*time.Hour)
 	sessions.now = func() time.Time { return now }
 
-	token, err := sessions.create("amy")
+	token, err := sessions.create("amy", sessions.generation("amy"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +456,7 @@ func TestUserSessionsExpireWhenIdleAndAtTheAbsoluteLimit(t *testing.T) {
 		t.Fatal("idle session must expire")
 	}
 
-	token, _ = sessions.create("amy")
+	token, _ = sessions.create("amy", sessions.generation("amy"))
 	for range 13 {
 		now = now.Add(55 * time.Minute)
 		if _, ok := sessions.lookup(token); !ok {
@@ -392,5 +466,47 @@ func TestUserSessionsExpireWhenIdleAndAtTheAbsoluteLimit(t *testing.T) {
 	now = now.Add(10 * time.Minute)
 	if _, ok := sessions.lookup(token); ok {
 		t.Fatal("session must expire at the absolute limit even when active")
+	}
+}
+
+func TestUserSessionsKeepOnlyTheNewestPerUser(t *testing.T) {
+	now := time.Now()
+	sessions := newUserSessions(time.Hour, 12*time.Hour)
+	sessions.now = func() time.Time { return now }
+
+	var tokens []string
+	for range maxSessionsPerUser + 3 {
+		now = now.Add(time.Second)
+		token, err := sessions.create("amy", sessions.generation("amy"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tokens = append(tokens, token)
+	}
+	other, _ := sessions.create("bob", sessions.generation("bob"))
+
+	valid := 0
+	for _, token := range tokens {
+		if _, ok := sessions.lookup(token); ok {
+			valid++
+		}
+	}
+	if valid != maxSessionsPerUser {
+		t.Fatalf("%d sessions valid, want %d", valid, maxSessionsPerUser)
+	}
+	if _, ok := sessions.lookup(tokens[len(tokens)-1]); !ok {
+		t.Fatal("the newest session must survive")
+	}
+	if _, ok := sessions.lookup(other); !ok {
+		t.Fatal("other users must be unaffected")
+	}
+}
+
+func TestLogNameIsShortAndQuoted(t *testing.T) {
+	if got := logName(strings.Repeat("a", 500)); len(got) > maxLoggedName+2 {
+		t.Fatalf("got %d bytes", len(got))
+	}
+	if got := logName("line" + string(rune(10)) + "break"); strings.ContainsRune(got, 10) {
+		t.Fatalf("line breaks must be escaped, got %q", got)
 	}
 }

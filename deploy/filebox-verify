@@ -1,20 +1,22 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3 -Is
 # Checks an SFTP user's password for the filebox portal. Installed as
 # /usr/local/sbin/filebox-verify and run by the panel through sudo. Usage:
 #   filebox-verify <name>   password on stdin (one line)
-# Exit 0 when the password is right; 1 when it is wrong, the account is locked or is
-# not an SFTP user; 2 on usage or system errors.
+# Exit 0 when the password is right; 10 when it is wrong, the account is locked or expired,
+# or it is not an SFTP user; anything else (2 for usage and system errors) is a failure.
 import ctypes
 import grp
 import hmac
 import pwd
 import re
 import sys
+import time
 
 GROUP = "sftpusers"
 BASE = "/srv/sftp"
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{2,31}$")
 MAX_LINE = 1024
+MISMATCH = 10
 
 libcrypt = ctypes.CDLL("libcrypt.so.1")
 libcrypt.crypt.restype = ctypes.c_char_p
@@ -47,13 +49,23 @@ def is_sftp_user(name):
     )
 
 
-def stored_hash(name):
+def shadow_entry(name):
     with open("/etc/shadow", encoding="utf-8", errors="replace") as shadow:
         for line in shadow:
             fields = line.rstrip("\n").split(":")
             if fields[0] == name and len(fields) > 1:
-                return fields[1]
-    return ""
+                return fields
+    return None
+
+
+def account_expired(fields):
+    expire = fields[7] if len(fields) > 7 else ""
+    if not expire:
+        return False
+    try:
+        return int(expire) < int(time.time() // 86400)
+    except ValueError:
+        return True
 
 
 def matches(password, hashed):
@@ -78,12 +90,18 @@ def main():
         return 2
 
     name = sys.argv[1]
-    hashed = stored_hash(name) if NAME_RE.match(name) and is_sftp_user(name) else ""
-    if not hashed or hashed[0] in "!*":
+    fields = shadow_entry(name) if NAME_RE.match(name) and is_sftp_user(name) else None
+    hashed = fields[1] if fields else ""
+    if not hashed or hashed[0] in "!*" or account_expired(fields):
         burn(password)
-        return 1
-    return 0 if matches(password, hashed) else 1
+        return MISMATCH
+    return 0 if matches(password, hashed) else MISMATCH
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        code = main()
+    except Exception as error:
+        print(f"filebox-verify: {error}", file=sys.stderr)
+        code = 2
+    sys.exit(code)

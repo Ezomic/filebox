@@ -10,7 +10,10 @@ import (
 	"time"
 )
 
-const verifyMismatch = 1
+const (
+	verifyMismatch = 10
+	verifyTimeout  = 10 * time.Second
+)
 
 type execVerifier struct {
 	argv []string
@@ -23,7 +26,7 @@ func (v *execVerifier) Verify(name, password string) (bool, error) {
 		return false, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), helperTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), verifyTimeout)
 	defer cancel()
 
 	argv := append(append([]string{}, v.argv...), name)

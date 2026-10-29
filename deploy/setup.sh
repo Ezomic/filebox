@@ -157,6 +157,11 @@ EOF
 	fi
 	local p
 	for p in 22 "$SFTP_PORT"; do
+		# A reload briefly closes and reopens the listening sockets.
+		for _ in 1 2 3 4 5 6 7 8 9 10; do
+			ss -ltn "sport = :$p" | grep -q LISTEN && break
+			sleep 0.5
+		done
 		ss -ltn "sport = :$p" | grep -q LISTEN || die "sshd is not listening on port $p"
 	done
 }

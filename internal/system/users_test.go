@@ -123,7 +123,7 @@ func runFakeHelper(mode string) {
 	case "match":
 		os.Exit(0)
 	case "mismatch":
-		os.Exit(1)
+		os.Exit(10)
 	}
 	os.Exit(99)
 }
