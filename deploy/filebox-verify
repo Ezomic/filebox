@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+# Checks an SFTP user's password for the filebox portal. Installed as
+# /usr/local/sbin/filebox-verify and run by the panel through sudo. Usage:
+#   filebox-verify <name>   password on stdin (one line)
+# Exit 0 when the password is right; 1 when it is wrong, the account is locked or is
+# not an SFTP user; 2 on usage or system errors.
+import ctypes
+import grp
+import hmac
+import pwd
+import re
+import sys
+
+GROUP = "sftpusers"
+BASE = "/srv/sftp"
+NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{2,31}$")
+MAX_LINE = 1024
+
+libcrypt = ctypes.CDLL("libcrypt.so.1")
+libcrypt.crypt.restype = ctypes.c_char_p
+libcrypt.crypt.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+libcrypt.crypt_gensalt.restype = ctypes.c_char_p
+libcrypt.crypt_gensalt.argtypes = [ctypes.c_char_p, ctypes.c_ulong, ctypes.c_char_p, ctypes.c_int]
+
+
+def read_password():
+    line = sys.stdin.buffer.readline(MAX_LINE)
+    if not line.endswith(b"\n"):
+        return None
+    password = line[:-1]
+    if not password or b"\r" in password or b"\0" in password:
+        return None
+    return password
+
+
+def is_sftp_user(name):
+    try:
+        entry = pwd.getpwnam(name)
+        gid = grp.getgrnam(GROUP).gr_gid
+    except KeyError:
+        return False
+    return (
+        entry.pw_gid == gid
+        and entry.pw_uid >= 1000
+        and entry.pw_dir == f"{BASE}/{name}"
+        and entry.pw_shell == "/usr/sbin/nologin"
+    )
+
+
+def stored_hash(name):
+    with open("/etc/shadow", encoding="utf-8", errors="replace") as shadow:
+        for line in shadow:
+            fields = line.rstrip("\n").split(":")
+            if fields[0] == name and len(fields) > 1:
+                return fields[1]
+    return ""
+
+
+def matches(password, hashed):
+    got = libcrypt.crypt(password, hashed.encode())
+    return got is not None and hmac.compare_digest(got, hashed.encode())
+
+
+def burn(password):
+    # Unknown, locked and invalid accounts still pay for one hash so timing does not reveal them.
+    salt = libcrypt.crypt_gensalt(b"$y$", 0, None, 0)
+    if salt:
+        libcrypt.crypt(password, salt)
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("usage: filebox-verify <name>", file=sys.stderr)
+        return 2
+    password = read_password()
+    if password is None:
+        print("filebox-verify: expected one password line on stdin", file=sys.stderr)
+        return 2
+
+    name = sys.argv[1]
+    hashed = stored_hash(name) if NAME_RE.match(name) and is_sftp_user(name) else ""
+    if not hashed or hashed[0] in "!*":
+        burn(password)
+        return 1
+    return 0 if matches(password, hashed) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

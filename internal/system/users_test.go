@@ -120,6 +120,10 @@ func runFakeHelper(mode string) {
 	case "fail":
 		fmt.Fprintln(os.Stderr, "useradd: secret internal detail")
 		os.Exit(3)
+	case "match":
+		os.Exit(0)
+	case "mismatch":
+		os.Exit(1)
 	}
 	os.Exit(99)
 }
