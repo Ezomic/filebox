@@ -71,7 +71,7 @@ func errorMessage(t *testing.T, body string) string {
 
 func TestUsersRoutesRequireSession(t *testing.T) {
 	h := newHarness(t)
-	_ = h.store.SetInitialPassword(testPassword)
+	_ = h.store.SetInitialPassword(h.store.SetupToken(), testPassword)
 
 	routes := []struct{ method, path, body string }{
 		{"GET", "/api/users", ""},

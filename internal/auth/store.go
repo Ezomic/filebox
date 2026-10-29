@@ -5,10 +5,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -16,11 +18,14 @@ const (
 	MinPasswordLength = 12
 	iterations        = 600_000
 	keyLength         = 32
+	tokenBytes        = 16
+	tokenFile         = "setup-token"
 )
 
 var (
 	ErrAlreadyConfigured = errors.New("admin password is already set")
 	ErrPasswordTooShort  = errors.New("password is too short")
+	ErrInvalidSetupToken = errors.New("setup token is wrong")
 )
 
 type record struct {
@@ -30,10 +35,12 @@ type record struct {
 }
 
 type Store struct {
-	path string
+	path      string
+	tokenPath string
 
-	mu     sync.RWMutex
-	record *record
+	mu         sync.RWMutex
+	record     *record
+	setupToken string
 }
 
 func Open(dir string) (*Store, error) {
@@ -41,10 +48,14 @@ func Open(dir string) (*Store, error) {
 		return nil, err
 	}
 
-	store := &Store{path: filepath.Join(dir, "admin.json")}
+	store := &Store{path: filepath.Join(dir, "admin.json"), tokenPath: filepath.Join(dir, tokenFile)}
 
 	content, err := os.ReadFile(store.path)
 	if errors.Is(err, os.ErrNotExist) {
+		if store.setupToken, err = loadOrCreateToken(store.tokenPath); err != nil {
+			return nil, err
+		}
+
 		return store, nil
 	}
 	if err != nil {
@@ -67,16 +78,26 @@ func (s *Store) Configured() bool {
 	return s.record != nil
 }
 
-func (s *Store) SetInitialPassword(password string) error {
-	if len(password) < MinPasswordLength {
-		return ErrPasswordTooShort
-	}
+// SetupToken is empty once an admin exists.
+func (s *Store) SetupToken() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
+	return s.setupToken
+}
+
+func (s *Store) SetInitialPassword(token, password string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.record != nil {
 		return ErrAlreadyConfigured
+	}
+	if subtle.ConstantTimeCompare([]byte(token), []byte(s.setupToken)) != 1 {
+		return ErrInvalidSetupToken
+	}
+	if len(password) < MinPasswordLength {
+		return ErrPasswordTooShort
 	}
 
 	salt := make([]byte, 16)
@@ -93,6 +114,8 @@ func (s *Store) SetInitialPassword(password string) error {
 		return err
 	}
 	s.record = created
+	s.setupToken = ""
+	_ = os.Remove(s.tokenPath)
 
 	return nil
 }
@@ -137,4 +160,21 @@ func (s *Store) persist(r *record) error {
 	}
 
 	return os.Rename(temp, s.path)
+}
+
+// The token is kept on disk so it survives the restarts that happen before tailscale is up.
+func loadOrCreateToken(path string) (string, error) {
+	if content, err := os.ReadFile(path); err == nil {
+		if token := strings.TrimSpace(string(content)); len(token) == tokenBytes*2 {
+			return token, nil
+		}
+	}
+
+	raw := make([]byte, tokenBytes)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(raw)
+
+	return token, os.WriteFile(path, []byte(token+"\n"), 0o600)
 }

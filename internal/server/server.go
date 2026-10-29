@@ -170,15 +170,22 @@ type credentials struct {
 	Password string `json:"password"`
 }
 
+type setupRequest struct {
+	Token    string `json:"token"`
+	Password string `json:"password"`
+}
+
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
-	var body credentials
+	var body setupRequest
 	if !decodeJSON(w, r, &body) {
 		return
 	}
 
-	switch err := s.store.SetInitialPassword(body.Password); {
+	switch err := s.store.SetInitialPassword(body.Token, body.Password); {
 	case errors.Is(err, auth.ErrAlreadyConfigured):
 		writeError(w, http.StatusForbidden, "setup is already complete")
+	case errors.Is(err, auth.ErrInvalidSetupToken):
+		writeError(w, http.StatusForbidden, "wrong setup token")
 	case errors.Is(err, auth.ErrPasswordTooShort):
 		writeError(w, http.StatusUnprocessableEntity, "password must be at least 12 characters")
 	case err != nil:
