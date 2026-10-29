@@ -31,14 +31,14 @@ type PortalDeps struct {
 // Portal is the public, per-user web interface. It is a separate handler from the admin
 // panel so none of the admin routes exist on the listener that faces the internet.
 type Portal struct {
-	verifier  system.Verifier
-	sessions  *userSessions
-	ipLimit   *loginLimiter
-	userLimit *loginLimiter
-	verifying chan struct{}
+	verifier   system.Verifier
+	sessions   *userSessions
+	ipLimit    *loginLimiter
+	userLimit  *loginLimiter
+	verifying  chan struct{}
 	verifyWait time.Duration
-	pages     fs.FS
-	mux       *http.ServeMux
+	pages      fs.FS
+	mux        *http.ServeMux
 }
 
 func NewPortal(deps PortalDeps) *Portal {
@@ -52,13 +52,13 @@ func NewPortal(deps PortalDeps) *Portal {
 	}
 
 	p := &Portal{
-		verifier:  deps.Verifier,
-		sessions:  newUserSessions(portalIdleTTL, portalAbsoluteTTL),
-		ipLimit:   newLoginLimiter(portalIPFails, failWindow),
-		userLimit: newLoginLimiter(portalUserFails, failWindow),
-		verifying: make(chan struct{}, portalMaxVerifying),
+		verifier:   deps.Verifier,
+		sessions:   newUserSessions(portalIdleTTL, portalAbsoluteTTL),
+		ipLimit:    newLoginLimiter(portalIPFails, failWindow),
+		userLimit:  newLoginLimiter(portalUserFails, failWindow),
+		verifying:  make(chan struct{}, portalMaxVerifying),
 		verifyWait: portalVerifyWait,
-		pages:     pages,
+		pages:      pages,
 	}
 
 	p.mux = http.NewServeMux()
