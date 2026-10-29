@@ -53,6 +53,8 @@ func main() {
 			Files:      files,
 			Logs:       system.NewLogs(),
 			Power:      system.NewPower(),
+			Usage:      system.NewUsage(*filesDir),
+			Smart:      system.NewSmart(),
 			PowerDelay: time.Second,
 			MaxUpload:  *maxUpload,
 		}),

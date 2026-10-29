@@ -38,24 +38,41 @@ function showError(message) {
 
 async function load() {
   try {
-    const { users } = await api('GET', '/api/users');
+    const { users, usageReady } = await api('GET', '/api/users');
     showError('');
-    render(users);
+    render(users, usageReady);
+    if (!usageReady) setTimeout(load, 5000);
   } catch (error) {
     showError(error.message === 'signed out' ? '' : 'Could not load the users.');
   }
 }
 
-function render(users) {
-  rows.replaceChildren(...users.map((user) => userRow(user.name)));
+function formatBytes(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function usageText(user, usageReady) {
+  if (user.bytes !== null) return formatBytes(user.bytes);
+  return usageReady ? '-' : 'calculating...';
+}
+
+function render(users, usageReady) {
+  rows.replaceChildren(...users.map((user) => userRow(user, usageReady)));
   byId('empty').hidden = users.length > 0;
 }
 
-function userRow(name) {
+function userRow(user, usageReady) {
   const row = el('tr');
   const actions = el('td', undefined, 'row-actions');
-  row.append(el('td', name, 'name'), actions);
-  showActions(actions, name);
+  row.append(el('td', user.name, 'name'), el('td', usageText(user, usageReady), 'detail'), actions);
+  showActions(actions, user.name);
   return row;
 }
 

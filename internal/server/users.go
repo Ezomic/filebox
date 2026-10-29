@@ -9,7 +9,8 @@ import (
 )
 
 type userEntry struct {
-	Name string `json:"name"`
+	Name  string  `json:"name"`
+	Bytes *uint64 `json:"bytes"`
 }
 
 type newUser struct {
@@ -36,11 +37,16 @@ func (s *Server) listUsers(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
+	sizes, ready := s.usage.Sizes()
 	entries := make([]userEntry, 0, len(names))
 	for _, name := range names {
-		entries = append(entries, userEntry{Name: name})
+		entry := userEntry{Name: name}
+		if size, ok := sizes[name]; ready && ok {
+			entry.Bytes = &size
+		}
+		entries = append(entries, entry)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"users": entries})
+	writeJSON(w, http.StatusOK, map[string]any{"users": entries, "usageReady": ready})
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {

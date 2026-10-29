@@ -60,7 +60,7 @@ install_packages() {
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update -qq
 	apt-get install -y -qq --no-install-recommends \
-		ca-certificates curl gnupg jq sudo openssh-server fail2ban nftables python3-systemd
+		ca-certificates curl gnupg jq sudo openssh-server fail2ban nftables python3-systemd smartmontools
 
 	log "Adding the Tailscale apt repository"
 	install -d -m 0755 /usr/share/keyrings
@@ -219,6 +219,7 @@ EOF
 install_helpers() {
 	log "Installing the user helper and sudo rule"
 	install -m 0750 -o root -g filebox "$SRC/filebox-user" /usr/local/sbin/filebox-user
+	install -m 0750 -o root -g filebox "$SRC/filebox-smart" /usr/local/sbin/filebox-smart
 	install -m 0750 -o root -g root "$SRC/filebox-dns-update" /usr/local/sbin/filebox-dns-update
 	install -m 0755 -o root -g root "$SRC/filebox-panel-start" /usr/local/libexec/filebox-panel-start
 
@@ -233,7 +234,8 @@ filebox ALL=(root) NOPASSWD: /usr/local/sbin/filebox-user list, \
 	/usr/local/sbin/filebox-user passwd *, \
 	/usr/bin/systemctl restart ssh, \
 	/usr/bin/systemctl poweroff, \
-	/usr/bin/systemctl reboot
+	/usr/bin/systemctl reboot, \
+	/usr/local/sbin/filebox-smart
 EOF
 	visudo -cf "$tmp" >/dev/null || die "generated sudoers rule is invalid"
 	install -m 0440 -o root -g root "$tmp" /etc/sudoers.d/filebox

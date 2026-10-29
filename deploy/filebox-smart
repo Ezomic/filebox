@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Prints one smartctl JSON document per line for every physical disk. Installed as
+# /usr/local/sbin/filebox-smart and run by the panel through sudo. Read-only: it never
+# starts a self-test, and -n standby keeps it from waking a sleeping disk.
+set -uo pipefail
+
+export LC_ALL=C
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+readonly DEVICE_RE='^/dev/(sd[a-z]+|hd[a-z]+|nvme[0-9]+)$'
+
+command -v smartctl >/dev/null || {
+	echo "filebox-smart: smartctl is not installed" >&2
+	exit 1
+}
+
+while IFS= read -r dev; do
+	[[ $dev =~ $DEVICE_RE ]] || continue
+	# smartctl sets exit bits for warnings and failing disks; the JSON is still what we want.
+	smartctl -j -H -A -n standby "$dev" | jq -c . || true
+done < <(smartctl --scan -j | jq -r '.devices[].name')
