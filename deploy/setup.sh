@@ -249,6 +249,7 @@ install_helpers() {
 	install -m 0750 -o root -g filebox "$SRC/filebox-verify" /usr/local/sbin/filebox-verify
 	install -m 0750 -o root -g root "$SRC/filebox-dns-update" /usr/local/sbin/filebox-dns-update
 	install -m 0750 -o root -g root "$SRC/filebox-portal-cert" /usr/local/sbin/filebox-portal-cert
+	install -m 0750 -o root -g root "$SRC/filebox-update" /usr/local/sbin/filebox-update
 	install -m 0755 -o root -g root "$SRC/filebox-panel-start" /usr/local/libexec/filebox-panel-start
 
 	local tmp
@@ -287,6 +288,10 @@ install_services() {
 }
 
 print_next_steps() {
+	if [ -n "${FILEBOX_UPDATE:-}" ]; then
+		echo "Update finished. Roll back with: filebox-update rollback"
+		return
+	fi
 	cat <<EOF
 
 Setup finished. Do these in order:

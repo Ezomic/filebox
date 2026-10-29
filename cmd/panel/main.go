@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -20,6 +21,9 @@ import (
 	"github.com/Ezomic/filebox/internal/tlsutil"
 )
 
+// Set at build time: -ldflags "-X main.version=v1.2.3".
+var version = "dev"
+
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8443", "address to listen on, normally the Tailscale IP")
 	dataDir := flag.String("data", "./data", "directory for the admin password and TLS certificate")
@@ -30,7 +34,14 @@ func main() {
 	portalListen := flag.String("portal-listen", "", "address for the public user portal, empty to disable it")
 	portalCert := flag.String("portal-cert", "", "PEM certificate for the portal")
 	portalKey := flag.String("portal-key", "", "PEM private key for the portal")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
+	log.Printf("filebox-panel %s", version)
 
 	store, err := auth.Open(*dataDir)
 	if err != nil {
@@ -68,6 +79,7 @@ func main() {
 		MaxUpload:  *maxUpload,
 
 		OnUserChanged: portal.EndSessions,
+		Version:       version,
 	}
 	var portalCerts *tlsutil.Reloader
 	if *portalListen != "" {

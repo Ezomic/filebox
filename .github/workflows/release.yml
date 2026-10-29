@@ -22,9 +22,11 @@ jobs:
           GOOS: linux
           GOARCH: amd64
         run: |
-          go build -trimpath -ldflags '-s -w' -o filebox-panel ./cmd/panel
+          go build -trimpath -ldflags "-s -w -X main.version=$GITHUB_REF_NAME" -o filebox-panel ./cmd/panel
           sha256sum filebox-panel > filebox-panel.sha256
+          tar -czf deploy.tar.gz deploy
+          sha256sum deploy.tar.gz > deploy.tar.gz.sha256
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" filebox-panel filebox-panel.sha256 --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" filebox-panel filebox-panel.sha256 deploy.tar.gz deploy.tar.gz.sha256 --title "$GITHUB_REF_NAME" --generate-notes
