@@ -9,7 +9,8 @@ Group=filebox
 ExecStart=/usr/local/libexec/filebox-panel-start
 Restart=on-failure
 RestartSec=10
-UMask=0077
+# Group-writable so SFTP users (group sftpusers) can use what the panel creates.
+UMask=0007
 
 # The panel runs the sudo helper (filebox-user) as a child, and that child
 # inherits every restriction below. So: no NoNewPrivileges (blocks sudo's setuid),

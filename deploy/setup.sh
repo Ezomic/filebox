@@ -74,6 +74,10 @@ create_accounts() {
 	getent passwd filebox >/dev/null ||
 		useradd --system --user-group --no-create-home --home-dir /var/lib/filebox \
 			--shell /usr/sbin/nologin filebox
+	# sftpusers: reach the users' files directories (setgid, group-writable).
+	# systemd-journal: read the sshd and panel logs.
+	usermod -aG sftpusers filebox
+	getent group systemd-journal >/dev/null && usermod -aG systemd-journal filebox
 
 	install -d -o root -g root -m 0755 /srv/sftp
 	install -d -o filebox -g filebox -m 0750 /var/lib/filebox
@@ -98,6 +102,7 @@ configure_sshd() {
 # Managed by filebox setup.sh
 Port 22
 Port $SFTP_PORT
+DenyUsers filebox
 PermitRootLogin prohibit-password
 PasswordAuthentication no
 KbdInteractiveAuthentication no
@@ -118,7 +123,7 @@ Match LocalPort 22
 # for), and forwarding, TTYs and key files are all off.
 Match Group sftpusers
     ChrootDirectory %h
-    ForceCommand internal-sftp -d /files
+    ForceCommand internal-sftp -d /files -u 0007
     PasswordAuthentication yes
     AuthorizedKeysFile none
     PermitTTY no

@@ -91,7 +91,9 @@ cmd_create() {
 		die "could not create user"
 	created=1
 	install -d -o root -g root -m 0755 -- "$home"
-	install -d -o "$name" -g "$GROUP" -m 0700 -- "$home/files"
+	# setgid group-rwx so the panel (member of $GROUP) can reach the files; other SFTP
+	# users share the group but are chrooted to their own home and have no shell.
+	install -d -o "$name" -g "$GROUP" -m 2770 -- "$home/files"
 	set_password "$name" || die "could not set password"
 	created=0
 	trap - EXIT
@@ -108,6 +110,8 @@ cmd_delete() {
 	if [ -d "$BASE/$name" ] && [ ! -L "$BASE/$name" ]; then
 		archive=$BASE/$name.deleted-$(date +%Y%m%d%H%M%S)
 		mv -T -- "$BASE/$name" "$archive" || die "user deleted but could not archive the home"
+		# The old uid could be reused by a later user, so the archive must not stay theirs.
+		chown root:root -- "$archive"
 		chmod 0700 -- "$archive"
 	fi
 }
