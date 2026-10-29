@@ -7,15 +7,41 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <main>
+  <main class="wide">
     <header class="bar">
       <h1>Your files</h1>
-      <button type="button" id="logout">Sign out</button>
+      <nav class="actions">
+        <a class="link" href="/password">Password</a>
+        <button class="link" id="logout" type="button">Sign out</button>
+      </nav>
     </header>
+    <p class="error" id="status" role="status"></p>
     <section class="card">
-      <p>Signed in as <strong id="user"></strong>.</p>
+      <nav class="crumbs" id="crumbs" aria-label="Folder path"></nav>
+      <table id="files">
+        <tbody id="file-rows"></tbody>
+      </table>
+      <p class="detail" id="empty" hidden>This folder is empty.</p>
     </section>
+    <section class="card stacked">
+      <div class="label">Upload a file here</div>
+      <div class="toolbar">
+        <input type="file" id="upload-input" aria-label="File to upload">
+        <label class="check"><input type="checkbox" id="upload-overwrite"> Replace if it exists</label>
+        <button type="button" id="upload-start">Upload</button>
+      </div>
+      <progress id="upload-progress" max="100" value="0" hidden></progress>
+      <p class="detail" id="upload-detail" role="status"></p>
+    </section>
+    <form class="card stacked" id="folder-form" autocomplete="off">
+      <div class="label">New folder in this folder</div>
+      <div class="toolbar">
+        <input type="text" id="folder-name" required maxlength="255" aria-label="Folder name" autocapitalize="none" spellcheck="false">
+        <button type="submit">Create folder</button>
+      </div>
+      <p class="error" id="folder-error" role="alert"></p>
+    </form>
   </main>
-  <script src="/static/home.js"></script>
+  <script src="/static/files.js"></script>
 </body>
 </html>

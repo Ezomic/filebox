@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -26,12 +27,19 @@ const (
 
 type PortalDeps struct {
 	Verifier system.Verifier
+	Users    system.Users
+	// OpenFiles returns a Files confined to that user's own folder; it is closed after each request.
+	OpenFiles func(user string) (system.Files, error)
+	MaxUpload int64
 }
 
 // Portal is the public, per-user web interface. It is a separate handler from the admin
 // panel so none of the admin routes exist on the listener that faces the internet.
 type Portal struct {
 	verifier   system.Verifier
+	users      system.Users
+	openFiles  func(user string) (system.Files, error)
+	maxUpload  int64
 	sessions   *userSessions
 	ipLimit    *loginLimiter
 	userLimit  *loginLimiter
@@ -53,6 +61,9 @@ func NewPortal(deps PortalDeps) *Portal {
 
 	p := &Portal{
 		verifier:   deps.Verifier,
+		users:      deps.Users,
+		openFiles:  deps.OpenFiles,
+		maxUpload:  deps.MaxUpload,
 		sessions:   newUserSessions(portalIdleTTL, portalAbsoluteTTL),
 		ipLimit:    newLoginLimiter(portalIPFails, failWindow),
 		userLimit:  newLoginLimiter(portalUserFails, failWindow),
@@ -62,13 +73,22 @@ func NewPortal(deps PortalDeps) *Portal {
 	}
 
 	p.mux = http.NewServeMux()
-	p.mux.Handle("GET /static/style.css", http.StripPrefix("/static/", http.FileServerFS(sharedStyle{shared})))
+	p.mux.Handle("GET /static/style.css", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
+	p.mux.Handle("GET /static/files.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(p.pages))))
 	p.mux.HandleFunc("GET /{$}", p.homePage)
 	p.mux.HandleFunc("GET /login", p.loginPage)
 	p.mux.HandleFunc("POST /api/login", p.login)
 	p.mux.HandleFunc("POST /api/logout", p.requireSession(p.logout))
 	p.mux.HandleFunc("GET /api/me", p.requireSession(p.me))
+	p.mux.HandleFunc("PUT /api/me/password", p.requireSession(p.changePassword))
+	p.mux.HandleFunc("GET /password", p.passwordPage)
+	p.mux.HandleFunc("GET /api/files", p.fileRoute(fileHandlers.listFiles))
+	p.mux.HandleFunc("DELETE /api/files", p.fileRoute(fileHandlers.deleteFile))
+	p.mux.HandleFunc("GET /api/files/download", p.fileRoute(fileHandlers.downloadFile))
+	p.mux.HandleFunc("PUT /api/files/content", p.fileRoute(fileHandlers.uploadFile))
+	p.mux.HandleFunc("POST /api/files/folder", p.fileRoute(fileHandlers.createFolder))
+	p.mux.HandleFunc("POST /api/files/rename", p.fileRoute(fileHandlers.renameFile))
 
 	return p
 }
@@ -84,11 +104,12 @@ func (p *Portal) EndSessions(user string) {
 	p.sessions.destroyUser(user)
 }
 
-// sharedStyle exposes only the panel stylesheet from the admin assets, never its scripts or pages.
-type sharedStyle struct{ fs.FS }
+// sharedAssets exposes only the stylesheet and the file browser script from the admin
+// assets, never the admin pages or its other scripts.
+type sharedAssets struct{ fs.FS }
 
-func (s sharedStyle) Open(name string) (fs.File, error) {
-	if name != "style.css" {
+func (s sharedAssets) Open(name string) (fs.File, error) {
+	if name != "style.css" && name != "files.js" {
 		return nil, fs.ErrNotExist
 	}
 
@@ -101,6 +122,14 @@ func (p *Portal) homePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeFileFS(w, r, p.pages, "index.html")
+}
+
+func (p *Portal) passwordPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := p.currentUser(r); !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	http.ServeFileFS(w, r, p.pages, "password.html")
 }
 
 func (p *Portal) loginPage(w http.ResponseWriter, r *http.Request) {
@@ -258,4 +287,64 @@ func (p *Portal) requireSession(next func(http.ResponseWriter, *http.Request, st
 		}
 		next(w, r, user)
 	}
+}
+
+// The user's files folder is opened per request, so a handler can only ever see the signed-in user's own files.
+func (p *Portal) fileRoute(call func(fileHandlers, http.ResponseWriter, *http.Request)) http.HandlerFunc {
+	return p.requireSession(func(w http.ResponseWriter, r *http.Request, user string) {
+		files, err := p.openFiles(user)
+		if err != nil {
+			log.Printf("portal: open files for %q: %v", user, err)
+			writeError(w, http.StatusInternalServerError, "could not open your files")
+			return
+		}
+		if closer, ok := files.(io.Closer); ok {
+			defer closer.Close()
+		}
+		call(fileHandlers{files: files, maxUpload: p.maxUpload}, w, r)
+	})
+}
+
+type passwordChange struct {
+	Current  string `json:"current"`
+	Password string `json:"password"`
+}
+
+func (p *Portal) changePassword(w http.ResponseWriter, r *http.Request, user string) {
+	var body passwordChange
+	if !decodeJSON(w, r, &body) || !validPassword(w, body.Password) {
+		return
+	}
+
+	ip := clientIP(r)
+	if !p.ipLimit.reserve(ip) || !p.userLimit.reserve(user) {
+		log.Printf("portal: password change blocked user=%q ip=%s", user, ip)
+		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return
+	}
+	ok, err := p.verify(user, body.Current)
+	switch {
+	case errors.Is(err, errPortalBusy):
+		writeError(w, http.StatusServiceUnavailable, "busy, try again in a moment")
+		return
+	case err != nil:
+		log.Printf("portal: password check failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "could not check the password right now")
+		return
+	case !ok:
+		log.Printf("portal: password change failed user=%q ip=%s", user, ip)
+		writeError(w, http.StatusUnauthorized, "your current password is wrong")
+		return
+	}
+	p.ipLimit.reset(ip)
+	p.userLimit.reset(user)
+
+	if err := p.users.SetPassword(user, body.Password); err != nil {
+		log.Printf("portal: change password for %q: %v", user, err)
+		writeError(w, http.StatusInternalServerError, "could not change the password")
+		return
+	}
+	log.Printf("portal: password changed user=%s ip=%s", user, ip)
+	p.sessions.destroyUser(user)
+	w.WriteHeader(http.StatusNoContent)
 }
