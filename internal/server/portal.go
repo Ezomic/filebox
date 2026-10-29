@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -96,7 +97,25 @@ func NewPortal(deps PortalDeps) *Portal {
 func (p *Portal) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	header := w.Header()
 	header.Set("Strict-Transport-Security", "max-age=31536000")
+	if !sameOrigin(r) {
+		http.Error(w, "cross-origin request refused", http.StatusForbidden)
+
+		return
+	}
 	securityHeaders(p.mux).ServeHTTP(w, r)
+}
+
+func sameOrigin(r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+
+	return err == nil && parsed.Host == r.Host
 }
 
 // EndSessions signs a user out everywhere, for example after an admin changes or deletes the account.

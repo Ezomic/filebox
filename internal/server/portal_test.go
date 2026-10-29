@@ -510,3 +510,28 @@ func TestLogNameIsShortAndQuoted(t *testing.T) {
 		t.Fatalf("line breaks must be escaped, got %q", got)
 	}
 }
+
+func TestPortalRefusesCrossOriginWrites(t *testing.T) {
+	h := newPortalHarness(t)
+	cookie := h.signedIn(t, "amy", amyPassword)
+
+	for origin, want := range map[string]int{
+		"https://evil.example": http.StatusForbidden,
+		"null":                 http.StatusForbidden,
+		"https://example.com":  http.StatusNoContent,
+		"":                     http.StatusNoContent,
+	} {
+		req := httptest.NewRequest("POST", "https://example.com/api/logout", nil)
+		req.RemoteAddr = "192.0.2.10:5555"
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.portal.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Fatalf("origin %q: got %d, want %d", origin, rec.Code, want)
+		}
+		cookie = h.signedIn(t, "amy", amyPassword)
+	}
+}
