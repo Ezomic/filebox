@@ -30,19 +30,24 @@ type Deps struct {
 	Users     system.Users
 	Files     system.Files
 	Logs      system.Logs
+	Power     system.Power
 	MaxUpload int64
+	// PowerDelay is how long shutdown and reboot wait so the response can reach the browser first.
+	PowerDelay time.Duration
 }
 
 type Server struct {
-	store     *auth.Store
-	host      system.Host
-	users     system.Users
-	files     system.Files
-	logs      system.Logs
-	maxUpload int64
-	sessions  *sessions
-	limiter   *loginLimiter
-	pages     fs.FS
+	store      *auth.Store
+	host       system.Host
+	users      system.Users
+	files      system.Files
+	logs       system.Logs
+	power      system.Power
+	powerDelay time.Duration
+	maxUpload  int64
+	sessions   *sessions
+	limiter    *loginLimiter
+	pages      fs.FS
 }
 
 func New(store *auth.Store, deps Deps) http.Handler {
@@ -52,15 +57,17 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	}
 
 	s := &Server{
-		store:     store,
-		host:      deps.Host,
-		users:     deps.Users,
-		files:     deps.Files,
-		logs:      deps.Logs,
-		maxUpload: deps.MaxUpload,
-		sessions:  newSessions(sessionTTL),
-		limiter:   newLoginLimiter(maxLoginFails, failWindow),
-		pages:     pages,
+		store:      store,
+		host:       deps.Host,
+		users:      deps.Users,
+		files:      deps.Files,
+		logs:       deps.Logs,
+		power:      deps.Power,
+		powerDelay: deps.PowerDelay,
+		maxUpload:  deps.MaxUpload,
+		sessions:   newSessions(sessionTTL),
+		limiter:    newLoginLimiter(maxLoginFails, failWindow),
+		pages:      pages,
 	}
 
 	mux := http.NewServeMux()
@@ -86,6 +93,9 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("POST /api/files/folder", s.requireSession(s.createFolder))
 	mux.HandleFunc("POST /api/files/rename", s.requireSession(s.renameFile))
 	mux.HandleFunc("GET /api/logs", s.requireSession(s.readLogs))
+	mux.HandleFunc("POST /api/system/restart-sshd", s.requireSession(s.powerAction(system.RestartSSHD)))
+	mux.HandleFunc("POST /api/system/shutdown", s.requireSession(s.powerAction(system.Shutdown)))
+	mux.HandleFunc("POST /api/system/reboot", s.requireSession(s.powerAction(system.Reboot)))
 
 	return securityHeaders(mux)
 }

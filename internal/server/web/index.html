@@ -45,6 +45,16 @@
         <div class="value" id="temp-value">-</div>
       </section>
     </div>
+    <section class="card stacked">
+      <div class="label">Machine</div>
+      <p class="detail">Restarting sshd keeps existing SFTP sessions. Shutdown and reboot take the panel offline; after a shutdown you must power the machine on by hand.</p>
+      <p class="error" id="power-status" role="status"></p>
+      <div class="nav-row" id="power-actions">
+        <button class="link" type="button" data-action="restart-sshd" data-label="Restart sshd">Restart sshd</button>
+        <button class="link danger" type="button" data-action="reboot" data-label="Reboot">Reboot</button>
+        <button class="link danger" type="button" data-action="shutdown" data-label="Shut down">Shut down</button>
+      </div>
+    </section>
   </main>
   <script src="/static/dashboard.js"></script>
 </body>
