@@ -44,11 +44,13 @@ func main() {
 	srv := &http.Server{
 		Addr: *listen,
 		Handler: server.New(store, server.Deps{
-			Host:      system.NewHost(*disk),
-			Users:     system.NewUsers(),
-			Files:     files,
-			Logs:      system.NewLogs(),
-			MaxUpload: *maxUpload,
+			Host:       system.NewHost(*disk),
+			Users:      system.NewUsers(),
+			Files:      files,
+			Logs:       system.NewLogs(),
+			Power:      system.NewPower(),
+			PowerDelay: time.Second,
+			MaxUpload:  *maxUpload,
 		}),
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,

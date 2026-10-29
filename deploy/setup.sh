@@ -220,7 +220,10 @@ Defaults:filebox !use_pty, !lecture, timestamp_timeout=0
 filebox ALL=(root) NOPASSWD: /usr/local/sbin/filebox-user list, \
 	/usr/local/sbin/filebox-user create *, \
 	/usr/local/sbin/filebox-user delete *, \
-	/usr/local/sbin/filebox-user passwd *
+	/usr/local/sbin/filebox-user passwd *, \
+	/usr/bin/systemctl restart ssh, \
+	/usr/bin/systemctl poweroff, \
+	/usr/bin/systemctl reboot
 EOF
 	visudo -cf "$tmp" >/dev/null || die "generated sudoers rule is invalid"
 	install -m 0440 -o root -g root "$tmp" /etc/sudoers.d/filebox

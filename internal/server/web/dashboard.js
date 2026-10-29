@@ -64,3 +64,58 @@ byId('logout').addEventListener('click', async () => {
 
 refresh();
 setInterval(refresh, REFRESH_MS);
+
+const POWER_MESSAGES = {
+  'restart-sshd': 'sshd restarted.',
+  reboot: 'Rebooting. The panel will be back in a minute or two.',
+  shutdown: 'Shutting down. Power the machine on by hand to bring it back.',
+};
+const CONFIRM_RESET_MS = 5000;
+const powerStatus = byId('power-status');
+let armed = null;
+let armTimer = null;
+
+function disarm() {
+  clearTimeout(armTimer);
+  if (armed) armed.textContent = armed.dataset.label;
+  armed = null;
+}
+
+async function runPower(button) {
+  const action = button.dataset.action;
+  disarm();
+  powerStatus.textContent = '';
+  for (const other of document.querySelectorAll('#power-actions button')) other.disabled = true;
+  try {
+    const response = await fetch(`/api/system/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+    });
+    if (response.status === 401) {
+      window.location.href = '/login';
+      return;
+    }
+    if (!response.ok) throw new Error('bad status');
+    powerStatus.textContent = POWER_MESSAGES[action];
+    if (action === 'restart-sshd') {
+      for (const other of document.querySelectorAll('#power-actions button')) other.disabled = false;
+    }
+  } catch {
+    powerStatus.textContent = 'That did not work. Check the panel log.';
+    for (const other of document.querySelectorAll('#power-actions button')) other.disabled = false;
+  }
+}
+
+byId('power-actions').addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-action]');
+  if (!button) return;
+  if (armed !== button) {
+    disarm();
+    armed = button;
+    button.textContent = `Click again to ${button.dataset.label.toLowerCase()}`;
+    armTimer = setTimeout(disarm, CONFIRM_RESET_MS);
+    return;
+  }
+  runPower(button);
+});
