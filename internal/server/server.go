@@ -38,6 +38,8 @@ type Deps struct {
 	PowerDelay time.Duration
 	// OnUserChanged runs after an admin changes a user's password or deletes the user.
 	OnUserChanged func(name string)
+	// PortalCertExpiry reports when the public portal certificate expires; nil when the portal is off.
+	PortalCertExpiry func() time.Time
 }
 
 type Server struct {
@@ -56,7 +58,8 @@ type Server struct {
 	pages      fs.FS
 	fh         fileHandlers
 
-	onUserChanged func(name string)
+	onUserChanged    func(name string)
+	portalCertExpiry func() time.Time
 }
 
 func New(store *auth.Store, deps Deps) http.Handler {
@@ -81,7 +84,8 @@ func New(store *auth.Store, deps Deps) http.Handler {
 		pages:      pages,
 		fh:         fileHandlers{files: deps.Files, maxUpload: deps.MaxUpload},
 
-		onUserChanged: deps.OnUserChanged,
+		onUserChanged:    deps.OnUserChanged,
+		portalCertExpiry: deps.PortalCertExpiry,
 	}
 
 	mux := http.NewServeMux()
@@ -96,6 +100,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", s.requireSession(s.logout))
 	mux.HandleFunc("GET /api/metrics", s.requireSession(s.metrics))
+	mux.HandleFunc("GET /api/portal", s.requireSession(s.portalStatus))
 	mux.HandleFunc("GET /api/users", s.requireSession(s.listUsers))
 	mux.HandleFunc("POST /api/users", s.requireSession(s.createUser))
 	mux.HandleFunc("PUT /api/users/{name}/password", s.requireSession(s.changeUserPassword))
@@ -236,6 +241,19 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) portalStatus(w http.ResponseWriter, _ *http.Request) {
+	if s.portalCertExpiry == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+		return
+	}
+	expires := s.portalCertExpiry()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled":      true,
+		"certExpires":  expires.UTC().Format(time.RFC3339),
+		"certDaysLeft": int(time.Until(expires).Hours() / 24),
+	})
 }
 
 func (s *Server) metrics(w http.ResponseWriter, _ *http.Request) {

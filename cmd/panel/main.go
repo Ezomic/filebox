@@ -56,21 +56,31 @@ func main() {
 		MaxUpload: *maxUpload,
 	})
 
-	srv := &http.Server{
-		Addr: *listen,
-		Handler: server.New(store, server.Deps{
-			Host:       system.NewHost(*disk),
-			Users:      users,
-			Files:      files,
-			Logs:       system.NewLogs(),
-			Power:      system.NewPower(),
-			Usage:      system.NewUsage(*filesDir),
-			Smart:      system.NewSmart(),
-			PowerDelay: time.Second,
-			MaxUpload:  *maxUpload,
+	deps := server.Deps{
+		Host:       system.NewHost(*disk),
+		Users:      users,
+		Files:      files,
+		Logs:       system.NewLogs(),
+		Power:      system.NewPower(),
+		Usage:      system.NewUsage(*filesDir),
+		Smart:      system.NewSmart(),
+		PowerDelay: time.Second,
+		MaxUpload:  *maxUpload,
 
-			OnUserChanged: portal.EndSessions,
-		}),
+		OnUserChanged: portal.EndSessions,
+	}
+	var portalCerts *tlsutil.Reloader
+	if *portalListen != "" {
+		portalCerts, err = tlsutil.NewReloader(*portalCert, *portalKey)
+		if err != nil {
+			log.Fatalf("load portal certificate: %v", err)
+		}
+		deps.PortalCertExpiry = portalCerts.NotAfter
+	}
+
+	srv := &http.Server{
+		Addr:              *listen,
+		Handler:           server.New(store, deps),
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -80,7 +90,7 @@ func main() {
 
 	servers := []*http.Server{srv}
 	if *portalListen != "" {
-		servers = append(servers, portalServer(*portalListen, *portalCert, *portalKey, portal))
+		servers = append(servers, portalServer(*portalListen, portalCerts, portal))
 	}
 
 	stop, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -107,16 +117,11 @@ func main() {
 	}
 }
 
-func portalServer(addr, certFile, keyFile string, portal http.Handler) *http.Server {
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		log.Fatalf("load portal certificate: %v", err)
-	}
-
+func portalServer(addr string, certs *tlsutil.Reloader, portal http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              addr,
 		Handler:           portal,
-		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
+		TLSConfig:         &tls.Config{GetCertificate: certs.GetCertificate, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

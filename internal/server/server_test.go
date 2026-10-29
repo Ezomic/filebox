@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Ezomic/filebox/internal/auth"
 	"github.com/Ezomic/filebox/internal/system"
@@ -322,5 +323,42 @@ func TestSetupPageAsksForTheToken(t *testing.T) {
 	h := newHarness(t)
 	if body := h.do("GET", "/setup", "", nil).Body.String(); !strings.Contains(body, `id="token"`) {
 		t.Fatal("setup page has no token field")
+	}
+}
+
+func TestPortalStatusNeedsSessionAndReportsExpiry(t *testing.T) {
+	store, err := auth.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetInitialPassword(store.SetupToken(), testPassword); err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Now().Add(10*24*time.Hour + time.Hour)
+	handler := New(store, Deps{Host: &system.Fake{}, PortalCertExpiry: func() time.Time { return expiry }})
+
+	do := func(cookie *http.Cookie) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/portal", nil)
+		req.RemoteAddr = "192.0.2.10:5555"
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		return rec
+	}
+	if rec := do(nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous got %d", rec.Code)
+	}
+
+	login := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"password":"`+testPassword+`"}`))
+	login.RemoteAddr = "192.0.2.10:5555"
+	login.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, login)
+	rec = do(sessionCookie(t, rec))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"certDaysLeft":10`) {
+		t.Fatalf("got %d %s", rec.Code, rec.Body)
 	}
 }
