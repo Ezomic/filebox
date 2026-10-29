@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -31,6 +32,9 @@ func main() {
 	store, err := auth.Open(*dataDir)
 	if err != nil {
 		log.Fatalf("open admin store: %v", err)
+	}
+	if !store.Configured() {
+		log.Printf("no admin yet: the setup token is in %s", filepath.Join(*dataDir, "setup-token"))
 	}
 	files, err := system.NewFiles(*filesDir)
 	if err != nil {

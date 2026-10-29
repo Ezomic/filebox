@@ -257,8 +257,9 @@ Setup finished. Do these in order:
 1. Join the tailnet (opens a login URL):
      tailscale up
 
-2. Open the panel from another device on your tailnet and COMPLETE SETUP NOW.
-   The first visitor to /setup chooses the admin password, so do not leave it:
+2. Open the panel from another device on your tailnet and set the admin password.
+   /setup asks for a one-time token; read it on this machine with:
+     cat /var/lib/filebox/setup-token
      https://<output of: tailscale ip -4>:$PANEL_PORT/setup
    (the certificate is self-signed, expect a browser warning)
 

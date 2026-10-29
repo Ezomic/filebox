@@ -94,9 +94,13 @@ func sessionCookie(t *testing.T, rec *httptest.ResponseRecorder) *http.Cookie {
 	return nil
 }
 
+func (h *harness) setup(token, password string) *httptest.ResponseRecorder {
+	return h.do("POST", "/api/setup", `{"token":"`+token+`","password":"`+password+`"}`, nil)
+}
+
 func (h *harness) signedIn(t *testing.T) *http.Cookie {
 	t.Helper()
-	if err := h.store.SetInitialPassword(testPassword); err != nil {
+	if err := h.store.SetInitialPassword(h.store.SetupToken(), testPassword); err != nil {
 		t.Fatal(err)
 	}
 
@@ -119,7 +123,7 @@ func TestPagesRedirectToSetupBeforeConfigured(t *testing.T) {
 func TestSetupCreatesPasswordAndSessionOnce(t *testing.T) {
 	h := newHarness(t)
 
-	rec := h.do("POST", "/api/setup", `{"password":"`+testPassword+`"}`, nil)
+	rec := h.setup(h.store.SetupToken(), testPassword)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("got %d: %s", rec.Code, rec.Body)
 	}
@@ -131,7 +135,7 @@ func TestSetupCreatesPasswordAndSessionOnce(t *testing.T) {
 		t.Fatalf("metrics after setup: %d", rec.Code)
 	}
 
-	second := h.do("POST", "/api/setup", `{"password":"another long password"}`, nil)
+	second := h.setup("", "another long password")
 	if second.Code != http.StatusForbidden {
 		t.Fatalf("second setup: got %d", second.Code)
 	}
@@ -142,7 +146,7 @@ func TestSetupCreatesPasswordAndSessionOnce(t *testing.T) {
 
 func TestSetupRejectsShortPassword(t *testing.T) {
 	h := newHarness(t)
-	if rec := h.do("POST", "/api/setup", `{"password":"short"}`, nil); rec.Code != http.StatusUnprocessableEntity {
+	if rec := h.setup(h.store.SetupToken(), "short"); rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("got %d", rec.Code)
 	}
 	if h.store.Configured() {
@@ -152,7 +156,7 @@ func TestSetupRejectsShortPassword(t *testing.T) {
 
 func TestLoginRejectsWrongPassword(t *testing.T) {
 	h := newHarness(t)
-	_ = h.store.SetInitialPassword(testPassword)
+	_ = h.store.SetInitialPassword(h.store.SetupToken(), testPassword)
 
 	rec := h.do("POST", "/api/login", `{"password":"wrong password here"}`, nil)
 	if rec.Code != http.StatusUnauthorized || len(rec.Result().Cookies()) != 0 {
@@ -162,7 +166,7 @@ func TestLoginRejectsWrongPassword(t *testing.T) {
 
 func TestLoginRequiresJSON(t *testing.T) {
 	h := newHarness(t)
-	_ = h.store.SetInitialPassword(testPassword)
+	_ = h.store.SetInitialPassword(h.store.SetupToken(), testPassword)
 
 	req := httptest.NewRequest("POST", "/api/login", strings.NewReader("password="+testPassword))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -176,7 +180,7 @@ func TestLoginRequiresJSON(t *testing.T) {
 
 func TestLoginLocksOutAfterRepeatedFailures(t *testing.T) {
 	h := newHarness(t)
-	_ = h.store.SetInitialPassword(testPassword)
+	_ = h.store.SetInitialPassword(h.store.SetupToken(), testPassword)
 
 	for range maxLoginFails {
 		h.do("POST", "/api/login", `{"password":"wrong password here"}`, nil)
@@ -190,7 +194,7 @@ func TestLoginLocksOutAfterRepeatedFailures(t *testing.T) {
 
 func TestMetricsRequireSession(t *testing.T) {
 	h := newHarness(t)
-	_ = h.store.SetInitialPassword(testPassword)
+	_ = h.store.SetInitialPassword(h.store.SetupToken(), testPassword)
 
 	if rec := h.do("GET", "/api/metrics", "", nil); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("got %d", rec.Code)
@@ -248,7 +252,7 @@ func TestDashboardPageNeedsSession(t *testing.T) {
 
 func TestStaticServesOnlyAssets(t *testing.T) {
 	h := newHarness(t)
-	_ = h.store.SetInitialPassword(testPassword)
+	_ = h.store.SetInitialPassword(h.store.SetupToken(), testPassword)
 
 	if rec := h.do("GET", "/static/style.css", "", nil); rec.Code != http.StatusOK {
 		t.Fatalf("css: got %d", rec.Code)
@@ -266,5 +270,53 @@ func TestSecurityHeadersPresent(t *testing.T) {
 
 	if rec.Header().Get("Content-Security-Policy") == "" || rec.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Fatalf("missing headers: %v", rec.Header())
+	}
+}
+
+func TestSetupRequiresTheToken(t *testing.T) {
+	h := newHarness(t)
+	token := h.store.SetupToken()
+	if token == "" {
+		t.Fatal("a fresh store must have a setup token")
+	}
+
+	missing := h.do("POST", "/api/setup", `{"password":"`+testPassword+`"}`, nil)
+	wrong := h.setup("00000000000000000000000000000000", testPassword)
+	for name, rec := range map[string]*httptest.ResponseRecorder{"missing": missing, "wrong": wrong} {
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s token: got %d", name, rec.Code)
+		}
+		if len(rec.Result().Cookies()) != 0 {
+			t.Fatalf("%s token must not start a session", name)
+		}
+	}
+	if h.store.Configured() {
+		t.Fatal("a bad token must not configure the panel")
+	}
+
+	if rec := h.setup(token, testPassword); rec.Code != http.StatusNoContent {
+		t.Fatalf("right token: got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestSetupTokenCannotBeReused(t *testing.T) {
+	h := newHarness(t)
+	token := h.store.SetupToken()
+	if rec := h.setup(token, testPassword); rec.Code != http.StatusNoContent {
+		t.Fatalf("got %d", rec.Code)
+	}
+
+	if rec := h.setup(token, "a different long password"); rec.Code != http.StatusForbidden {
+		t.Fatalf("reuse: got %d", rec.Code)
+	}
+	if !h.store.Verify(testPassword) || h.store.SetupToken() != "" {
+		t.Fatal("the token must be gone and the password unchanged")
+	}
+}
+
+func TestSetupPageAsksForTheToken(t *testing.T) {
+	h := newHarness(t)
+	if body := h.do("GET", "/setup", "", nil).Body.String(); !strings.Contains(body, `id="token"`) {
+		t.Fatal("setup page has no token field")
 	}
 }

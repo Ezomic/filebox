@@ -1,6 +1,7 @@
 const form = document.getElementById('auth-form');
 const errorBox = document.getElementById('error');
 const confirmField = document.getElementById('confirm');
+const tokenField = document.getElementById('token');
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -18,7 +19,7 @@ form.addEventListener('submit', async (event) => {
     const response = await fetch(form.dataset.endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify(tokenField ? { token: tokenField.value.trim(), password } : { password }),
     });
     if (response.ok) {
       window.location.href = '/';

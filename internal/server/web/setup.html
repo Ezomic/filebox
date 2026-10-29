@@ -10,9 +10,11 @@
   <main>
     <form class="card auth" id="auth-form" data-endpoint="/api/setup" data-min-length="12">
       <h1>Set admin password</h1>
-      <p>Choose the password for the panel. At least 12 characters.</p>
+      <p>Enter the setup token from <code>/var/lib/filebox/setup-token</code> on the machine, then choose the password for the panel. At least 12 characters.</p>
+      <label for="token">Setup token</label>
+      <input id="token" type="text" autocomplete="off" spellcheck="false" required autofocus>
       <label for="password">Password</label>
-      <input id="password" type="password" autocomplete="new-password" minlength="12" required autofocus>
+      <input id="password" type="password" autocomplete="new-password" minlength="12" required>
       <label for="confirm">Repeat password</label>
       <input id="confirm" type="password" autocomplete="new-password" minlength="12" required>
       <p class="error" id="error" role="alert"></p>
