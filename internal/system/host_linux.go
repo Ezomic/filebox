@@ -5,27 +5,24 @@ package system
 import (
 	"os"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"time"
 )
 
 type linuxHost struct {
 	diskPath string
-
-	mu       sync.Mutex
-	previous cpuSample
+	cpu      *cpuMeter
 }
 
 func NewHost(diskPath string) Host {
-	return &linuxHost{diskPath: diskPath}
+	return &linuxHost{diskPath: diskPath, cpu: &cpuMeter{read: readCPUSample, now: time.Now, sleep: time.Sleep}}
 }
 
 func (h *linuxHost) Metrics() (Metrics, error) {
 	var metrics Metrics
 	var err error
 
-	if metrics.CPUPercent, err = h.cpuPercent(); err != nil {
+	if metrics.CPUPercent, err = h.cpu.Percent(); err != nil {
 		return Metrics{}, err
 	}
 
@@ -55,29 +52,6 @@ func (h *linuxHost) Metrics() (Metrics, error) {
 	metrics.TempCelsius = hottestZone()
 
 	return metrics, nil
-}
-
-func (h *linuxHost) cpuPercent() (float64, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.previous.total == 0 {
-		first, err := readCPUSample()
-		if err != nil {
-			return 0, err
-		}
-		h.previous = first
-		time.Sleep(200 * time.Millisecond)
-	}
-
-	current, err := readCPUSample()
-	if err != nil {
-		return 0, err
-	}
-	percent := cpuPercent(h.previous, current)
-	h.previous = current
-
-	return percent, nil
 }
 
 func readCPUSample() (cpuSample, error) {
