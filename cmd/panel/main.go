@@ -48,13 +48,19 @@ func main() {
 		log.Fatalf("prepare certificate: %v", err)
 	}
 
-	portal := server.NewPortal(server.PortalDeps{Verifier: system.NewVerifier()})
+	users := system.NewUsers()
+	portal := server.NewPortal(server.PortalDeps{
+		Verifier:  system.NewVerifier(),
+		Users:     users,
+		OpenFiles: system.UserFilesOpener(*filesDir),
+		MaxUpload: *maxUpload,
+	})
 
 	srv := &http.Server{
 		Addr: *listen,
 		Handler: server.New(store, server.Deps{
 			Host:       system.NewHost(*disk),
-			Users:      system.NewUsers(),
+			Users:      users,
 			Files:      files,
 			Logs:       system.NewLogs(),
 			Power:      system.NewPower(),

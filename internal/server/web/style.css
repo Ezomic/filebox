@@ -164,3 +164,16 @@ pre.log {
 
 .disk { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--border); }
 .disk .name { font-weight: 600; }
+
+@media (max-width: 600px) {
+  #files, #files tbody { display: block; }
+  #files tr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+  #files td { border-top: 0; padding: 0; }
+  #files td.name { flex: 1 1 100%; min-width: 0; }
+  #files td.meta { flex: 1 1 auto; padding-left: 0; text-align: left; }
+  #files td.meta:empty { display: none; }
+  #files td.row-actions { flex: 1 1 100%; min-width: 0; text-align: left; }
+  #files td.row-actions > * { margin-left: 0; margin-right: 8px; }
+  form.inline { justify-content: flex-start; }
+  form.inline input { width: 100%; }
+}

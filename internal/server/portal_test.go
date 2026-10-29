@@ -350,7 +350,7 @@ func TestPortalHasNoAdminRoutes(t *testing.T) {
 	h := newPortalHarness(t)
 	cookie := h.signedIn(t, "amy", amyPassword)
 	for _, path := range []string{
-		"/users", "/files", "/logs", "/setup", "/api/users", "/api/files", "/api/metrics", "/api/disks",
+		"/users", "/files", "/logs", "/setup", "/api/users", "/api/metrics", "/api/disks",
 		"/api/logs", "/api/setup", "/api/system/reboot", "/static/auth.js", "/static/dashboard.js", "/static/users.js",
 	} {
 		for _, method := range []string{"GET", "POST", "PUT", "DELETE"} {

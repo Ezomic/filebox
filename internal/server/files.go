@@ -16,6 +16,12 @@ import (
 // between two chunks, so a big file can take hours while a stalled client is still dropped.
 const transferIdle = 2 * time.Minute
 
+// fileHandlers serves the file API for one Files root, so the admin panel and the user portal share one implementation.
+type fileHandlers struct {
+	files     system.Files
+	maxUpload int64
+}
+
 type pathBody struct {
 	Path string `json:"path"`
 }
@@ -29,12 +35,12 @@ func (s *Server) filesPage(w http.ResponseWriter, r *http.Request) {
 	s.protectedPage(w, r, "files.html")
 }
 
-func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
+func (a fileHandlers) listFiles(w http.ResponseWriter, r *http.Request) {
 	dir, ok := queryValue(w, r, "path")
 	if !ok {
 		return
 	}
-	entries, err := s.files.List(dir)
+	entries, err := a.files.List(dir)
 	if err != nil {
 		fileError(w, "list", dir, err)
 		return
@@ -42,12 +48,12 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"path": dir, "entries": entries})
 }
 
-func (s *Server) downloadFile(w http.ResponseWriter, r *http.Request) {
+func (a fileHandlers) downloadFile(w http.ResponseWriter, r *http.Request) {
 	name, ok := queryValue(w, r, "path")
 	if !ok {
 		return
 	}
-	file, info, err := s.files.Open(name)
+	file, info, err := a.files.Open(name)
 	if err != nil {
 		fileError(w, "download", name, err)
 		return
@@ -66,7 +72,7 @@ func (s *Server) downloadFile(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(&deadlineWriter{ResponseWriter: w, rc: http.NewResponseController(w)}, r, "", info.Modified, file)
 }
 
-func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
+func (a fileHandlers) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/octet-stream" {
 		writeError(w, http.StatusUnsupportedMediaType, "expected application/octet-stream")
 		return
@@ -79,14 +85,14 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if r.ContentLength > s.maxUpload {
+	if r.ContentLength > a.maxUpload {
 		writeError(w, http.StatusRequestEntityTooLarge, "the file is larger than the upload limit")
 		return
 	}
 
 	rc := http.NewResponseController(w)
-	body := &trackedReader{r: &deadlineReader{r: http.MaxBytesReader(w, r.Body, s.maxUpload), rc: rc}}
-	err := s.files.Write(name, body, overwrite)
+	body := &trackedReader{r: &deadlineReader{r: http.MaxBytesReader(w, r.Body, a.maxUpload), rc: rc}}
+	err := a.files.Write(name, body, overwrite)
 	_ = rc.SetWriteDeadline(time.Now().Add(transferIdle))
 
 	var tooLarge *http.MaxBytesError
@@ -105,36 +111,36 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
+func (a fileHandlers) createFolder(w http.ResponseWriter, r *http.Request) {
 	var body pathBody
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if err := s.files.Mkdir(body.Path); err != nil {
+	if err := a.files.Mkdir(body.Path); err != nil {
 		fileError(w, "create folder", body.Path, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, body)
 }
 
-func (s *Server) renameFile(w http.ResponseWriter, r *http.Request) {
+func (a fileHandlers) renameFile(w http.ResponseWriter, r *http.Request) {
 	var body renameBody
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if err := s.files.Rename(body.From, body.To); err != nil {
+	if err := a.files.Rename(body.From, body.To); err != nil {
 		fileError(w, "rename", body.From, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
+func (a fileHandlers) deleteFile(w http.ResponseWriter, r *http.Request) {
 	name, ok := queryValue(w, r, "path")
 	if !ok {
 		return
 	}
-	if err := s.files.Remove(name); err != nil {
+	if err := a.files.Remove(name); err != nil {
 		fileError(w, "delete", name, err)
 		return
 	}

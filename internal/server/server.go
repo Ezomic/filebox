@@ -54,6 +54,7 @@ type Server struct {
 	sessions   *sessions
 	limiter    *loginLimiter
 	pages      fs.FS
+	fh         fileHandlers
 
 	onUserChanged func(name string)
 }
@@ -78,6 +79,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 		sessions:   newSessions(sessionTTL),
 		limiter:    newLoginLimiter(maxLoginFails, failWindow),
 		pages:      pages,
+		fh:         fileHandlers{files: deps.Files, maxUpload: deps.MaxUpload},
 
 		onUserChanged: deps.OnUserChanged,
 	}
@@ -98,12 +100,12 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("POST /api/users", s.requireSession(s.createUser))
 	mux.HandleFunc("PUT /api/users/{name}/password", s.requireSession(s.changeUserPassword))
 	mux.HandleFunc("DELETE /api/users/{name}", s.requireSession(s.deleteUser))
-	mux.HandleFunc("GET /api/files", s.requireSession(s.listFiles))
-	mux.HandleFunc("DELETE /api/files", s.requireSession(s.deleteFile))
-	mux.HandleFunc("GET /api/files/download", s.requireSession(s.downloadFile))
-	mux.HandleFunc("PUT /api/files/content", s.requireSession(s.uploadFile))
-	mux.HandleFunc("POST /api/files/folder", s.requireSession(s.createFolder))
-	mux.HandleFunc("POST /api/files/rename", s.requireSession(s.renameFile))
+	mux.HandleFunc("GET /api/files", s.requireSession(s.fh.listFiles))
+	mux.HandleFunc("DELETE /api/files", s.requireSession(s.fh.deleteFile))
+	mux.HandleFunc("GET /api/files/download", s.requireSession(s.fh.downloadFile))
+	mux.HandleFunc("PUT /api/files/content", s.requireSession(s.fh.uploadFile))
+	mux.HandleFunc("POST /api/files/folder", s.requireSession(s.fh.createFolder))
+	mux.HandleFunc("POST /api/files/rename", s.requireSession(s.fh.renameFile))
 	mux.HandleFunc("GET /api/disks", s.requireSession(s.disks))
 	mux.HandleFunc("GET /api/logs", s.requireSession(s.readLogs))
 	mux.HandleFunc("POST /api/system/restart-sshd", s.requireSession(s.powerAction(system.RestartSSHD)))
