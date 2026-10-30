@@ -34,6 +34,20 @@ if [ -n "$SSH_KEY" ]; then
 	chroot /target chown -R "$FILEBOX_USER:$FILEBOX_USER" "/home/$FILEBOX_USER/.ssh"
 fi
 
+if [ -n "$WIFI_SSID" ]; then
+	PROFILE=/etc/NetworkManager/system-connections/filebox-wifi.nmconnection
+	if chroot /target nmcli --offline connection add type wifi con-name filebox-wifi ifname '*' \
+		ssid "$WIFI_SSID" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$WIFI_PSK" >"/target$PROFILE"; then
+		chmod 0600 "/target$PROFILE"
+		# NetworkManager leaves alone any interface listed here, and the installer lists the one it used.
+		printf 'auto lo\niface lo inet loopback\n' >/target/etc/network/interfaces
+		say "Wi-Fi profile written, NetworkManager handles cable and Wi-Fi"
+	else
+		rm -f "/target$PROFILE"
+		say "WARNING: could not write the Wi-Fi profile, keeping the installer's network setup"
+	fi
+fi
+
 install -m 0750 /filebox-update /target/usr/local/sbin/filebox-update
 install -m 0644 /filebox-firstboot.service /target/etc/systemd/system/filebox-firstboot.service
 mkdir -p /target/var/lib/filebox-firstboot /target/etc/systemd/system/multi-user.target.wants

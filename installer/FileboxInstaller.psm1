@@ -119,6 +119,15 @@ function Assert-InstallSettings {
             throw "Invalid or missing setting: $key"
         }
     }
+    if ($Settings.ContainsKey('WifiSsid') -and $Settings.WifiSsid) {
+        if ([string]$Settings.WifiSsid -cnotmatch '^[ -~]{1,32}$') { throw 'Invalid setting: WifiSsid (1 to 32 plain ASCII characters)' }
+        if (-not $Settings.ContainsKey('WifiPsk') -or [string]$Settings.WifiPsk -cnotmatch '^[ -~]{8,63}$') { throw 'Invalid or missing setting: WifiPsk (8 to 63 plain ASCII characters)' }
+    }
+    if ($Settings.ContainsKey('FirmwarePackages')) {
+        foreach ($package in @($Settings.FirmwarePackages)) {
+            if ([string]$package -cnotmatch '^firmware-[a-z0-9-]+$') { throw "Invalid firmware package name: $package" }
+        }
+    }
     if ($Settings.User -in @('root', 'filebox')) { throw 'The login name cannot be root or filebox.' }
     if ($Settings.DataAction -ne 'none') {
         if (-not $Settings.ContainsKey('DataPartUuid') -or [string]$Settings.DataPartUuid -cnotmatch '^[0-9a-fA-F-]{8,40}$') {
@@ -153,6 +162,22 @@ function New-PreseedText {
         '@@PASSWORD_HASH@@' = $Settings.PasswordHash
         '@@TIMEZONE@@'      = $Settings.Timezone
     }
+    $wifi = ''
+    $loadFirmware = 'false'
+    if ($Settings.ContainsKey('WifiSsid') -and $Settings.WifiSsid) {
+        $loadFirmware = 'true'
+        $wifi = (@(
+            "d-i netcfg/wireless_essid string $($Settings.WifiSsid)"
+            "d-i netcfg/wireless_essid_again string $($Settings.WifiSsid)"
+            'd-i netcfg/wireless_security_type select wpa'
+            "d-i netcfg/wireless_wpa string $($Settings.WifiPsk)"
+        ) -join "`n")
+    }
+    $packages = ''
+    if ($Settings.ContainsKey('FirmwarePackages') -and $Settings.FirmwarePackages) { $packages = ' network-manager wpasupplicant ' + (@($Settings.FirmwarePackages) -join ' ') }
+    $map['@@WIFI_LINES@@'] = $wifi
+    $map['@@LOAD_FIRMWARE@@'] = $loadFirmware
+    $map['@@EXTRA_PACKAGES@@'] = $packages
     foreach ($key in $map.Keys) { $text = $text.Replace($key, [string]$map[$key]) }
     if ($text -match '@@[A-Z_]+@@') { throw "Unfilled placeholder in preseed: $($Matches[0])" }
 
@@ -166,6 +191,9 @@ function New-ConfText {
     $data = ''
     if ($Settings.ContainsKey('DataPartUuid') -and $Settings.DataPartUuid) { $data = [string]$Settings.DataPartUuid }
     $cleanup = ''
+    $wifiSsid = ''
+    $wifiPsk = ''
+    if ($Settings.ContainsKey('WifiSsid') -and $Settings.WifiSsid) { $wifiSsid = [string]$Settings.WifiSsid; $wifiPsk = [string]$Settings.WifiPsk }
     if ($Settings.ContainsKey('CleanupPartUuid') -and $Settings.CleanupPartUuid) { $cleanup = [string]$Settings.CleanupPartUuid }
 
     $lines = @(
@@ -176,6 +204,8 @@ function New-ConfText {
         'CLEANUP_PARTUUID=' + (ConvertTo-ShellLiteral $cleanup)
         'FILEBOX_USER=' + (ConvertTo-ShellLiteral $Settings.User)
         'SSH_KEY=' + (ConvertTo-ShellLiteral $Settings.SshKey)
+        'WIFI_SSID=' + (ConvertTo-ShellLiteral $wifiSsid)
+        'WIFI_PSK=' + (ConvertTo-ShellLiteral $wifiPsk)
     )
 
     return (($lines -join "`n") + "`n")
@@ -269,6 +299,91 @@ function New-InstallerFileSet {
     return $files
 }
 
+function Get-WifiFirmwarePackage {
+    param([Parameter(Mandatory)][string]$PnpDeviceId)
+
+    $pci = @{ '8086' = 'firmware-iwlwifi'; '10EC' = 'firmware-realtek'; '168C' = 'firmware-atheros'; '14E4' = 'firmware-brcm80211'; '14C3' = 'firmware-mediatek'; '1814' = 'firmware-misc-nonfree' }
+    $usb = @{ '8087' = 'firmware-iwlwifi'; '0BDA' = 'firmware-realtek'; '0CF3' = 'firmware-atheros'; '0E8D' = 'firmware-mediatek'; '148F' = 'firmware-misc-nonfree' }
+    if ($PnpDeviceId -match '^PCI\\VEN_([0-9A-Fa-f]{4})') { return $pci[$Matches[1].ToUpper()] }
+    if ($PnpDeviceId -match '^USB\\VID_([0-9A-Fa-f]{4})') { return $usb[$Matches[1].ToUpper()] }
+
+    return $null
+}
+
+$script:TarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
+
+function Save-DebDataArchive {
+    param([Parameter(Mandatory)][string]$DebPath, [Parameter(Mandatory)][string]$OutDir)
+
+    $bytes = [System.IO.File]::ReadAllBytes($DebPath)
+    $ascii = [System.Text.Encoding]::ASCII
+    if ($ascii.GetString($bytes, 0, 8) -ne "!<arch>`n") { throw "$DebPath is not a .deb archive" }
+    $offset = 8
+    while ($offset + 60 -le $bytes.Length) {
+        $name = $ascii.GetString($bytes, $offset, 16).Trim()
+        $size = [int64]$ascii.GetString($bytes, $offset + 48, 10).Trim()
+        $offset += 60
+        if ($name -like 'data.tar*') {
+            $target = Join-Path $OutDir ($name.TrimEnd('/'))
+            $slice = New-Object byte[] $size
+            [Array]::Copy($bytes, $offset, $slice, 0, $size)
+            [System.IO.File]::WriteAllBytes($target, $slice)
+
+            return $target
+        }
+        $offset += $size + ($size % 2)
+    }
+
+    throw "No data archive inside $DebPath"
+}
+
+function Get-FirmwareFileSet {
+    param(
+        [Parameter(Mandatory)][string[]]$Packages,
+        [Parameter(Mandatory)][string]$WorkDir,
+        [string]$Mirror = 'https://deb.debian.org/debian',
+        [string]$Suite = 'trixie'
+    )
+
+    New-Item -ItemType Directory -Force $WorkDir | Out-Null
+    $client = New-Object System.Net.WebClient
+    try {
+        $indexGz = Join-Path $WorkDir 'Packages.gz'
+        $client.DownloadFile("$Mirror/dists/$Suite/non-free-firmware/binary-amd64/Packages.gz", $indexGz)
+        $in = [System.IO.File]::OpenRead($indexGz)
+        $gz = New-Object System.IO.Compression.GZipStream($in, [System.IO.Compression.CompressionMode]::Decompress)
+        $reader = New-Object System.IO.StreamReader($gz)
+        try { $index = $reader.ReadToEnd() } finally { $reader.Dispose(); $in.Dispose() }
+
+        $files = [ordered]@{}
+        foreach ($package in $Packages) {
+            $stanza = ($index -split "`n`n") | Where-Object { $_ -match "(?m)^Package: $([regex]::Escape($package))$" } | Select-Object -First 1
+            if (-not $stanza -or $stanza -notmatch '(?m)^Filename: (\S+)$') { throw "Firmware package $package not found in Debian $Suite" }
+            $filename = $Matches[1]
+            if ($stanza -notmatch '(?m)^SHA256: ([0-9a-f]{64})$') { throw "No checksum for $package" }
+            $expected = $Matches[1]
+            $deb = Join-Path $WorkDir ([System.IO.Path]::GetFileName($filename))
+            $client.DownloadFile("$Mirror/$filename", $deb)
+            if ((Get-FileHash -Algorithm SHA256 $deb).Hash.ToLower() -ne $expected) { throw "Checksum mismatch for $package" }
+
+            $dir = Join-Path $WorkDir $package
+            Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            $data = Save-DebDataArchive -DebPath $deb -OutDir $dir
+            & $script:TarExe -xf $data -C $dir
+            $fw = Join-Path $dir 'usr\lib\firmware'
+            if (-not (Test-Path $fw)) { $fw = Join-Path $dir 'lib\firmware' }
+            if (-not (Test-Path $fw)) { throw "No firmware files in $package" }
+            foreach ($file in Get-ChildItem $fw -Recurse -File) {
+                $relative = $file.FullName.Substring($fw.Length + 1).Replace('\', '/')
+                $files["lib/firmware/$relative"] = @{ Mode = 0x81A4; Data = [System.IO.File]::ReadAllBytes($file.FullName) }
+            }
+        }
+    } finally { $client.Dispose() }
+
+    return $files
+}
+
 function New-GrubConfig {
     param(
         [Parameter(Mandatory)][string]$KernelPath,
@@ -286,4 +401,4 @@ menuentry "filebox unattended install (erases the chosen partition)" {
 "@ -replace "`r`n", "`n"
 }
 
-Export-ModuleMember -Function New-Sha512Crypt, Assert-InstallSettings, New-PreseedText, New-ConfText, New-CpioArchive, New-PayloadInitrd, New-InstallerFileSet, New-GrubConfig, ConvertTo-ShellLiteral
+Export-ModuleMember -Function New-Sha512Crypt, Assert-InstallSettings, New-PreseedText, New-ConfText, New-CpioArchive, New-PayloadInitrd, New-InstallerFileSet, New-GrubConfig, ConvertTo-ShellLiteral, Get-WifiFirmwarePackage, Get-FirmwareFileSet

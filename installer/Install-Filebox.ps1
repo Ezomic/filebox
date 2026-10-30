@@ -9,6 +9,7 @@
   on a small new partition, adds a one-time boot entry and (after you type a confirmation) reboots.
 
   -DryRun    shows every step and changes nothing on the disks or in the boot configuration.
+  -Wifi      set up Wi-Fi without asking. Without a cable this happens anyway; the installer prefers a cable if one works.
   -Rollback  removes the boot entry and the staging partition again (before the install has run).
   -Answers   pre-filled answers for the prompts, for testing.
 
@@ -18,6 +19,7 @@
 param(
     [switch]$DryRun,
     [switch]$Rollback,
+    [switch]$Wifi,
     [string]$WorkDir = (Join-Path $env:ProgramData 'filebox-installer'),
     [string[]]$Answers = @()
 )
@@ -26,6 +28,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'FileboxInstaller.psm1') -Force
 
+$script:TarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
 $NetbootBase = 'https://deb.debian.org/debian/dists/trixie/main/installer-amd64/current/images'
 $ReleaseBase = 'https://github.com/Ezomic/filebox/releases'
 $EspGuid = '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}'
@@ -158,9 +161,11 @@ $bootLoader = (& bcdedit /enum '{current}') -join ' '
 if ($bootLoader -notmatch 'winload\.efi') { Stop-Wizard 'This PC boots in legacy BIOS mode. The wizard needs UEFI; use the USB method in docs/index.html.' }
 Say 'UEFI boot: yes'
 try { Say "Secure Boot: $(Confirm-SecureBootUEFI)" } catch { Say 'Secure Boot: unknown' }
-$wired = Get-NetAdapter -Physical | Where-Object { $_.Status -eq 'Up' -and $_.PhysicalMediaType -match '802.3' }
-if (-not $wired) { Stop-Wizard 'No connected wired (Ethernet) adapter found. The installer downloads Debian over the network and cannot use Wi-Fi. Plug in a cable.' }
-Say 'Wired network: yes'
+$wired = Get-NetAdapter -Physical | Where-Object { $_.Status -eq 'Up' -and $_.PhysicalMediaType -match '802\.3' }
+$wifiAdapter = Get-NetAdapter -Physical | Where-Object { $_.PhysicalMediaType -match '802\.11' } | Select-Object -First 1
+$useWifi = [bool]$Wifi -or (-not $wired)
+if ($useWifi -and -not $wifiAdapter) { Stop-Wizard 'No connected wired (Ethernet) adapter and no Wi-Fi adapter found. Plug in a cable.' }
+if ($wired) { Say 'Network: cable' } else { Say "Network: Wi-Fi ($($wifiAdapter.InterfaceDescription))" }
 
 Step '2. Your disks'
 $layout = Get-Layout
@@ -222,6 +227,40 @@ if ($keys) {
 $timezone = Ask 'Time zone' 'Europe/Amsterdam'
 $keymap = Ask 'Keyboard layout (us, gb, nl ...)' 'us'
 
+$wifiSettings = @{}
+if ($wired -and $wifiAdapter -and -not $Wifi) {
+    $useWifi = (Ask 'Also set up Wi-Fi, so the PC keeps working if you move it away from the cable? (yes/no)' 'yes') -eq 'yes'
+}
+$package = $null
+if ($useWifi) { $package = Get-WifiFirmwarePackage $wifiAdapter.PnPDeviceID }
+if ($useWifi -and -not $package) {
+    if (-not $wired) { Stop-Wizard "Unknown Wi-Fi chip ($($wifiAdapter.PnPDeviceID)). Debian cannot be given its firmware automatically. Use a cable or a USB Ethernet adapter." }
+    Say "Unknown Wi-Fi chip ($($wifiAdapter.PnPDeviceID)), continuing with the cable only."
+    $useWifi = $false
+}
+if ($useWifi) {
+    Step '3b. Wi-Fi'
+    Say "Wi-Fi firmware package: $package"
+    $currentSsid = ((& netsh wlan show interfaces) | Where-Object { $_ -match '^\s*SSID\s*:\s*(.+)$' } | ForEach-Object { $Matches[1].Trim() } | Select-Object -First 1)
+    $ssid = Ask 'Wi-Fi network name (SSID)' $currentSsid
+    $exportDir = Join-Path $WorkDir 'wifi-profile'
+    New-Item -ItemType Directory -Force $exportDir | Out-Null
+    $psk = ''
+    & netsh wlan export profile name="$ssid" key=clear folder="$exportDir" | Out-Null
+    $profileFile = Get-ChildItem $exportDir -Filter '*.xml' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($profileFile) {
+        $xml = [xml](Get-Content $profileFile.FullName -Raw)
+        $auth = $xml.WLANProfile.MSM.security.authEncryption.authentication
+        if ($auth -ne 'WPA2PSK' -and $auth -ne 'WPAPSK') { Remove-Item -Recurse -Force $exportDir; Stop-Wizard "That network uses $auth. Only WPA or WPA2 with a password is supported. Use a cable, or a hotspot with WPA2." }
+        $saved = $xml.WLANProfile.MSM.security.sharedKey.keyMaterial
+        if ($saved -and (Ask 'Use the Wi-Fi password saved in Windows for this network? (yes/no)' 'yes') -eq 'yes') { $psk = [string]$saved }
+    }
+    Remove-Item -Recurse -Force $exportDir -ErrorAction SilentlyContinue
+    if (-not $psk) { $psk = Ask-Secret 'Wi-Fi password (WPA/WPA2)' }
+    Say 'The Wi-Fi password is written into the installer on the staging partition and into the new server as plain text (root only).'
+    $wifiSettings = @{ WifiSsid = $ssid; WifiPsk = $psk; FirmwarePackages = @($package) }
+}
+
 $settings = @{
     Hostname = $hostname; User = $user; Timezone = $timezone; Keymap = $keymap
     TargetPartUuid = $target.PartUuid; TargetFsType = 'ntfs'
@@ -229,12 +268,14 @@ $settings = @{
     PasswordHash = (New-Sha512Crypt -Password $password)
 }
 $password = $null
+foreach ($key in $wifiSettings.Keys) { $settings[$key] = $wifiSettings[$key] }
 if ($data) { $settings.DataPartUuid = $data.PartUuid }
 try { Assert-InstallSettings $settings } catch { Stop-Wizard $_.Exception.Message }
 
 Step '4. Review'
 Say "Debian will REPLACE : disk $($target.Disk) partition $($target.Number) ($($target.SizeGB) GB, label '$($target.Label)', drive $($target.Letter):)"
 if ($data) { Say "Data partition      : partition $($data.Number) ($($data.SizeGB) GB) action: $dataAction" } else { Say 'Data partition      : none (files will live on the new system partition)' }
+if ($useWifi) { Say "Network            : cable if plugged in, otherwise Wi-Fi '$($settings.WifiSsid)' (firmware $($settings.FirmwarePackages -join ', '))" } else { Say 'Network            : cable only' }
 Say "Server             : $hostname, login $user, time zone $timezone, keyboard $keymap"
 Say "Windows           : will be gone afterwards. Everything on partition $($target.Number) is erased."
 if ($dataAction -eq 'format') { Say "The data partition $($data.Number) will ALSO be erased and formatted." }
@@ -262,14 +303,17 @@ Say "filebox $tag checksum OK"
 $x = Join-Path $WorkDir 'x'
 Remove-Item -Recurse -Force $x -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force "$x\netboot", "$x\deploy" | Out-Null
-& tar.exe -xzf $netboot -C "$x\netboot"
-& tar.exe -xzf $bundle -C "$x\deploy"
+& $script:TarExe -xzf $netboot -C "$x\netboot"
+& $script:TarExe -xzf $bundle -C "$x\deploy"
 $net = "$x\netboot\debian-installer\amd64"
 if (-not (Test-Path "$net\initrd.gz")) { Stop-Wizard 'The Debian installer archive has an unexpected layout.' }
 
 Step '6. Building the installer files'
+$firmwareFiles = [ordered]@{}
+if ($useWifi) { $firmwareFiles = Get-FirmwareFileSet -Packages $settings.FirmwarePackages -WorkDir (Join-Path $WorkDir 'firmware'); Say "Wi-Fi firmware: $($firmwareFiles.Count) files" }
 $settingsForBuild = $settings.Clone()
 $files = New-InstallerFileSet -Settings $settingsForBuild -InstallerDir $PSScriptRoot -UpdateScriptPath "$x\deploy\deploy\filebox-update"
+foreach ($name in $firmwareFiles.Keys) { $files[$name] = $firmwareFiles[$name] }
 New-PayloadInitrd -InitrdPath "$net\initrd.gz" -OutPath (Join-Path $WorkDir 'initrd.gz') -Files $files
 Say 'Installer image built'
 
@@ -309,6 +353,7 @@ Copy-Item (Join-Path $WorkDir 'initrd.gz') "$root\debian-installer\amd64\initrd.
 $stageUuid = (Get-PartUuid (Get-Disk -Number $target.Disk) (Get-Partition -DiskNumber $target.Disk -PartitionNumber $stage.PartitionNumber))
 $settings.CleanupPartUuid = $stageUuid
 $files = New-InstallerFileSet -Settings $settings -InstallerDir $PSScriptRoot -UpdateScriptPath "$x\deploy\deploy\filebox-update"
+foreach ($name in $firmwareFiles.Keys) { $files[$name] = $firmwareFiles[$name] }
 New-PayloadInitrd -InitrdPath "$net\initrd.gz" -OutPath "$root\debian-installer\amd64\initrd.gz" -Files $files
 
 $copy = (& bcdedit /copy '{bootmgr}' /d 'filebox installer') -join ' '

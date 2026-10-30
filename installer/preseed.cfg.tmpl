@@ -3,10 +3,11 @@ d-i debian-installer/locale string en_US.UTF-8
 d-i keyboard-configuration/xkb-keymap select @@KEYMAP@@
 
 d-i netcfg/choose_interface select auto
+@@WIFI_LINES@@
 d-i netcfg/get_hostname string @@HOSTNAME@@
 d-i netcfg/get_domain string
 d-i netcfg/hostname string @@HOSTNAME@@
-d-i hw-detect/load_firmware boolean false
+d-i hw-detect/load_firmware boolean @@LOAD_FIRMWARE@@
 
 d-i mirror/country string manual
 d-i mirror/http/hostname string deb.debian.org
@@ -37,7 +38,7 @@ d-i partman-basicfilesystems/no_swap boolean false
 d-i apt-setup/non-free-firmware boolean true
 d-i apt-setup/cdrom/set-first boolean false
 tasksel tasksel/first multiselect standard, ssh-server
-d-i pkgsel/include string curl ca-certificates sudo
+d-i pkgsel/include string curl ca-certificates sudo@@EXTRA_PACKAGES@@
 d-i pkgsel/upgrade select none
 popularity-contest popularity-contest/participate boolean false
 
