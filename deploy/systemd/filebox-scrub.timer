@@ -1,0 +1,10 @@
+[Unit]
+Description=Check the filebox data disks for damaged files every month
+
+[Timer]
+OnCalendar=*-*-01 03:00:00
+RandomizedDelaySec=2h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
