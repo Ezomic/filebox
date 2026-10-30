@@ -74,6 +74,9 @@
 
   <h2 id="windows">Replacing Windows on the old PC</h2>
   <div class="warn"><strong>Back up first.</strong> Copy anything you care about to an external drive before changing partitions.</div>
+  <h3>Option A: the wizard (UEFI PC with a network cable)</h3>
+  <p>Download <code>installer/</code> from the repository, open PowerShell as Administrator in that folder and run <code>.\Install-Filebox.ps1 -DryRun</code> first to see what it would do. Then run it without <code>-DryRun</code>. It asks which partition Debian replaces and which one holds your data, downloads and checks the installers, adds a one-time boot entry and restarts into an unattended install. <code>.\Install-Filebox.ps1 -Rollback</code> undoes it before the restart. It refuses BitLocker partitions and never touches the data partition. It has been tested in a virtual machine, not yet on real hardware.</p>
+  <h3>Option B: by hand</h3>
   <ol>
     <li>Open Disk Management in Windows and note which partition holds the data and what filesystem it uses.</li>
     <li>If the data partition is <strong>NTFS or exFAT</strong>, filebox cannot use it as it is. SFTP users live in root-owned folders with Linux permissions, and NTFS cannot hold those. Copy the data off, format that partition as <strong>ext4</strong> in the Debian installer, and copy it back after setup.</li>
