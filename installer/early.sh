@@ -93,8 +93,13 @@ fi
 # Guided partitioning uses the largest free region, so no other free space on the disk may be bigger
 # than the partition being replaced, or Debian would be installed somewhere else.
 target_bytes=$(($(cat "/sys/class/block/$(basename "$TARGET")/size") * 512))
-for free in $(parted -s "$DISK" unit B print free | grep 'Free Space' | awk '{print $3}' | tr -d B); do
-	[ "$free" -le "$target_bytes" ] || stop "there is $free bytes of other free space on $DISK, larger than the partition being replaced"
+for block in /sys/block/*; do
+	disk=/dev/$(basename "$block")
+	case $disk in /dev/loop* | /dev/ram* | /dev/sr* | /dev/fd*) continue ;; esac
+	[ -b "$disk" ] || continue
+	for free in $(parted -s "$disk" unit B print free 2>/dev/null | grep 'Free Space' | awk '{print $3}' | tr -d B); do
+		[ "$free" -le "$target_bytes" ] || stop "there is $free bytes of other free space on $disk, larger than the partition being replaced"
+	done
 done
 
 # Partition numbers can shift once the staging partition is gone, so look the target up again.
@@ -103,5 +108,4 @@ TARGET=$(device_of "$TARGET_PARTUUID")
 NUMBER=$(part_number "$TARGET")
 say "removing partition $NUMBER ($TARGET) from $DISK to make room for Debian"
 parted -s "$DISK" rm "$NUMBER" || stop "could not remove $TARGET"
-debconf-set partman-auto/disk "$DISK"
 say "done"
