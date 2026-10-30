@@ -61,7 +61,7 @@ install_packages() {
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update -qq
 	apt-get install -y -qq --no-install-recommends \
-		ca-certificates curl gnupg jq sudo openssh-server fail2ban nftables python3 python3-systemd smartmontools
+		ca-certificates curl gnupg jq sudo openssh-server fail2ban nftables python3 python3-systemd smartmontools unattended-upgrades
 
 	# Only in Debian 13: without it the panel works as before and the web portal stays off.
 	apt-get install -y -qq --no-install-recommends lego ||
@@ -323,11 +323,24 @@ Setup finished. Do these in order:
 EOF
 }
 
+configure_auto_updates() {
+	log "Enabling automatic security updates"
+	cat >/etc/apt/apt.conf.d/20auto-upgrades <<'CONF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+CONF
+	cat >/etc/apt/apt.conf.d/52filebox-unattended-upgrades <<'CONF'
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+CONF
+}
+
 main() {
 	preflight "$@"
 	PANEL_BINARY=$1
 	install_packages
 	create_accounts
+	configure_auto_updates
 	configure_sshd
 	configure_fail2ban
 	configure_firewall
