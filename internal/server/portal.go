@@ -90,6 +90,12 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.HandleFunc("PUT /api/files/content", p.fileRoute(fileHandlers.uploadFile))
 	p.mux.HandleFunc("POST /api/files/folder", p.fileRoute(fileHandlers.createFolder))
 	p.mux.HandleFunc("POST /api/files/rename", p.fileRoute(fileHandlers.renameFile))
+	p.mux.HandleFunc("POST /api/files/exists", p.fileRoute(fileHandlers.checkExists))
+	p.mux.HandleFunc("GET /api/files/zip", p.fileRoute(fileHandlers.downloadZip))
+	p.mux.HandleFunc("POST /api/uploads", p.fileRoute(fileHandlers.createUpload))
+	p.mux.HandleFunc("GET /api/uploads/{id}", p.fileRoute(fileHandlers.uploadStatus))
+	p.mux.HandleFunc("PUT /api/uploads/{id}", p.fileRoute(fileHandlers.appendChunk))
+	p.mux.HandleFunc("POST /api/uploads/{id}/finish", p.fileRoute(fileHandlers.finishUpload))
 
 	return p
 }

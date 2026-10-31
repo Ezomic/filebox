@@ -115,6 +115,12 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("PUT /api/files/content", s.requireSession(s.fh.uploadFile))
 	mux.HandleFunc("POST /api/files/folder", s.requireSession(s.fh.createFolder))
 	mux.HandleFunc("POST /api/files/rename", s.requireSession(s.fh.renameFile))
+	mux.HandleFunc("POST /api/files/exists", s.requireSession(s.fh.checkExists))
+	mux.HandleFunc("GET /api/files/zip", s.requireSession(s.fh.downloadZip))
+	mux.HandleFunc("POST /api/uploads", s.requireSession(s.fh.createUpload))
+	mux.HandleFunc("GET /api/uploads/{id}", s.requireSession(s.fh.uploadStatus))
+	mux.HandleFunc("PUT /api/uploads/{id}", s.requireSession(s.fh.appendChunk))
+	mux.HandleFunc("POST /api/uploads/{id}/finish", s.requireSession(s.fh.finishUpload))
 	mux.HandleFunc("GET /api/disks", s.requireSession(s.disks))
 	mux.HandleFunc("GET /api/logs", s.requireSession(s.readLogs))
 	mux.HandleFunc("POST /api/system/restart-sshd", s.requireSession(s.powerAction(system.RestartSSHD)))
@@ -308,11 +314,15 @@ func (s *Server) requireSession(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, into any) bool {
+	return decodeJSONMax(w, r, into, maxBodyBytes)
+}
+
+func decodeJSONMax(w http.ResponseWriter, r *http.Request, into any, limit int64) bool {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		writeError(w, http.StatusUnsupportedMediaType, "expected application/json")
 		return false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return false

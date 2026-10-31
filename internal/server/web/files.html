@@ -26,14 +26,26 @@
       <p class="detail" id="empty" hidden>This folder is empty.</p>
     </section>
     <section class="card stacked">
-      <div class="label">Upload a file here</div>
+      <div class="label">Upload to this folder</div>
       <div class="toolbar">
-        <input type="file" id="upload-input" aria-label="File to upload">
-        <label class="check"><input type="checkbox" id="upload-overwrite"> Replace if it exists</label>
-        <button type="button" id="upload-start">Upload</button>
+        <label class="picker">Files <input type="file" id="upload-input" multiple></label>
+        <label class="picker">A folder <input type="file" id="upload-folder" webkitdirectory></label>
       </div>
-      <progress id="upload-progress" max="100" value="0" hidden></progress>
+      <div class="dropzone" id="drop-zone">Or drop files and folders here</div>
+      <div class="conflicts" id="conflicts" hidden>
+        <div class="label" id="conflict-title" role="status"></div>
+        <div class="toolbar">
+          <button type="button" id="conflict-skip-all" class="link">Skip all</button>
+          <button type="button" id="conflict-replace-all" class="link">Replace all</button>
+          <button type="button" id="conflict-continue">Continue upload</button>
+        </div>
+        <ul id="conflict-list"></ul>
+      </div>
+      <progress id="upload-total" max="100" value="0" hidden aria-label="Overall progress"></progress>
+      <progress id="upload-progress" max="100" value="0" hidden aria-label="Progress of the current file"></progress>
       <p class="detail" id="upload-detail" role="status"></p>
+      <p id="upload-summary" role="status"></p>
+      <ul class="failures" id="upload-failures"></ul>
     </section>
     <form class="card stacked" id="folder-form" autocomplete="off">
       <div class="label">New folder in this folder</div>

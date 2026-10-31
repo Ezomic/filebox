@@ -30,7 +30,7 @@ func main() {
 	disk := flag.String("disk", "/", "path on the filesystem whose usage the dashboard shows, normally the SFTP storage")
 	sans := flag.String("san", "localhost,127.0.0.1", "comma-separated hostnames and IPs for the self-signed certificate")
 	filesDir := flag.String("files", "/srv/sftp", "directory the file browser is confined to")
-	maxUpload := flag.Int64("max-upload", 4<<30, "largest file the file browser accepts, in bytes")
+	maxUpload := flag.Int64("max-upload", 16<<30, "largest file the file browser accepts, in bytes")
 	portalListen := flag.String("portal-listen", "", "address for the public user portal, empty to disable it")
 	portalCert := flag.String("portal-cert", "", "PEM certificate for the portal")
 	portalKey := flag.String("portal-key", "", "PEM private key for the portal")
@@ -107,6 +107,7 @@ func main() {
 
 	stop, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	go system.RunUploadSweeper(stop, *filesDir, 24*time.Hour, time.Now)
 	failed := make(chan error, len(servers))
 	for _, s := range servers {
 		go func() {

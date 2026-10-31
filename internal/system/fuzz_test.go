@@ -37,6 +37,7 @@ func FuzzDirFilesStaysInRoot(f *testing.F) {
 	for _, seed := range pathSeeds {
 		f.Add(uint8(0), seed, "x")
 		f.Add(uint8(2), seed, "x")
+		f.Add(uint8(6), seed, "x")
 		f.Add(uint8(4), "a", seed)
 	}
 	f.Fuzz(func(t *testing.T, op uint8, first, second string) {
@@ -63,7 +64,7 @@ func FuzzDirFilesStaysInRoot(f *testing.F) {
 		}
 		defer files.(interface{ Close() error }).Close()
 
-		switch op % 6 {
+		switch op % 7 {
 		case 0:
 			_, _ = files.List(first)
 		case 1:
@@ -83,16 +84,21 @@ func FuzzDirFilesStaysInRoot(f *testing.F) {
 			_ = files.Rename(first, second)
 		case 5:
 			_ = files.Remove(first)
+		case 6:
+			if info, err := files.CreateUpload(first, 1, true); err == nil {
+				_, _ = files.AppendUpload(info.ID, 0, 1, strings.NewReader("planted"))
+				_ = files.FinishUpload(info.ID)
+			}
 		}
 
 		if data, err := os.ReadFile(secret); err != nil || string(data) != "secret" {
-			t.Fatalf("op %d %q %q damaged the outside file: %q %v", op%6, first, second, data, err)
+			t.Fatalf("op %d %q %q damaged the outside file: %q %v", op%7, first, second, data, err)
 		}
 		if entries, err := os.ReadDir(outside); err != nil || len(entries) != 1 {
-			t.Fatalf("op %d %q %q changed the outside folder: %v %v", op%6, first, second, entries, err)
+			t.Fatalf("op %d %q %q changed the outside folder: %v %v", op%7, first, second, entries, err)
 		}
 		if entries, err := os.ReadDir(base); err != nil || len(entries) != 2 {
-			t.Fatalf("op %d %q %q created something next to the root: %v %v", op%6, first, second, entries, err)
+			t.Fatalf("op %d %q %q created something next to the root: %v %v", op%7, first, second, entries, err)
 		}
 	})
 }

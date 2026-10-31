@@ -60,16 +60,20 @@ func (d *dirFiles) List(dir string) ([]FileInfo, error) {
 
 	listing := make([]FileInfo, 0, len(entries))
 	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), UploadsDir) {
+			continue
+		}
 		entryInfo, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		if entryInfo.Mode()&fs.ModeSymlink != 0 {
+		symlink := entryInfo.Mode()&fs.ModeSymlink != 0
+		if symlink {
 			if resolved, err := d.root.Stat(path.Join(rootRelative(dir), entry.Name())); err == nil {
 				entryInfo = resolved
 			}
 		}
-		listing = append(listing, FileInfo{Name: entry.Name(), IsDir: entryInfo.IsDir(), Size: entryInfo.Size(), Modified: entryInfo.ModTime()})
+		listing = append(listing, FileInfo{Name: entry.Name(), IsDir: entryInfo.IsDir(), Size: entryInfo.Size(), Modified: entryInfo.ModTime(), Symlink: symlink})
 	}
 	sortListing(listing)
 
@@ -98,6 +102,22 @@ func (d *dirFiles) Open(name string) (File, FileInfo, error) {
 	}
 
 	return file, FileInfo{Name: info.Name(), Size: info.Size(), Modified: info.ModTime()}, nil
+}
+
+func (d *dirFiles) Stat(name string) (FileInfo, error) {
+	name, err := cleanNonRoot(name)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	info, exists, err := d.existing(name)
+	switch {
+	case err != nil:
+		return FileInfo{}, err
+	case !exists:
+		return FileInfo{}, ErrNotFound
+	}
+
+	return FileInfo{Name: info.Name(), IsDir: info.IsDir(), Size: info.Size(), Modified: info.ModTime()}, nil
 }
 
 func (d *dirFiles) Write(name string, content io.Reader, overwrite bool) error {
