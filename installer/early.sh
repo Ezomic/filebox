@@ -71,9 +71,9 @@ format)
 	DATA=$(device_of "$DATA_PARTUUID")
 	[ -b "$DATA" ] || stop "data partition $DATA_PARTUUID not found"
 	[ "$DATA" != "$TARGET" ] || stop "data and target are the same partition"
-	need mkfs.ext4 e2fsprogs-udeb
-	say "formatting data partition $DATA as ext4"
-	mkfs.ext4 -F -L filebox-data "$DATA" || stop "mkfs failed on $DATA"
+	need mkfs.btrfs btrfs-progs-udeb
+	say "formatting data partition $DATA as btrfs"
+	mkfs.btrfs -f -L filebox-data "$DATA" || stop "mkfs failed on $DATA"
 	;;
 none) say "no data partition, files will live on the system partition" ;;
 *) stop "unknown data action: $DATA_ACTION" ;;

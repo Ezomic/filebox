@@ -1,0 +1,9 @@
+[Unit]
+Description=Check the filebox data disks for damaged files
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/bin/findmnt -n -t btrfs /srv/sftp
+ExecStart=/usr/bin/btrfs scrub start -B /srv/sftp
+Nice=19
+IOSchedulingClass=idle

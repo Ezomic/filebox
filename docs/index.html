@@ -79,11 +79,11 @@
   <h3>Option B: by hand</h3>
   <ol>
     <li>Open Disk Management in Windows and note which partition holds the data and what filesystem it uses.</li>
-    <li>If the data partition is <strong>NTFS or exFAT</strong>, filebox cannot use it as it is. SFTP users live in root-owned folders with Linux permissions, and NTFS cannot hold those. Copy the data off, format that partition as <strong>ext4</strong> in the Debian installer, and copy it back after setup.</li>
-    <li>If it is already <strong>ext4</strong>, leave it alone.</li>
+    <li>If the data partition is <strong>NTFS or exFAT</strong>, filebox cannot use it as it is. SFTP users live in root-owned folders with Linux permissions, and NTFS cannot hold those. Copy the data off, format that partition as <strong>btrfs</strong> in the Debian installer, and copy it back after setup.</li>
+    <li>If it is already <strong>ext4</strong>, you can leave it alone, but it cannot become a mirror later without copying everything off and back.</li>
     <li>Install Debian 13 from a USB stick (netinst). Choose manual partitioning, install onto the old Windows partition (plus the EFI partition on UEFI machines), and do not format the data partition. Select only "SSH server" and "standard system utilities".</li>
     <li>Mount the data partition at <code>/srv/sftp</code> before running setup. Find its UUID with <code>lsblk -f</code>, add this line to <code>/etc/fstab</code>, then run <code>sudo mount -a</code>:
-<pre><code>UUID=&lt;uuid&gt; /srv/sftp ext4 defaults,nofail 0 2</code></pre></li>
+<pre><code>UUID=&lt;uuid&gt; /srv/sftp btrfs defaults,nofail 0 2</code></pre></li>
   </ol>
 
   <h2 id="install">Install</h2>
@@ -137,6 +137,18 @@ sudo systemctl start filebox-dns.service</code></pre>
     <li>Family can change their own password on the portal. You can also change it in the admin panel, which signs them out of the website.</li>
   </ul>
   <div class="note">The portal must be exposed directly. Do not put it behind a reverse proxy, because it identifies visitors by their connecting address.</div>
+
+  <h2 id="disks">Add a second disk (RAID1 mirror)</h2>
+  <p>With one disk, a dead disk loses everything. A data partition on btrfs becomes a mirror in place, while the server keeps running. A mirror protects against a dead disk, not against deleting a file: the delete happens on both disks.</p>
+  <div class="warn"><strong>Check the device name with <code>lsblk</code>.</strong> The disk you add is erased.</div>
+  <p>The mirror holds as much as the smaller of the two disks. Converting can take hours on a full disk.</p>
+<pre><code>sudo btrfs device add /dev/sdX /srv/sftp
+sudo btrfs balance start -dconvert=raid1 -mconvert=raid1 /srv/sftp
+sudo btrfs filesystem df /srv/sftp</code></pre>
+  <p>The last command should say <code>RAID1</code> on every line. A monthly check (<code>filebox-scrub.timer</code>) finds damaged files and repairs them from the other disk. See the result with <code>sudo btrfs scrub status /srv/sftp</code>.</p>
+  <p><strong>If a mirror disk dies</strong>, <code>/srv/sftp</code> will not mount by itself, so logins fail until you act. Your files are safe on the other disk. Mount it, then replace the dead disk (<code>devid</code> comes from <code>btrfs filesystem show</code>):</p>
+<pre><code>sudo mount -o degraded /dev/sdY /srv/sftp
+sudo btrfs replace start &lt;devid&gt; /dev/sdX /srv/sftp</code></pre>
 
   <h2 id="update">Update</h2>
   <p>One command on the box:</p>

@@ -199,8 +199,8 @@ if ($dataChoice -ne 'none') {
         $dataAction = 'keep'
         Say 'Data partition looks like a Linux partition: it will be kept as it is and mounted at /srv/sftp (if it is ext4, xfs or btrfs).'
     } else {
-        Say "The data partition is $($data.FileSystem). filebox cannot use that: it needs ext4 for permissions."
-        Say 'Copy the data to another drive first. The install can then FORMAT this partition as ext4 (erasing it).'
+        Say "The data partition is $($data.FileSystem). filebox cannot use that: it needs Linux permissions."
+        Say 'Copy the data to another drive first. The install can then FORMAT this partition as btrfs (erasing it), which lets you add a mirror disk later.'
         $dataAction = 'format'
     }
 }

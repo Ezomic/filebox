@@ -61,7 +61,7 @@ install_packages() {
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update -qq
 	apt-get install -y -qq --no-install-recommends \
-		ca-certificates curl gnupg jq sudo openssh-server fail2ban nftables python3 python3-systemd smartmontools unattended-upgrades
+		ca-certificates curl gnupg jq sudo openssh-server fail2ban nftables python3 python3-systemd smartmontools unattended-upgrades btrfs-progs
 
 	# Only in Debian 13: without it the panel works as before and the web portal stays off.
 	apt-get install -y -qq --no-install-recommends lego ||
@@ -279,12 +279,13 @@ install_services() {
 
 	install -m 0644 -o root -g root "$SRC"/systemd/filebox-panel.service \
 		"$SRC"/systemd/filebox-dns.service "$SRC"/systemd/filebox-dns.timer \
-		"$SRC"/systemd/filebox-portal-cert.service "$SRC"/systemd/filebox-portal-cert.timer /etc/systemd/system/
+		"$SRC"/systemd/filebox-portal-cert.service "$SRC"/systemd/filebox-portal-cert.timer \
+		"$SRC"/systemd/filebox-scrub.service "$SRC"/systemd/filebox-scrub.timer /etc/systemd/system/
 	systemctl daemon-reload
-	systemctl enable filebox-panel.service filebox-dns.timer filebox-portal-cert.timer
+	systemctl enable filebox-panel.service filebox-dns.timer filebox-portal-cert.timer filebox-scrub.timer
 	# The panel cannot start until Tailscale has an address, so do not wait on it.
 	systemctl restart --no-block filebox-panel.service
-	systemctl restart filebox-dns.timer filebox-portal-cert.timer
+	systemctl restart filebox-dns.timer filebox-portal-cert.timer filebox-scrub.timer
 }
 
 print_next_steps() {
