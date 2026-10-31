@@ -279,6 +279,10 @@ func (d *dirFiles) SweepUploads(cutoff time.Time) (int, error) {
 			continue
 		}
 		unlock := lockUpload(d.root.Name() + "\x00" + id)
+		if stat, err := d.root.Stat(d.partPath(id)); err == nil && !stat.ModTime().Before(cutoff) {
+			unlock()
+			continue
+		}
 		partErr := d.root.Remove(d.partPath(id))
 		metaErr := d.root.Remove(d.metaPath(id))
 		unlock()
