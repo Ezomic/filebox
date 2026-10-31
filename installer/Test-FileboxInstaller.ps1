@@ -82,5 +82,34 @@ Check 'grub config points at kernel and initrd' {
     $cfg.Contains('linux /linux auto=true') -and $cfg.Contains('initrd /initrd.gz')
 }
 
+Check 'wifi settings fill the preseed' {
+    $wifi = $good.Clone(); $wifi.WifiSsid = 'Home Net'; $wifi.WifiPsk = 'correct horse'; $wifi.FirmwarePackages = @('firmware-iwlwifi')
+    $text = New-PreseedText $wifi (Join-Path $PSScriptRoot 'preseed.cfg.tmpl')
+    $text.Contains('netcfg/wireless_essid string Home Net') -and $text.Contains('netcfg/wireless_wpa string correct horse') -and
+        $text.Contains('load_firmware boolean true') -and $text.Contains('sudo network-manager wpasupplicant firmware-iwlwifi') -and ($text -notmatch '@@')
+}
+Check 'wired preseed has no wifi lines' {
+    $text = New-PreseedText $good (Join-Path $PSScriptRoot 'preseed.cfg.tmpl')
+    $text.Contains('load_firmware boolean false') -and -not $text.Contains('wireless') -and -not $text.Contains('wpasupplicant')
+}
+Check 'wifi settings reach the conf file quoted' {
+    $wifi = $good.Clone(); $wifi.WifiSsid = "Mom's Net"; $wifi.WifiPsk = 'pass $word 123'
+    $conf = New-ConfText $wifi
+    $conf.Contains("WIFI_SSID='Mom'\''s Net'") -and $conf.Contains("WIFI_PSK='pass `$word 123'")
+}
+Check 'wired conf has empty wifi values' { (New-ConfText $good).Contains("WIFI_SSID=''") }
+foreach ($case in @(
+    @('WifiSsid', "bad`nssid"), @('WifiPsk', 'short'), @('WifiPsk', "has`nnewline-and-long"), @('FirmwarePackages', @('firmware-ok', 'evil;rm'))
+)) {
+    Check "rejects wifi $($case[0])" {
+        $bad = $good.Clone(); $bad.WifiSsid = 'Home'; $bad.WifiPsk = 'long enough key'; $bad[$case[0]] = $case[1]
+        Throws { Assert-InstallSettings $bad }
+    }
+}
+Check 'firmware package follows the chip vendor' {
+    (Get-WifiFirmwarePackage 'PCI\VEN_8086&DEV_7A70&SUBSYS_00948086') -eq 'firmware-iwlwifi' -and
+        (Get-WifiFirmwarePackage 'USB\VID_0BDA&PID_8179') -eq 'firmware-realtek' -and
+        $null -eq (Get-WifiFirmwarePackage 'PCI\VEN_ABCD&DEV_0001')
+}
 if ($script:failures) { Write-Host "$script:failures failed"; exit 1 }
 Write-Host 'all passed'
