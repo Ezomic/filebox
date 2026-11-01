@@ -618,3 +618,20 @@ func TestCursorSurvivesAnyPathCharacters(t *testing.T) {
 		}
 	})
 }
+
+func TestListPhotosPagesThroughOneSecondOfSubsecondTimes(t *testing.T) {
+	eachFiles(t, func(t *testing.T, files Files) {
+		base := time.Date(2023, 3, 1, 12, 0, 0, 0, time.UTC)
+		for i := range 9 {
+			name := fmt.Sprintf("p%d.jpg", 9-i)
+			put(t, files, name, "x")
+			setTime(t, files, name, base.Add(time.Duration(i)*100*time.Millisecond))
+		}
+		want := photoPaths(listAll(t, files, 500))
+		for _, size := range []int{1, 2, 4} {
+			if got := photoPaths(listAll(t, files, size)); !slices.Equal(got, want) || len(got) != 9 {
+				t.Fatalf("page size %d lost or repeated photos: %v", size, got)
+			}
+		}
+	})
+}

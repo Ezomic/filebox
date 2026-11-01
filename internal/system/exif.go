@@ -315,16 +315,20 @@ func itemExtent(iloc []byte, want uint32) (offset, length uint64, ok bool) {
 	if version == 0 {
 		indexSize = 0
 	}
-	reader := &isoReader{data: iloc[6:]}
-	count := reader.uint(2)
-	if version == 2 {
-		count = reader.uint(4)
+	if indexSize+offsetSize+lengthSize == 0 {
+		return 0, 0, false
 	}
+	reader := &isoReader{data: iloc[6:]}
+	countSize := 2
+	if version == 2 {
+		countSize = 4
+	}
+	count := reader.uint(countSize)
 	for range min(count, 65536) {
-		id := reader.uint(2)
-		if version == 2 {
-			id = reader.uint(4)
+		if reader.bad {
+			return 0, 0, false
 		}
+		id := reader.uint(countSize)
 		method := uint64(0)
 		if version >= 1 {
 			method = reader.uint(2) & 15
@@ -334,6 +338,9 @@ func itemExtent(iloc []byte, want uint32) (offset, length uint64, ok bool) {
 		extents := reader.uint(2)
 		var firstOffset, firstLength uint64
 		for i := range min(extents, 65536) {
+			if reader.bad {
+				break
+			}
 			reader.uint(indexSize)
 			extentOffset, extentLength := reader.uint(offsetSize), reader.uint(lengthSize)
 			if i == 0 {

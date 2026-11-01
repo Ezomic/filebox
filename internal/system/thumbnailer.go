@@ -22,6 +22,10 @@ const (
 	// resolves a user controlled path and a symlink swapped in meanwhile can not redirect it.
 	procSource = "/proc/self/fd/3"
 
+	// ffmpegSource is the same descriptor through the only protocol ffmpeg may use, so a playlist or concat file
+	// disguised as a video can not make it open other files or network addresses.
+	ffmpegSource = "fd:"
+
 	thumbTimeout    = 30 * time.Second
 	maxImageBytes   = 256 << 20
 	maxThumbOutput  = 32 << 20
@@ -109,8 +113,14 @@ func (e *ExecThumbnailer) Render(ctx context.Context, src File, kind string, sid
 
 	var failure error
 	for _, args := range attempts(out) {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
 		if failure = e.run(runCtx, file, tool, addressMax, dir, args); failure == nil {
-			break
+			if produced, err := os.Stat(out); err == nil && produced.Size() > 0 {
+				break
+			}
+			failure = fmt.Errorf("%w: %s wrote no picture", ErrBadMedia, name)
 		}
 		if runCtx.Err() != nil {
 			break
@@ -140,7 +150,7 @@ func ffmpegArgs(side int, out string) [][]string {
 	for _, seek := range []string{"1", "0"} {
 		attempts = append(attempts, []string{
 			"-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1",
-			"-ss", seek, "-i", procSource, "-an", "-sn", "-frames:v", "1",
+			"-protocol_whitelist", "fd", "-fd", "3", "-ss", seek, "-i", ffmpegSource, "-an", "-sn", "-frames:v", "1",
 			"-vf", fmt.Sprintf("scale=w='min(%d,iw)':h='min(%d,ih)':force_original_aspect_ratio=decrease", side, side),
 			"-q:v", "4", "-y", out,
 		})
@@ -169,7 +179,7 @@ func (e *ExecThumbnailer) run(ctx context.Context, file *os.File, tool string, a
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.ExtraFiles = []*os.File{file}
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "TMPDIR=" + dir, "LC_ALL=C", "VIPS_CONCURRENCY=1", "OMP_NUM_THREADS=1"}
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "TMPDIR=" + dir, "LC_ALL=C", "VIPS_CONCURRENCY=1", "OMP_NUM_THREADS=1", "VIPS_BLOCK_UNTRUSTED=1"}
 	cmd.Stderr = stderr
 	cmd.WaitDelay = 2 * time.Second
 

@@ -146,3 +146,14 @@ func FuzzExifDate(f *testing.F) {
 		exifDate(bytes.NewReader(data), int64(len(data)), ext)
 	})
 }
+
+func TestItemExtentIgnoresALocationTableWithoutFieldSizes(t *testing.T) {
+	iloc := append([]byte{0, 0, 0, 0, 0x00, 0x00, 0xFF, 0xFF}, make([]byte, 400000)...)
+	start := time.Now()
+	if _, _, ok := itemExtent(iloc, 1); ok {
+		t.Fatal("an empty location table found an item")
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("took %s", time.Since(start))
+	}
+}

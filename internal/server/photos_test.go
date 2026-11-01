@@ -261,7 +261,7 @@ func TestThumbnailIsAJPEGWithImmutableCachingHeaders(t *testing.T) {
 			"Content-Type":            "image/jpeg",
 			"X-Content-Type-Options":  "nosniff",
 			"Content-Security-Policy": viewPolicy,
-			"Cache-Control":           "private, max-age=31536000, immutable",
+			"Cache-Control":           "private, no-cache",
 			"Content-Disposition":     "inline",
 		}
 		for key, value := range want {
@@ -309,7 +309,7 @@ func TestVideoPostersAndOnlyHeicNeedsAPreview(t *testing.T) {
 				t.Fatalf("preview of %s got %d: %s", name, rec.Code, rec.Body)
 			}
 			decodeJPEG(t, rec)
-			if rec.Header().Get("Cache-Control") != "private, max-age=31536000, immutable" {
+			if rec.Header().Get("Cache-Control") != "private, no-cache" {
 				t.Errorf("preview must cache like a thumbnail")
 			}
 		}

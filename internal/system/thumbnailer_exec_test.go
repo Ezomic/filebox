@@ -363,3 +363,27 @@ func TestRealToolsSurviveADecompressionBomb(t *testing.T) {
 		t.Fatalf("the bomb outlived the timeout: %s", time.Since(start))
 	}
 }
+
+func TestRealFFmpegIgnoresAPlaylistThatPointsAtOtherFiles(t *testing.T) {
+	lookTools(t)
+	mp4, err := os.ReadFile("testdata/sample.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(t.TempDir(), "other.mp4")
+	if err := os.WriteFile(other, mp4, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	playlists := map[string]string{
+		"concat": "ffconcat version 1.0\nfile '" + other + "'\n",
+		"hls":    "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nfile://" + other + "\n#EXT-X-ENDLIST\n",
+	}
+	for name, content := range playlists {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewExecThumbnailer().Render(context.Background(), openTemp(t, "a.mp4", []byte(content)), PhotoVideo, ThumbSide)
+			if !errors.Is(err, ErrBadMedia) {
+				t.Fatalf("a playlist read another file: %v", err)
+			}
+		})
+	}
+}

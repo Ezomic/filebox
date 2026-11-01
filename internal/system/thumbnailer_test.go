@@ -78,7 +78,7 @@ func TestToolArgumentsAreFixedAndTakeTheSourceFromADescriptor(t *testing.T) {
 				input = i
 			}
 		}
-		if input < 0 || args[input+1] != procSource || args[len(args)-1] != "/tmp/x/out.jpg" || args[0] != "-nostdin" {
+		if input < 0 || args[input+1] != ffmpegSource || args[len(args)-1] != "/tmp/x/out.jpg" || args[0] != "-nostdin" {
 			t.Fatalf("ffmpeg args %v", args)
 		}
 	}

@@ -98,7 +98,7 @@ func (d *dirFiles) photoFromEntry(full string, entry fs.DirEntry) (Photo, bool) 
 
 func (d *dirFiles) newPhoto(full, kind string, info fs.FileInfo) Photo {
 	return Photo{
-		Path: full, Kind: kind, Size: info.Size(), Date: info.ModTime().UTC(), Modified: info.ModTime(),
+		Path: full, Kind: kind, Size: info.Size(), Date: info.ModTime().UTC().Truncate(time.Second), Modified: info.ModTime(),
 		Key: photoKey(full, info.Size(), info.ModTime()), Scope: d.root.Name(),
 	}
 }

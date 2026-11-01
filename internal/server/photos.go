@@ -17,7 +17,7 @@ import (
 const (
 	// Two tool runs at once is what a low-spec box can take without the file transfers stalling.
 	thumbConcurrency = 2
-	thumbCacheMaxAge = "private, max-age=31536000, immutable"
+	thumbCacheMaxAge = "private, no-cache"
 	failureMemory    = 10 * time.Minute
 	failureCap       = 1024
 	leaderRetries    = 3
@@ -232,6 +232,8 @@ func renderError(w http.ResponseWriter, r *http.Request, name string, err error)
 	switch {
 	case r.Context().Err() != nil:
 		return
+	case errors.Is(err, context.Canceled):
+		writeError(w, http.StatusServiceUnavailable, "thumbnails are busy, try again")
 	case errors.Is(err, system.ErrToolMissing):
 		log.Printf("thumbnail %q: %v", name, err)
 		writeError(w, http.StatusServiceUnavailable, "thumbnails are not available on this server")

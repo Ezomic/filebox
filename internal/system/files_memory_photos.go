@@ -45,7 +45,7 @@ func (f *FakeFiles) photoOf(name string, entry *memoryEntry) (Photo, bool) {
 func fakePhoto(name, kind string, entry *memoryEntry) Photo {
 	size := int64(len(entry.data))
 
-	return Photo{Path: name, Kind: kind, Size: size, Date: entry.modified.UTC(), Modified: entry.modified, Key: photoKey(name, size, entry.modified), Scope: "fake"}
+	return Photo{Path: name, Kind: kind, Size: size, Date: entry.modified.UTC().Truncate(time.Second), Modified: entry.modified, Key: photoKey(name, size, entry.modified), Scope: "fake"}
 }
 
 func (f *FakeFiles) OpenPhoto(name string) (File, Photo, error) {
