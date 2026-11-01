@@ -171,7 +171,7 @@ func TestViewRefusesTypesOutsideTheAllowlist(t *testing.T) {
 			s.seed(t, name, "x")
 			rec := s.get(viewURL(name))
 			want := http.StatusUnsupportedMediaType
-			if strings.HasSuffix(name, ".") || strings.TrimSpace(name) != name {
+			if strings.HasSuffix(name, ".") || strings.TrimRight(name, " 	") != name {
 				want = http.StatusBadRequest
 			}
 			if rec.Code != want {
