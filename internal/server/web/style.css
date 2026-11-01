@@ -148,6 +148,25 @@ select {
 input[type="number"] { width: 6rem; }
 progress { width: 100%; margin-top: 8px; }
 
+label.picker { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.85rem; }
+.dropzone {
+  margin-top: 8px;
+  padding: 20px 12px;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+.dropzone.over { border-color: var(--accent); color: var(--text); }
+.dropzone.busy { opacity: 0.6; }
+.conflicts { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.conflicts ul { list-style: none; margin: 8px 0 0; padding: 0; max-height: 40vh; overflow: auto; }
+.conflicts li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 8px 0; border-top: 1px solid var(--border); }
+.conflict-name { flex: 1 1 14rem; overflow-wrap: anywhere; font-weight: 600; }
+.conflict-choice { display: inline-flex; gap: 12px; }
+ul.failures { margin: 0; padding-left: 1.2em; }
+ul.failures .error { min-height: 0; margin: 0; overflow-wrap: anywhere; }
+
 pre.log {
   margin: 0;
   max-height: 60vh;

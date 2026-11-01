@@ -17,6 +17,7 @@ type memoryEntry struct {
 type FakeFiles struct {
 	mu      sync.Mutex
 	entries map[string]*memoryEntry
+	uploads map[string]*memoryUpload
 }
 
 func NewFakeFiles() *FakeFiles {

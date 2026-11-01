@@ -19,6 +19,9 @@ func FuzzPortalFilePathsStayInsideTheUser(f *testing.F) {
 	} {
 		f.Add(uint8(0), seed, seed)
 		f.Add(uint8(3), seed, "x")
+		f.Add(uint8(6), seed, "x")
+		f.Add(uint8(7), seed, seed)
+		f.Add(uint8(8), seed, "x")
 	}
 	f.Fuzz(func(t *testing.T, op uint8, first, second string) {
 		h := newPortalFilesHarness(t)
@@ -28,7 +31,7 @@ func FuzzPortalFilePathsStayInsideTheUser(f *testing.F) {
 		amy := h.signedIn(t, "amy", amyPassword)
 
 		var rec *httptest.ResponseRecorder
-		switch op % 6 {
+		switch op % 9 {
 		case 0:
 			rec = h.get(amy, "/api/files", first)
 		case 1:
@@ -41,19 +44,25 @@ func FuzzPortalFilePathsStayInsideTheUser(f *testing.F) {
 			rec = h.do("POST", "/api/files/rename", `{"from":`+quote(first)+`,"to":`+quote(second)+`}`, "192.0.2.10", amy)
 		case 5:
 			rec = h.do("DELETE", "/api/files?path="+url.QueryEscape(first), "", "192.0.2.10", amy)
+		case 6:
+			rec = h.get(amy, "/api/files/zip", first)
+		case 7:
+			rec = h.do("POST", "/api/files/exists", `{"paths":[`+quote(first)+`,`+quote(second)+`]}`, "192.0.2.10", amy)
+		case 8:
+			rec = h.do("POST", "/api/uploads", `{"path":`+quote(first)+`,"size":1}`, "192.0.2.10", amy)
 		}
 
 		if rec.Code >= 500 && runtime.GOOS != "windows" {
-			t.Fatalf("op %d %q %q gave a server error %d", op%6, first, second, rec.Code)
+			t.Fatalf("op %d %q %q gave a server error %d", op%9, first, second, rec.Code)
 		}
 		if strings.Contains(rec.Body.String(), bobSecret) {
-			t.Fatalf("op %d %q %q leaked bob's file", op%6, first, second)
+			t.Fatalf("op %d %q %q leaked bob's file", op%9, first, second)
 		}
 		if data, err := os.ReadFile(filepath.Join(h.base, "bob", "files", "secret.txt")); err != nil || string(data) != bobSecret {
-			t.Fatalf("op %d %q %q damaged bob's file: %q %v", op%6, first, second, data, err)
+			t.Fatalf("op %d %q %q damaged bob's file: %q %v", op%9, first, second, data, err)
 		}
 		if entries, err := os.ReadDir(filepath.Join(h.base, "bob", "files")); err != nil || len(entries) != 1 {
-			t.Fatalf("op %d %q %q changed bob's folder: %v %v", op%6, first, second, entries, err)
+			t.Fatalf("op %d %q %q changed bob's folder: %v %v", op%9, first, second, entries, err)
 		}
 	})
 }
