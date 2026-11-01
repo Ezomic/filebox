@@ -3,6 +3,8 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"maps"
 	"os"
 	"slices"
@@ -18,6 +20,19 @@ type roles struct {
 	Admins []string `json:"admins"`
 }
 
+var errDamagedRoles = errors.New("roles file cannot be parsed")
+
+// A file that cannot be parsed must not lock the owner out of the panel they would use to recover, so it
+// is set aside and nobody is an admin. A file that cannot be read is a real fault and still fails Open.
+func setAsideDamagedRoles(path string, cause error) map[string]struct{} {
+	log.Printf("auth: %s is damaged (%v), starting with no admins", path, cause)
+	if err := os.Rename(path, path+".bad"); err != nil {
+		log.Printf("auth: could not keep the damaged file as %s.bad: %v", path, err)
+	}
+
+	return map[string]struct{}{}
+}
+
 func loadAdmins(path string) (map[string]struct{}, error) {
 	admins := map[string]struct{}{}
 	content, err := os.ReadFile(path)
@@ -30,7 +45,7 @@ func loadAdmins(path string) (map[string]struct{}, error) {
 
 	var loaded roles
 	if err := json.Unmarshal(content, &loaded); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", errDamagedRoles, err)
 	}
 	for _, name := range loaded.Admins {
 		admins[name] = struct{}{}

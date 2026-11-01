@@ -54,7 +54,11 @@ func Open(dir string) (*Store, error) {
 	}
 
 	store := &Store{path: filepath.Join(dir, "admin.json"), tokenPath: filepath.Join(dir, tokenFile), rolesPath: filepath.Join(dir, rolesFile)}
-	if store.admins, err = loadAdmins(store.rolesPath); err != nil {
+	store.admins, err = loadAdmins(store.rolesPath)
+	if errors.Is(err, errDamagedRoles) {
+		store.admins, err = setAsideDamagedRoles(store.rolesPath, err), nil
+	}
+	if err != nil {
 		return nil, err
 	}
 

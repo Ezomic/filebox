@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -111,13 +113,86 @@ func TestFailedWriteLeavesTheRoleUnchanged(t *testing.T) {
 	}
 }
 
-func TestCorruptRolesFileRefusesToOpen(t *testing.T) {
+func TestDamagedRolesFileStartsWithNoAdminsAndKeepsTheEvidence(t *testing.T) {
+	for name, content := range map[string]string{
+		"corrupt json":     "{not json",
+		"array":            `["amy"]`,
+		"empty file":       "",
+		"non-string entry": `{"admins":["amy",5]}`,
+		"wrong type":       `{"admins":"amy"}`,
+	} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "roles.json")
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var logged strings.Builder
+		previous := log.Writer()
+		log.SetOutput(&logged)
+
+		store, err := Open(dir)
+		log.SetOutput(previous)
+		if err != nil {
+			t.Fatalf("%s: Open failed: %v", name, err)
+		}
+		if store.IsAdmin("amy") {
+			t.Fatalf("%s: a damaged file must not grant admin", name)
+		}
+		if kept, err := os.ReadFile(path + ".bad"); err != nil || string(kept) != content {
+			t.Fatalf("%s: damaged file not kept: %q %v", name, kept, err)
+		}
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s: damaged file still in place: %v", name, err)
+		}
+		if !strings.Contains(logged.String(), path) || (content != "" && strings.Contains(logged.String(), content)) {
+			t.Fatalf("%s: log must name the file and not show its contents: %q", name, logged.String())
+		}
+
+		if err := store.Promote("bob"); err != nil {
+			t.Fatalf("%s: owner recovery failed: %v", name, err)
+		}
+		reopened, err := Open(dir)
+		if err != nil || !reopened.IsAdmin("bob") {
+			t.Fatalf("%s: new roles file not written: %v", name, err)
+		}
+	}
+}
+
+func TestOlderBadFileIsReplaced(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "roles.json"), []byte("{not json"), 0o600); err != nil {
+	path := filepath.Join(dir, "roles.json")
+	_ = os.WriteFile(path+".bad", []byte("old"), 0o600)
+	_ = os.WriteFile(path, []byte("{new damage"), 0o600)
+
+	if _, err := Open(dir); err != nil {
+		t.Fatal(err)
+	}
+	if kept, _ := os.ReadFile(path + ".bad"); string(kept) != "{new damage" {
+		t.Fatalf("got %q", kept)
+	}
+}
+
+func TestDamagedRolesFileStillOpensWhenItCannotBeRenamed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "roles.json")
+	_ = os.WriteFile(path, []byte("{not json"), 0o600)
+	if err := os.MkdirAll(filepath.Join(path+".bad", "occupied"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(dir)
+	if err != nil || store.IsAdmin("amy") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestUnreadableRolesFileStaysFatal(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "roles.json"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Open(dir); err == nil {
-		t.Fatal("a damaged roles file must not silently mean no admins")
+		t.Fatal("a file that cannot be read is a real fault, not an empty admin list")
 	}
 }
 
