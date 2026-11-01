@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Choose a new password</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <form class="card auth" id="reset-form">
+      <h1>Choose a new password</h1>
+      <p class="detail">This is also your SFTP password. You will be signed out everywhere afterwards.</p>
+      <label for="password">New password (at least 12 characters)</label>
+      <input id="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required autofocus>
+      <label for="confirm">New password again</label>
+      <input id="confirm" type="password" autocomplete="new-password" minlength="12" maxlength="128" required>
+      <p class="error" id="error" role="alert"></p>
+      <button type="submit">Set new password</button>
+      <a class="link" href="/forgot">Ask for a new link</a>
+    </form>
+  </main>
+  <script src="/static/reset.js"></script>
+</body>
+</html>

@@ -200,7 +200,7 @@ func (p *Portal) adminDelete(w http.ResponseWriter, r *http.Request, admin strin
 		writeError(w, http.StatusInternalServerError, "could not delete the user")
 		return
 	}
-	p.sessions.destroyUser(name)
+	p.EndSessions(name)
 	p.audit(r, "delete", admin, name)
 	w.WriteHeader(http.StatusNoContent)
 }

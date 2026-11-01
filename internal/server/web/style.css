@@ -88,6 +88,7 @@ nav.actions a.link[aria-current="page"]:hover { background: var(--accent); color
 .auth p { color: var(--muted); margin: 0 0 12px; }
 .auth button[type="submit"] { width: 100%; }
 .auth a.link { width: 100%; margin-top: 10px; }
+.auth + .auth { margin-top: 16px; }
 
 label { display: block; margin-bottom: 4px; font-size: 0.9rem; }
 
