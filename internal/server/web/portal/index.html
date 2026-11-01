@@ -30,6 +30,14 @@
         <label class="picker">A folder <input type="file" id="upload-folder" webkitdirectory></label>
       </div>
       <div class="dropzone" id="drop-zone">Or drop files and folders here</div>
+      <div class="preview" id="preview" hidden>
+        <div class="label" id="preview-title" role="status"></div>
+        <div class="toolbar">
+          <button type="button" id="preview-upload">Upload</button>
+          <button type="button" id="preview-cancel" class="link">Cancel</button>
+        </div>
+        <ul id="preview-list"></ul>
+      </div>
       <div class="conflicts" id="conflicts" hidden>
         <div class="label" id="conflict-title" role="status"></div>
         <div class="toolbar">

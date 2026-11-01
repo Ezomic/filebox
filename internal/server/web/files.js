@@ -564,8 +564,7 @@ async function decideConflicts(items) {
   });
 }
 
-async function runUploads(found) {
-  const base = currentPath;
+async function runUploads(found, base) {
   const items = found.files.map(({ file, rel }) => ({ file, target: join(base, rel), overwrite: false, skip: false }));
   if (items.length === 0 && found.dirs.length === 0) return;
   setBusy(true);
@@ -614,6 +613,7 @@ async function runUploads(found) {
 
 async function startUpload(collect) {
   if (uploading) return;
+  const base = currentPath;
   let found;
   try {
     found = await collect();
@@ -621,8 +621,126 @@ async function startUpload(collect) {
     uploadSummary.textContent = 'Could not read what you selected.';
     return;
   }
-  await runUploads(found);
+  if (uploading) return;
+  showPreview(found, base);
 }
+
+const PREVIEW_THUMBS = 200;
+const THUMB_SIZE = 96;
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp']);
+
+const previewBox = byId('preview');
+const previewList = byId('preview-list');
+const previewTitle = byId('preview-title');
+const previewUpload = byId('preview-upload');
+
+let pending = null;
+
+function extensionOf(name) {
+  const dot = name.lastIndexOf('.');
+  return dot <= 0 ? '' : name.slice(dot + 1).toLowerCase();
+}
+
+function canThumbnail(file) {
+  if (IMAGE_EXTENSIONS.has(extensionOf(file.name))) return true;
+  return /^image\//.test(file.type) && !/hei[cf]|svg/.test(file.type);
+}
+
+function badge(name) {
+  const label = extensionOf(name).slice(0, 4).toUpperCase();
+  return el('span', label || 'FILE', 'thumb');
+}
+
+async function drawThumbnail(file) {
+  const bitmap = await createImageBitmap(file, { resizeWidth: THUMB_SIZE, resizeQuality: 'medium' });
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = THUMB_SIZE;
+    canvas.height = THUMB_SIZE;
+    canvas.className = 'thumb';
+    const scale = Math.max(THUMB_SIZE / bitmap.width, THUMB_SIZE / bitmap.height);
+    const width = bitmap.width * scale;
+    const height = bitmap.height * scale;
+    canvas.getContext('2d').drawImage(bitmap, (THUMB_SIZE - width) / 2, (THUMB_SIZE - height) / 2, width, height);
+    return canvas;
+  } finally {
+    bitmap.close();
+  }
+}
+
+async function fillThumbnails(session, jobs) {
+  for (const { file, holder } of jobs) {
+    if (pending !== session) return;
+    if (!holder.isConnected) continue;
+    try {
+      const canvas = await drawThumbnail(file);
+      if (pending !== session) return;
+      holder.replaceChildren(canvas);
+    } catch {
+      continue;
+    }
+  }
+}
+
+function updatePreviewTotals() {
+  const { found, base } = pending;
+  const count = found.files.length;
+  const bytes = found.files.reduce((sum, { file }) => sum + file.size, 0);
+  const where = base === '' ? 'the top folder' : base;
+  previewTitle.textContent = count === 0
+    ? `${found.dirs.length} empty ${found.dirs.length === 1 ? 'folder' : 'folders'} to create in ${where}`
+    : `${count} ${count === 1 ? 'file' : 'files'}, ${formatSize(bytes)}, to upload to ${where}`;
+}
+
+function closePreview() {
+  pending = null;
+  previewBox.hidden = true;
+  previewList.replaceChildren();
+}
+
+function previewRow(session, entry, withThumb) {
+  const holder = el('span', undefined, 'thumb-holder');
+  holder.append(badge(entry.file.name));
+  const row = el('li');
+  const remove = button('Remove', () => {
+    session.found.files = session.found.files.filter((candidate) => candidate !== entry);
+    row.remove();
+    if (session.found.files.length === 0 && session.found.dirs.length === 0) {
+      closePreview();
+      return;
+    }
+    updatePreviewTotals();
+    previewUpload.focus();
+  }, 'link');
+  remove.setAttribute('aria-label', `Remove ${entry.rel}`);
+  row.append(holder, el('span', entry.rel, 'preview-name'), el('span', formatSize(entry.file.size), 'detail'), remove);
+  return { row, job: withThumb && canThumbnail(entry.file) ? { file: entry.file, holder } : null };
+}
+
+function showPreview(found, base) {
+  if (found.files.length === 0 && found.dirs.length === 0) return;
+  closePreview();
+  uploadSummary.textContent = '';
+  uploadDetail.textContent = '';
+  byId('upload-failures').replaceChildren();
+  const session = { found, base };
+  pending = session;
+  const built = found.files.map((entry, index) => previewRow(session, entry, index < PREVIEW_THUMBS));
+  previewList.replaceChildren(...built.map(({ row }) => row));
+  updatePreviewTotals();
+  previewBox.hidden = false;
+  previewUpload.focus();
+  fillThumbnails(session, built.map(({ job }) => job).filter(Boolean));
+}
+
+previewUpload.addEventListener('click', () => {
+  if (!pending || uploading) return;
+  const { found, base } = pending;
+  closePreview();
+  runUploads(found, base);
+});
+
+byId('preview-cancel').addEventListener('click', closePreview);
 
 fileInput.addEventListener('change', () => {
   const picked = collectPicked(fileInput.files);
