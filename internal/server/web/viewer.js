@@ -49,16 +49,75 @@ function buildViewer(options) {
   const close = button('Close', closeViewer, 'link');
   const bar = el('div', undefined, 'viewer-bar');
   bar.append(title, previous, next, download);
+  const datePanel = options.onSetDate ? buildDatePanel(options) : null;
+  if (datePanel) bar.append(button('Change date', datePanel.toggle, 'link'));
   if (options.onRemove) {
     bar.append(button('Delete', () => options.onRemove(viewItems[viewer.index], viewer.index), 'link danger'));
   }
   bar.append(close);
   const body = el('div', undefined, 'viewer-body');
-  overlay.append(bar, body);
+  overlay.append(bar);
+  if (datePanel) overlay.append(datePanel.form);
+  overlay.append(body);
   overlay.addEventListener('click', (event) => {
     if (event.target === overlay || event.target === body) closeViewer();
   });
-  return { overlay, title, download, previous, next, close, body, index: 0, opener: null, token: 0, options };
+  return { overlay, title, download, previous, next, close, body, datePanel, index: 0, opener: null, token: 0, options };
+}
+
+// The panel never closes itself on success: the page re-renders and closes the viewer, or shows the error here.
+function buildDatePanel(options) {
+  const form = el('form', undefined, 'viewer-date');
+  form.hidden = true;
+  const input = document.createElement('input');
+  input.type = 'date';
+  input.required = true;
+  input.min = '1900-01-01';
+  input.setAttribute('aria-label', 'Photo date');
+  const save = el('button', 'Save date');
+  save.type = 'submit';
+  const reset = button('Reset to original', () => run(() => options.onResetDate(viewItems[viewer.index], viewer.index)), 'link');
+  const cancel = button('Cancel', () => { form.hidden = true; }, 'link');
+  const message = el('p', undefined, 'error');
+  message.setAttribute('role', 'status');
+  form.append(input, save, reset, cancel, message);
+
+  async function run(action) {
+    message.textContent = '';
+    save.disabled = true;
+    reset.disabled = true;
+    try {
+      await action();
+    } catch (error) {
+      if (error.message !== 'signed out') message.textContent = error.message;
+    } finally {
+      save.disabled = false;
+      reset.disabled = false;
+    }
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (input.value === '') {
+      message.textContent = 'Pick a date.';
+      return;
+    }
+    run(() => options.onSetDate(viewItems[viewer.index], viewer.index, input.value));
+  });
+
+  return {
+    form,
+    toggle: () => {
+      form.hidden = !form.hidden;
+      if (!form.hidden) input.focus();
+    },
+    show: (item) => {
+      form.hidden = true;
+      input.value = item.date;
+      reset.hidden = !item.custom;
+      message.textContent = '';
+    },
+  };
 }
 
 function stopMedia() {
@@ -127,6 +186,7 @@ function showViewerItem(index) {
   viewer.download.download = item.name;
   viewer.previous.disabled = index === 0;
   viewer.next.disabled = index === viewItems.length - 1;
+  if (viewer.datePanel) viewer.datePanel.show(item);
   viewer.body.replaceChildren(item.kind === 'text' ? textBody(item, viewer.token) : mediaBody(item));
   if (viewer.options.loadMore && index >= viewItems.length - LOAD_MORE_AHEAD) viewer.options.loadMore();
 }

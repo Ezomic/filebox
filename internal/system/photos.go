@@ -44,7 +44,9 @@ type Photo struct {
 	Size     int64
 	Date     time.Time
 	Modified time.Time
-	Key      string
+	// Custom is set when Date is a day the user chose instead of the original date.
+	Custom bool
+	Key    string
 	// Scope tells two different Files roots apart, so the same Key in two roots is never mistaken for one job.
 	Scope string
 }

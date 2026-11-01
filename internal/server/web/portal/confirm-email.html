@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Confirm your email address</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <form class="card auth" id="confirm-form">
+      <h1>Confirm your email address</h1>
+      <p class="detail">Confirm that this address may be used to reset your Filebox password.</p>
+      <p class="error" id="error" role="alert"></p>
+      <p class="detail" id="done" role="status" hidden>Your address is confirmed.</p>
+      <button type="submit">Confirm address</button>
+      <a class="link" href="/login">Go to sign in</a>
+    </form>
+  </main>
+  <script src="/static/confirm-email.js"></script>
+</body>
+</html>

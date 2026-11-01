@@ -40,7 +40,7 @@ func listAll(t *testing.T, files Files, pageSize int) []Photo {
 	var all []Photo
 	cursor := ""
 	for range 1000 {
-		page, err := files.ListPhotos(cursor, pageSize)
+		page, err := files.ListPhotos(cursor, pageSize, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -117,18 +117,18 @@ func TestListPhotosPagesWithoutGapsOrRepeats(t *testing.T) {
 			t.Fatal("not newest first with ties by path")
 		}
 
-		page, err := files.ListPhotos("", 10)
+		page, err := files.ListPhotos("", 10, "")
 		if err != nil || len(page.Photos) != 10 || page.Next == "" {
 			t.Fatalf("first page: %+v %v", page, err)
 		}
-		last, err := files.ListPhotos(page.Next, 500)
+		last, err := files.ListPhotos(page.Next, 500, "")
 		if err != nil || len(last.Photos) != 13 || last.Next != "" {
 			t.Fatalf("last page: %d photos next %q %v", len(last.Photos), last.Next, err)
 		}
-		if past, err := files.ListPhotos(fmt.Sprintf("%d|zzz", time.Unix(0, 0).Unix()), 10); err != nil || len(past.Photos) != 0 {
+		if past, err := files.ListPhotos(fmt.Sprintf("%d|zzz", time.Unix(0, 0).Unix()), 10, ""); err != nil || len(past.Photos) != 0 {
 			t.Fatalf("cursor past the end: %+v %v", past, err)
 		}
-		if capped, _ := files.ListPhotos("", 100000); len(capped.Photos) != 23 {
+		if capped, _ := files.ListPhotos("", 100000, ""); len(capped.Photos) != 23 {
 			t.Fatalf("limit above the cap: %d", len(capped.Photos))
 		}
 	})
@@ -138,7 +138,7 @@ func TestListPhotosRefusesBadCursors(t *testing.T) {
 	eachFiles(t, func(t *testing.T, files Files) {
 		put(t, files, "a.jpg", "x")
 		for _, cursor := range []string{"nonsense", "x|a.jpg", "|a.jpg", "99999999999999999999|a", "1.5|a"} {
-			if _, err := files.ListPhotos(cursor, 10); !errors.Is(err, ErrInvalidPath) {
+			if _, err := files.ListPhotos(cursor, 10, ""); !errors.Is(err, ErrInvalidPath) {
 				t.Errorf("cursor %q: %v", cursor, err)
 			}
 		}

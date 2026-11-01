@@ -20,6 +20,8 @@ type FakeFiles struct {
 	uploads map[string]*memoryUpload
 	trash   map[string]*memoryTrashed
 	thumbs  map[string][]byte
+	// customDates holds the day a user gave a photo, by photo key.
+	customDates map[string]string
 	// limit is a byte quota like the one btrfs enforces: partial uploads and trash count, 0 means unlimited.
 	limit int64
 }

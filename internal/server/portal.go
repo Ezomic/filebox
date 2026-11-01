@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Ezomic/filebox/internal/mail"
 	"github.com/Ezomic/filebox/internal/system"
 )
 
@@ -38,6 +39,10 @@ type PortalDeps struct {
 	TV *TV
 	// Thumbs makes photo thumbnails; nil turns the thumbnail routes into a 503.
 	Thumbs *Thumbs
+	// Contacts, Mail and PortalURL switch on email addresses and password reset by email; all three are needed.
+	Contacts  Contacts
+	Mail      mail.Sender
+	PortalURL string
 }
 
 // Portal is the public, per-user web interface. It is a separate handler from the admin
@@ -56,6 +61,7 @@ type Portal struct {
 	verifyWait time.Duration
 	pages      fs.FS
 	mux        *http.ServeMux
+	email      *emailFlow
 	tv         *TV
 	tvLimit    *loginLimiter
 }
@@ -83,11 +89,13 @@ func NewPortal(deps PortalDeps) *Portal {
 		verifying:  make(chan struct{}, portalMaxVerifying),
 		verifyWait: portalVerifyWait,
 		pages:      pages,
+		email:      newEmailFlow(deps),
 		tv:         deps.TV,
 		tvLimit:    newLoginLimiter(tvIPFails, failWindow),
 	}
 
 	p.mux = http.NewServeMux()
+	p.emailRoutes()
 	p.mux.Handle("GET /static/style.css", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/files.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/trash.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
@@ -116,6 +124,8 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.HandleFunc("GET /api/files/view", p.fileRoute(fileHandlers.viewFile))
 	p.mux.HandleFunc("GET /photos", p.photosPage)
 	p.mux.HandleFunc("GET /api/files/photos", p.fileRoute(fileHandlers.listPhotos))
+	p.mux.HandleFunc("PUT /api/files/photo-date", p.fileRoute(fileHandlers.setPhotoDate))
+	p.mux.HandleFunc("DELETE /api/files/photo-date", p.fileRoute(fileHandlers.resetPhotoDate))
 	p.mux.HandleFunc("GET /api/files/thumb", p.fileRoute(fileHandlers.thumbFile))
 	p.mux.HandleFunc("GET /api/files/preview", p.fileRoute(fileHandlers.previewFile))
 	p.mux.HandleFunc("PUT /api/files/content", p.fileRoute(fileHandlers.uploadFile))
@@ -170,6 +180,7 @@ func sameOrigin(r *http.Request) bool {
 // EndSessions signs a user out everywhere, for example after an admin changes or deletes the account.
 func (p *Portal) EndSessions(user string) {
 	p.sessions.destroyUser(user)
+	p.email.dropIfGone(user, p.users)
 }
 
 // sharedAssets exposes only the stylesheet and the file browser script from the admin
