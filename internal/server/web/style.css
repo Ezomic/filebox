@@ -61,7 +61,10 @@ header.bar {
 
 h1 { font-size: 1.6rem; font-weight: 750; letter-spacing: -0.02em; margin: 0; }
 
-nav.actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+nav.actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+nav.actions > * { padding: 0 8px; }
+nav.actions a.link[aria-current="page"],
+nav.actions a.link[aria-current="page"]:hover { background: var(--accent); color: var(--on-accent); box-shadow: var(--glow); }
 
 .card {
   background: var(--card);
