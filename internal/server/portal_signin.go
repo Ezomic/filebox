@@ -57,6 +57,7 @@ func (p *Portal) signInTarget(identifier string) (signInIdentity, bool) {
 
 type signInLinkBody struct {
 	Email string `json:"email"`
+	Lang  any    `json:"lang"`
 }
 
 // The answer is the same for every address and is written before any lookup or mail, like the reset
@@ -75,13 +76,14 @@ func (p *Portal) requestSignInLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	address := strings.TrimSpace(body.Email)
+	lang := chosenMailLang(body.Lang)
 	if e.enabled() && validEmail(address) {
-		e.background(func() { p.sendSignInLink(address, ip) })
+		e.background(func() { p.sendSignInLink(address, ip, lang) })
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": signInAnswer, "code": codeSignInLinkSent})
 }
 
-func (p *Portal) sendSignInLink(address, ip string) {
+func (p *Portal) sendSignInLink(address, ip string, lang mailLang) {
 	e := p.email
 	user, found := e.contacts.Lookup(address)
 	if !found || p.roles.IsAdmin(user) || !p.userExists(user) {
@@ -104,12 +106,10 @@ func (p *Portal) sendSignInLink(address, ip string) {
 		log.Printf("portal: sign-in link for %s: %v", logName(user), err)
 		return
 	}
-	text := "Hello,\n\nSomeone asked for a link to sign in to the Filebox account \"" + user +
-		"\". Open this link within 15 minutes and press the button to sign in:\n\n" + e.portalURL + "/sign-in#" + token +
-		"\n\nThe link works once and does not change your password. If you did not ask for this, ignore this email.\n"
+	message := lang.signIn(user, e.portalURL+"/sign-in#"+token)
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
-	if err := e.mail.Send(ctx, contact.Email, "Your Filebox sign-in link", text); err != nil {
+	if err := e.mail.Send(ctx, contact.Email, message.subject, message.body); err != nil {
 		log.Printf("portal: sign-in email for %s not sent: %v", logName(user), err)
 		return
 	}

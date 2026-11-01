@@ -73,6 +73,7 @@ emailForm.addEventListener('submit', async (event) => {
       body: JSON.stringify({
         email: document.getElementById('email').value.trim(),
         current: document.getElementById('email-current').value,
+        lang: i18n.lang(),
       }),
     });
     if (response.ok) {

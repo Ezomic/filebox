@@ -23,7 +23,7 @@ form.addEventListener('submit', async (event) => {
     const response = await fetch('/api/sign-in-link', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: document.getElementById('email').value.trim() }),
+      body: JSON.stringify({ email: document.getElementById('email').value.trim(), lang: i18n.lang() }),
     });
     const body = await response.json().catch(() => ({}));
     if (response.ok) {
