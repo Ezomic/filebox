@@ -90,9 +90,9 @@ async function planTargets(entries) {
       const target = targets[index];
       const taken = claimed.get(target);
       const there = existing.get(target);
-      if (taken !== undefined && taken === entry.file.size) skipped.push(entry);
+      if (taken !== undefined && taken.size === entry.file.size && taken.name === entry.name) skipped.push(entry);
       else if (taken === undefined && !there) {
-        claimed.set(target, entry.file.size);
+        claimed.set(target, { size: entry.file.size, name: entry.name });
         ready.push({ ...entry, target, overwrite: false });
       } else if (taken === undefined && !there.isDir && there.size === entry.file.size) skipped.push(entry);
       else if (entry.attempt >= MAX_ATTEMPTS) failed.push({ file: entry.file, error: i18n.problem('backup.tooManyNames') });
@@ -103,7 +103,7 @@ async function planTargets(entries) {
   return { ready, skipped, failed };
 }
 
-const wake = { sentinel: null, wanted: false, state: 'idle' };
+const wake = { sentinel: null, pending: false, wanted: false, state: 'idle' };
 
 function showAwake(state) {
   wake.state = state;
@@ -113,13 +113,15 @@ function showAwake(state) {
 }
 
 async function acquireWake() {
-  if (!wake.wanted || wake.sentinel || document.visibilityState !== 'visible') return;
+  if (!wake.wanted || wake.sentinel || wake.pending || document.visibilityState !== 'visible') return;
   if (typeof navigator.wakeLock?.request !== 'function') {
     showAwake('unsupported');
     return;
   }
+  wake.pending = true;
   try {
     const sentinel = await navigator.wakeLock.request('screen');
+    wake.pending = false;
     if (!wake.wanted) {
       sentinel.release().catch(() => {});
       return;
@@ -132,6 +134,7 @@ async function acquireWake() {
     });
     showAwake('on');
   } catch {
+    wake.pending = false;
     showAwake('unsupported');
   }
 }
@@ -284,11 +287,10 @@ async function backUp(files) {
   try {
     const { entries, refused } = describeEntries(files);
     outcome.failed.push(...refused);
-    const plan = await planTargets(entries);
+    const plan = await prepare(entries);
     outcome.failed.push(...plan.failed);
     totals.skipped += plan.skipped.length;
     if (plan.ready.length > 0) {
-      await makeFolders(folderChain(plan.ready));
       await holdAwake();
       if ((await uploadAll(plan.ready, outcome)) === 'disk') stopped = () => t('upload.stoppedDisk');
     }
@@ -304,6 +306,20 @@ async function backUp(files) {
   totals.renamed += outcome.renamed;
   showSummary(outcome.failed, stopped, retryFiles ?? [...outcome.failed.filter((entry) => entry.retry !== false).map((entry) => entry.file), ...outcome.untried]);
   window.refreshStorage?.();
+}
+
+async function prepare(entries) {
+  for (;;) {
+    try {
+      const plan = await planTargets(entries);
+      await makeFolders(folderChain(plan.ready));
+      return plan;
+    } catch (error) {
+      if (!(error instanceof NetworkError)) throw error;
+      await waitForReturn();
+      i18n.msg(summary, () => t('upload.checking'));
+    }
+  }
 }
 
 function folderChain(items) {

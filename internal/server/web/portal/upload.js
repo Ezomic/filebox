@@ -31,7 +31,7 @@ function pause(ms) {
       resolve();
     };
     const onVisible = () => {
-      if (document.visibilityState === 'visible') finish();
+      if (document.visibilityState === 'visible' && navigator.onLine !== false) finish();
     };
     const timer = setTimeout(finish, ms);
     window.addEventListener('online', finish);
