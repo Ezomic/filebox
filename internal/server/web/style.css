@@ -116,26 +116,6 @@ a.link:focus-visible {
 
 input[type="number"] { width: 6rem; }
 
-input[type="file"] {
-  width: 100%;
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.9rem;
-}
-
-input[type="file"]::file-selector-button {
-  min-height: 44px;
-  margin-right: 12px;
-  padding: 0 18px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font: inherit;
-  font-weight: 650;
-  cursor: pointer;
-}
-
 button {
   min-height: 48px;
   padding: 0 22px;
@@ -237,7 +217,23 @@ label.check input { width: 20px; height: 20px; }
 
 progress { width: 100%; height: 10px; margin-top: 10px; accent-color: var(--accent); }
 
-label.picker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; color: var(--muted); font-size: 0.85rem; }
+label.picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  margin: 0;
+  padding: 0 22px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 1rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+label.picker:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+label.picker input[type="file"] { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
 .dropzone {
   margin-top: 10px;
   padding: 20px 12px;
@@ -355,7 +351,6 @@ button.folder::before {
   .toolbar { flex-direction: row; flex-wrap: wrap; align-items: center; }
   .toolbar input[type="text"],
   .toolbar input[type="number"] { width: auto; flex: 1 1 10rem; }
-  input[type="file"] { width: auto; flex: 1 1 14rem; }
   .stacked button[type="submit"] { width: auto; }
 
   .viewer-title { flex-basis: 12rem; }
