@@ -14,6 +14,7 @@ const (
 	codeAccountChanged       = "account_changed"
 	codeSessionFailed        = "session_failed"
 	codeFilesUnavailable     = "files_unavailable"
+	codeFamilyUnavailable    = "family_unavailable"
 	codeWrongCurrentPassword = "wrong_current_password"
 	codeWrongPassword        = "wrong_password"
 	codePasswordInvalid      = "password_invalid"

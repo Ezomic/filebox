@@ -28,6 +28,12 @@ func TestAdminPanelHasNoRouteToUserFiles(t *testing.T) {
 		"/api/uploads", "/api/uploads/abc", "/api/uploads/abc/finish",
 		"/api/trash", "/api/trash/", "/api/trash?user=amy", "/api/trash/abc", "/api/trash/abc/restore",
 		"/api/trash%2Fabc",
+		"/family", "/family/", "/FAMILY", "/family/trash", "/family/trash/", "/family?user=amy",
+		"/api/family", "/api/family/", "/api/family/files", "/api/family/files?path=", "/api/family/files/download?path=a.txt",
+		"/api/family/files/view?path=a.txt", "/api/family/files/content?path=a.txt", "/api/family/files/folder",
+		"/api/family/files/rename", "/api/family/files/exists", "/api/family/files/zip?path=/", "/api/family/storage",
+		"/api/family/uploads", "/api/family/uploads/abc", "/api/family/uploads/abc/finish",
+		"/api/family/trash", "/api/family/trash/abc", "/api/family/trash/abc/restore",
 	}
 
 	for _, path := range paths {

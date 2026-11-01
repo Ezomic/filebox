@@ -73,14 +73,15 @@ func main() {
 	space := system.NewDiskSpace(*disk)
 	thumbs := server.NewThumbs(system.NewThumbnailer())
 	portalDeps := server.PortalDeps{
-		Verifier:  system.NewVerifier(),
-		Users:     users,
-		Roles:     store,
-		OpenFiles: system.UserFilesOpener(*filesDir),
-		MaxUpload: *maxUpload,
-		Disk:      space,
-		TV:        tv,
-		Thumbs:    thumbs,
+		Verifier:   system.NewVerifier(),
+		Users:      users,
+		Roles:      store,
+		OpenFiles:  system.UserFilesOpener(*filesDir),
+		OpenFamily: system.FamilyFilesOpener(*filesDir),
+		MaxUpload:  *maxUpload,
+		Disk:       space,
+		TV:         tv,
+		Thumbs:     thumbs,
 	}
 	enableEmail(&portalDeps, *dataDir)
 	portal := server.NewPortal(portalDeps)

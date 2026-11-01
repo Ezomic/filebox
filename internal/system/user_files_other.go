@@ -7,3 +7,9 @@ func UserFilesOpener(string) func(user string) (Files, error) {
 
 	return func(string) (Files, error) { return files, nil }
 }
+
+func FamilyFilesOpener(string) func() (Files, error) {
+	files := NewSampleFiles()
+
+	return func() (Files, error) { return files, nil }
+}

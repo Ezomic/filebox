@@ -130,14 +130,14 @@ function forgetSession(key) {
 
 async function makeFolders(paths) {
   for (const path of paths) {
-    const { status, body } = await withRetry(() => call('POST', '/api/files/folder', { path }));
+    const { status, body } = await withRetry(() => call('POST', `${apiRoot}/files/folder`, { path }));
     if (status !== 201 && status !== 409) throw i18n.failure(body, 'upload.folderFailed', { path });
   }
 }
 
 async function sendSmallFile(item, report) {
   const overwrite = item.overwrite ? '&overwrite=1' : '';
-  const url = `/api/files/content?path=${encodeURIComponent(item.target)}${overwrite}`;
+  const url = `${apiRoot}/files/content?path=${encodeURIComponent(item.target)}${overwrite}`;
   const { status, body } = await withRetry(() => sendBlob(url, item.file, {}, report));
   if (status !== 204) throw uploadFailure(body, 'upload.failed');
 }
@@ -145,7 +145,7 @@ async function sendSmallFile(item, report) {
 async function resumeSession(item, key) {
   const saved = readSaved(key);
   if (!saved || typeof saved.id !== 'string' || saved.overwrite !== item.overwrite) return null;
-  const { status, body } = await withRetry(() => call('GET', `/api/uploads/${encodeURIComponent(saved.id)}`));
+  const { status, body } = await withRetry(() => call('GET', `${apiRoot}/uploads/${encodeURIComponent(saved.id)}`));
   if (status === 200 && body.path === item.target && body.size === item.file.size) {
     return { id: saved.id, offset: body.offset, resumed: body.offset > 0 };
   }
@@ -155,7 +155,7 @@ async function resumeSession(item, key) {
 
 async function createSession(item, key) {
   const payload = { path: item.target, size: item.file.size, overwrite: item.overwrite };
-  const { status, body } = await withRetry(() => call('POST', '/api/uploads', payload));
+  const { status, body } = await withRetry(() => call('POST', `${apiRoot}/uploads`, payload));
   if (status !== 201) throw uploadFailure(body, 'upload.startFailed');
   saveSession(key, { id: body.id, overwrite: item.overwrite });
   return { id: body.id, offset: 0, resumed: false };
@@ -165,7 +165,7 @@ function sendChunk(item, session, from, report) {
   const size = item.file.size;
   const end = Math.min(from + CHUNK_SIZE, size);
   const headers = { 'Content-Range': `bytes ${from}-${end - 1}/${size}` };
-  return withRetry(() => sendBlob(`/api/uploads/${session.id}`, item.file.slice(from, end), headers, (loaded) => report(from + loaded)));
+  return withRetry(() => sendBlob(`${apiRoot}/uploads/${session.id}`, item.file.slice(from, end), headers, (loaded) => report(from + loaded)));
 }
 
 async function sendLargeFile(item, report) {
@@ -199,7 +199,7 @@ async function sendLargeFile(item, report) {
       report(offset);
     }
 
-    const { status, body } = await withRetry(() => call('POST', `/api/uploads/${session.id}/finish`));
+    const { status, body } = await withRetry(() => call('POST', `${apiRoot}/uploads/${session.id}/finish`));
     if (status === 204 || (status === 404 && await alreadyThere(item))) {
       forgetSession(key);
       return;
@@ -211,7 +211,7 @@ async function sendLargeFile(item, report) {
 }
 
 async function alreadyThere(item) {
-  const { status, body } = await withRetry(() => call('POST', '/api/files/exists', { paths: [item.target] }));
+  const { status, body } = await withRetry(() => call('POST', `${apiRoot}/files/exists`, { paths: [item.target] }));
   return status === 200 && body.existing.some((entry) => entry.path === item.target && !entry.isDir);
 }
 
@@ -219,7 +219,7 @@ async function lookupExisting(paths) {
   const existing = new Map();
   for (let start = 0; start < paths.length; start += EXISTS_BATCH) {
     const batch = paths.slice(start, start + EXISTS_BATCH);
-    const { status, body } = await withRetry(() => call('POST', '/api/files/exists', { paths: batch }));
+    const { status, body } = await withRetry(() => call('POST', `${apiRoot}/files/exists`, { paths: batch }));
     if (status !== 200) throw i18n.failure(body, 'upload.checkFailed');
     body.existing.forEach((entry) => existing.set(entry.path, entry));
   }

@@ -71,7 +71,7 @@ async function load() {
   closeViewer();
   currentPath = pathFromHash();
   try {
-    const { entries } = await api('GET', `/api/files?path=${encodeURIComponent(currentPath)}`);
+    const { entries } = await api('GET', `${apiRoot}/files?path=${encodeURIComponent(currentPath)}`);
     showError(null);
     renderCrumbs();
     render(entries);
@@ -87,7 +87,7 @@ async function load() {
 function renderCrumbs() {
   const crumbs = byId('crumbs');
   const parts = currentPath === '' ? [] : currentPath.split('/');
-  const nodes = [button(t('nav.files'), () => go(''), 'link')];
+  const nodes = [button(t(inFamily ? 'nav.family' : 'nav.files'), () => go(''), 'link')];
   parts.forEach((part, index) => {
     nodes.push(el('span', '/', 'sep'));
     nodes.push(button(part, () => go(parts.slice(0, index + 1).join('/')), 'link'));
@@ -137,12 +137,12 @@ function showActions(cell, entry, path) {
   const nodes = [];
   if (entry.isDir) {
     const zipLink = el('a', t('files.downloadZip'), 'link');
-    zipLink.href = `/api/files/zip?path=${encodeURIComponent(path)}`;
+    zipLink.href = `${apiRoot}/files/zip?path=${encodeURIComponent(path)}`;
     zipLink.download = `${entry.name}.zip`;
     nodes.push(zipLink);
   } else {
     const link = el('a', t('common.download'), 'link');
-    link.href = `/api/files/download?path=${encodeURIComponent(path)}`;
+    link.href = `${apiRoot}/files/download?path=${encodeURIComponent(path)}`;
     link.download = entry.name;
     nodes.push(link);
   }
@@ -172,7 +172,7 @@ function showRenameForm(cell, entry, path) {
     event.preventDefault();
     save.disabled = true;
     try {
-      await api('POST', '/api/files/rename', { from: path, to: join(currentPath, input.value) });
+      await api('POST', `${apiRoot}/files/rename`, { from: path, to: join(currentPath, input.value) });
       await load();
     } catch (error) {
       i18n.report(message, error);
@@ -211,7 +211,7 @@ function showUndo(producer, id) {
 
 async function deleteEntry(path) {
   try {
-    const { id } = await api('DELETE', `/api/files?path=${encodeURIComponent(path)}`);
+    const { id } = await api('DELETE', `${apiRoot}/files?path=${encodeURIComponent(path)}`);
     showError(null);
     showUndo(() => t('files.deleted'), id);
     await load();
@@ -223,7 +223,7 @@ async function deleteEntry(path) {
 
 async function undoDelete(id) {
   try {
-    const { path } = await api('POST', `/api/trash/${id}/restore`);
+    const { path } = await api('POST', `${apiRoot}/trash/${id}/restore`);
     showError(null);
     showUndo(() => t('files.restored', { path }));
     await load();
@@ -241,7 +241,7 @@ byId('folder-form').addEventListener('submit', async (event) => {
   i18n.msg(errorBox);
   submit.disabled = true;
   try {
-    await api('POST', '/api/files/folder', { path: join(currentPath, input.value) });
+    await api('POST', `${apiRoot}/files/folder`, { path: join(currentPath, input.value) });
     input.value = '';
     await load();
   } catch (error) {

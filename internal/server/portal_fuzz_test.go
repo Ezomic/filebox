@@ -9,89 +9,128 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Ezomic/filebox/internal/system"
 )
 
 const bobSecret = "bob-private-contents"
+
+const fuzzFamily = 0x80
 
 func FuzzPortalFilePathsStayInsideTheUser(f *testing.F) {
 	for _, seed := range []string{
 		"", "a.txt", "../bob/files/secret.txt", "..%2fbob%2ffiles%2fsecret.txt", "/etc/passwd", `..\bob`,
 		"%2e%2e/bob", "a\x00b", "link", "link/secret.txt", "....//bob", "docs/../../bob/files/secret.txt",
 		".thumbs", ".THUMBS/x.t.jpg", "a/.thumbs/b", "photo.jpg",
+		"../_family/shared.txt", "_family", "../../_family", "shared.txt", ".trash", ".TRASH/x", "a/.uploads", "../outside.txt",
 	} {
-		f.Add(uint8(0), seed, seed)
-		f.Add(uint8(3), seed, "x")
-		f.Add(uint8(6), seed, "x")
-		f.Add(uint8(7), seed, seed)
-		f.Add(uint8(8), seed, "x")
-		f.Add(uint8(9), seed, "x")
-		f.Add(uint8(10), seed, "x")
-		f.Add(uint8(11), seed, "x")
-		f.Add(uint8(12), seed, "x")
-		f.Add(uint8(13), seed, "x")
-		f.Add(uint8(14), seed, "x")
-		f.Add(uint8(15), seed, "x")
+		for _, scope := range []uint8{0, fuzzFamily} {
+			f.Add(scope|0, seed, seed)
+			f.Add(scope|3, seed, "x")
+			f.Add(scope|6, seed, "x")
+			f.Add(scope|7, seed, seed)
+			f.Add(scope|8, seed, "x")
+			f.Add(scope|9, seed, "x")
+			f.Add(scope|10, seed, "x")
+			f.Add(scope|11, seed, "x")
+			f.Add(scope|12, seed, "x")
+			f.Add(scope|13, seed, "x")
+			f.Add(scope|14, seed, "x")
+			f.Add(scope|15, seed, "x")
+		}
 	}
 	f.Fuzz(func(t *testing.T, op uint8, first, second string) {
-		h := newPortalFilesHarness(t)
+		h := newFamilyHarness(t)
 		h.write(t, "bob", "secret.txt", bobSecret)
 		h.write(t, "amy", "a.txt", "amy-file")
+		if err := os.WriteFile(filepath.Join(h.base, "outside.txt"), []byte("outside"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(h.base, system.FamilyDir, "shared.txt"), []byte("family-file"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		_ = os.Symlink(filepath.Join(h.base, "bob", "files"), filepath.Join(h.base, "amy", "files", "link"))
-		amy := h.signedIn(t, "amy", amyPassword)
+		_ = os.Symlink(filepath.Join(h.base, "bob", "files"), filepath.Join(h.base, system.FamilyDir, "link"))
+		_ = os.Symlink(filepath.Join(h.base, "amy", "files"), filepath.Join(h.base, system.FamilyDir, "amylink"))
+		amy := h.amy
+		amyEntries, _ := os.ReadDir(filepath.Join(h.base, "amy", "files"))
 
+		api := "/api"
+		if op&fuzzFamily != 0 {
+			api = "/api/family"
+		}
 		var rec *httptest.ResponseRecorder
-		switch op % 16 {
+		switch op & 0x7f % 16 {
 		case 0:
-			rec = h.get(amy, "/api/files", first)
+			rec = h.get(amy, api+"/files", first)
 		case 1:
-			rec = h.get(amy, "/api/files/download", first)
+			rec = h.get(amy, api+"/files/download", first)
 		case 2:
-			rec = h.upload(amy, first, "planted")
+			rec = h.call("PUT", api+"/files/content?path="+url.QueryEscape(first), "planted", amy)
 		case 3:
-			rec = h.do("POST", "/api/files/folder", `{"path":`+quote(first)+`}`, "192.0.2.10", amy)
+			rec = h.do("POST", api+"/files/folder", `{"path":`+quote(first)+`}`, "192.0.2.10", amy)
 		case 4:
-			rec = h.do("POST", "/api/files/rename", `{"from":`+quote(first)+`,"to":`+quote(second)+`}`, "192.0.2.10", amy)
+			rec = h.do("POST", api+"/files/rename", `{"from":`+quote(first)+`,"to":`+quote(second)+`}`, "192.0.2.10", amy)
 		case 5:
-			rec = h.do("DELETE", "/api/files?path="+url.QueryEscape(first), "", "192.0.2.10", amy)
+			rec = h.do("DELETE", api+"/files?path="+url.QueryEscape(first), "", "192.0.2.10", amy)
 		case 6:
-			rec = h.get(amy, "/api/files/zip", first)
+			rec = h.get(amy, api+"/files/zip", first)
 		case 7:
-			rec = h.do("POST", "/api/files/exists", `{"paths":[`+quote(first)+`,`+quote(second)+`]}`, "192.0.2.10", amy)
+			rec = h.do("POST", api+"/files/exists", `{"paths":[`+quote(first)+`,`+quote(second)+`]}`, "192.0.2.10", amy)
 		case 8:
-			rec = h.do("POST", "/api/uploads", `{"path":`+quote(first)+`,"size":1}`, "192.0.2.10", amy)
+			rec = h.do("POST", api+"/uploads", `{"path":`+quote(first)+`,"size":1}`, "192.0.2.10", amy)
 		case 9:
-			rec = h.do("POST", "/api/trash/"+url.PathEscape(first)+"/restore", "", "192.0.2.10", amy)
+			rec = h.do("POST", api+"/trash/"+url.PathEscape(first)+"/restore", "", "192.0.2.10", amy)
 		case 10:
-			rec = h.do("DELETE", "/api/trash/"+url.PathEscape(first), "", "192.0.2.10", amy)
+			rec = h.do("DELETE", api+"/trash/"+url.PathEscape(first), "", "192.0.2.10", amy)
 		case 11:
-			rec = h.do("DELETE", "/api/trash?user="+url.QueryEscape(first), "", "192.0.2.10", amy)
+			rec = h.do("DELETE", api+"/trash?user="+url.QueryEscape(first), "", "192.0.2.10", amy)
 		case 12:
-			rec = h.do("DELETE", "/api/files?path="+url.QueryEscape(first), "", "192.0.2.10", amy)
+			rec = h.do("DELETE", api+"/files?path="+url.QueryEscape(first), "", "192.0.2.10", amy)
 			var trashed struct {
 				ID string `json:"id"`
 			}
 			if json.Unmarshal(rec.Body.Bytes(), &trashed) == nil && trashed.ID != "" {
-				rec = h.do("POST", "/api/trash/"+trashed.ID+"/restore", "", "192.0.2.10", amy)
+				rec = h.do("POST", api+"/trash/"+trashed.ID+"/restore", "", "192.0.2.10", amy)
 			}
 		case 13:
-			rec = h.get(amy, "/api/files/thumb", first)
+			rec = h.get(amy, api+"/files/thumb", first)
 		case 14:
-			rec = h.get(amy, "/api/files/preview", first)
+			rec = h.get(amy, api+"/files/preview", first)
 		case 15:
-			rec = h.do("GET", "/api/files/photos?limit=500&after="+url.QueryEscape(first), "", "192.0.2.10", amy)
+			rec = h.do("GET", api+"/files/photos?limit=500&after="+url.QueryEscape(first), "", "192.0.2.10", amy)
 		}
 
 		if rec.Code >= 500 && runtime.GOOS != "windows" {
-			t.Fatalf("op %d %q %q gave a server error %d", op%16, first, second, rec.Code)
+			t.Fatalf("op %#x %q %q gave a server error %d", op, first, second, rec.Code)
 		}
-		if strings.Contains(rec.Body.String(), bobSecret) {
-			t.Fatalf("op %d %q %q leaked bob's file", op%16, first, second)
+		if strings.Contains(rec.Body.String(), bobSecret) || strings.Contains(rec.Body.String(), "outside") {
+			t.Fatalf("op %#x %q %q leaked a file from outside its root", op, first, second)
+		}
+		if op&fuzzFamily == 0 && strings.Contains(rec.Body.String(), "family-file") {
+			t.Fatalf("op %#x %q %q reached the family folder from a home endpoint", op, first, second)
 		}
 		if data, err := os.ReadFile(filepath.Join(h.base, "bob", "files", "secret.txt")); err != nil || string(data) != bobSecret {
-			t.Fatalf("op %d %q %q damaged bob's file: %q %v", op%16, first, second, data, err)
+			t.Fatalf("op %#x %q %q damaged bob's file: %q %v", op, first, second, data, err)
 		}
 		if entries, err := os.ReadDir(filepath.Join(h.base, "bob", "files")); err != nil || len(entries) != 1 {
-			t.Fatalf("op %d %q %q changed bob's folder: %v %v", op%16, first, second, entries, err)
+			t.Fatalf("op %#x %q %q changed bob's folder: %v %v", op, first, second, entries, err)
+		}
+		if data, err := os.ReadFile(filepath.Join(h.base, "outside.txt")); err != nil || string(data) != "outside" {
+			t.Fatalf("op %#x %q %q damaged a file at the data root: %q %v", op, first, second, data, err)
+		}
+		if entries, err := os.ReadDir(h.base); err != nil || len(entries) != 4 {
+			t.Fatalf("op %#x %q %q created something at the data root: %v %v", op, first, second, entries, err)
+		}
+		if op&fuzzFamily != 0 {
+			if data, err := os.ReadFile(filepath.Join(h.base, "amy", "files", "a.txt")); err != nil || string(data) != "amy-file" {
+				t.Fatalf("op %#x %q %q reached amy's home from the family folder: %q %v", op, first, second, data, err)
+			}
+			if entries, err := os.ReadDir(filepath.Join(h.base, "amy", "files")); err != nil || len(entries) != len(amyEntries) {
+				t.Fatalf("op %#x %q %q changed amy's home from the family folder: %v %v", op, first, second, entries, err)
+			}
+		} else if data, err := os.ReadFile(filepath.Join(h.base, system.FamilyDir, "shared.txt")); err != nil || string(data) != "family-file" {
+			t.Fatalf("op %#x %q %q damaged the family file from a home endpoint: %q %v", op, first, second, data, err)
 		}
 	})
 }

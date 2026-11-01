@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en" data-scope="family">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0f17" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <title data-i18n="family.title">Family folder</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
+</head>
+<body>
+  <main class="wide">
+    <header class="bar">
+      <h1 data-i18n="family.title">Family folder</h1>
+      <nav class="actions">
+        <a class="link" href="/" data-i18n="nav.files">Files</a>
+        <a class="link" href="/family" aria-current="page" data-i18n="nav.family">Family</a>
+        <a class="link" href="/photos" data-i18n="nav.photos">Photos</a>
+        <a class="link" href="/backup" data-i18n="nav.backup">Back up</a>
+        <a class="link" id="tv-link" href="/tv" data-i18n="nav.tv" hidden>TV</a>
+        <a class="link" href="/trash" data-i18n="nav.trash">Trash</a>
+        <a class="link" href="/password" data-i18n="nav.password">Password</a>
+        <button class="link" id="logout" type="button" data-i18n="nav.signout">Sign out</button>
+      </nav>
+    </header>
+    <p class="error" id="status" role="status"></p>
+    <p class="detail" data-i18n="family.intro">Everyone with an account can see, add, rename and delete files here. They do not count towards anyone's storage quota, and they are only available on the website, not over SFTP.</p>
+    <p><a class="link" href="/family/trash" data-i18n="family.trashLink">Family trash</a></p>
+    <section class="card">
+      <nav class="crumbs" id="crumbs" aria-label="Folder path" data-i18n-attr="aria-label:files.path"></nav>
+      <table id="files">
+        <tbody id="file-rows"></tbody>
+      </table>
+      <p class="detail" id="empty" data-i18n="files.empty" hidden>This folder is empty.</p>
+    </section>
+    <section class="card stacked">
+      <div class="label" data-i18n="upload.heading">Upload to this folder</div>
+      <div class="toolbar">
+        <label class="picker"><span data-i18n="upload.pickFiles">Choose files</span> <input type="file" id="upload-input" multiple></label>
+        <label class="picker"><span data-i18n="upload.pickFolder">Choose folder</span> <input type="file" id="upload-folder" webkitdirectory></label>
+      </div>
+      <div class="dropzone" id="drop-zone" data-i18n="upload.drop">Or drop files and folders here</div>
+      <div class="preview" id="preview" hidden>
+        <div class="label" id="preview-title" role="status"></div>
+        <div class="toolbar">
+          <button type="button" id="preview-upload" data-i18n="upload.start">Upload</button>
+          <button type="button" id="preview-cancel" class="link" data-i18n="common.cancel">Cancel</button>
+        </div>
+        <ul id="preview-list"></ul>
+      </div>
+      <div class="conflicts" id="conflicts" hidden>
+        <div class="label" id="conflict-title" role="status"></div>
+        <div class="toolbar">
+          <button type="button" id="conflict-skip-all" class="link" data-i18n="conflict.skipAll">Skip all</button>
+          <button type="button" id="conflict-replace-all" class="link" data-i18n="conflict.replaceAll">Replace all</button>
+          <button type="button" id="conflict-continue" data-i18n="conflict.continue">Continue upload</button>
+        </div>
+        <ul id="conflict-list"></ul>
+      </div>
+      <progress id="upload-total" max="100" value="0" hidden aria-label="Overall progress" data-i18n-attr="aria-label:upload.totalProgress"></progress>
+      <progress id="upload-progress" max="100" value="0" hidden aria-label="Progress of the current file" data-i18n-attr="aria-label:upload.fileProgress"></progress>
+      <p class="detail" id="upload-detail" role="status"></p>
+      <p id="upload-summary" role="status"></p>
+      <ul class="failures" id="upload-failures"></ul>
+    </section>
+    <form class="card stacked" id="folder-form" autocomplete="off">
+      <div class="label" data-i18n="folder.heading">New folder in this folder</div>
+      <div class="toolbar">
+        <input type="text" id="folder-name" required maxlength="255" aria-label="Folder name" data-i18n-attr="aria-label:folder.name" autocapitalize="none" spellcheck="false">
+        <button type="submit" data-i18n="folder.create">Create folder</button>
+      </div>
+      <p class="error" id="folder-error" role="alert"></p>
+    </form>
+  </main>
+  <script src="/static/nav.js"></script>
+  <script src="/static/storage.js"></script>
+  <script src="/static/viewer.js"></script>
+  <script src="/static/upload.js"></script>
+  <script src="/static/files.js"></script>
+  <script src="/static/tvlink.js"></script>
+</body>
+</html>
