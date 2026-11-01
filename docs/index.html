@@ -64,6 +64,7 @@
     <tr><td>Admin panel</td><td>You</td><td>Only over your Tailscale network, port 8443</td></tr>
   </table>
   <p>Every family member has their own private folder and cannot see anyone else's. The admin panel creates users, shows disk health and logs, and never shows or touches anyone's files.</p>
+  <p>The web portal also has a shared Family folder that every signed-in family member can read, add to, rename and delete from, with its own trash that empties after 30 days. It is stored in <code>/srv/sftp/_family</code>, outside every personal folder, so it counts toward nobody's quota and the admin panel cannot see it. It is not available over SFTP.</p>
 
   <h2 id="need">What you need</h2>
   <ul>

@@ -138,6 +138,23 @@ func (p *Portal) storage(w http.ResponseWriter, _ *http.Request, user string) {
 	writeJSON(w, http.StatusOK, newStorageView(disk, quota, hasQuota, trashBytes(files)))
 }
 
+// The family folder is in nobody's quota, so its bar always measures the whole disk.
+func (p *Portal) familyStorage(w http.ResponseWriter, _ *http.Request, user string) {
+	disk, err := p.space.usage()
+	if err != nil {
+		log.Printf("portal: read disk usage: %v", err)
+		writeCoded(w, http.StatusServiceUnavailable, codeStorageUnavailable, "storage information is not available")
+		return
+	}
+	files, closeFiles, ok := p.openFamilyFiles(w, user)
+	if !ok {
+		return
+	}
+	defer closeFiles()
+
+	writeJSON(w, http.StatusOK, newStorageView(disk, system.Quota{}, false, trashBytes(files)))
+}
+
 func trashBytes(files system.Files) uint64 {
 	items, err := files.ListTrash()
 	if err != nil {

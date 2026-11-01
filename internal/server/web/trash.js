@@ -69,7 +69,7 @@ function render(items, totalSize) {
 
 async function load() {
   try {
-    const { items, totalSize } = await api('GET', `/api/trash${scope()}`);
+    const { items, totalSize } = await api('GET', `${apiRoot}/trash${scope()}`);
     showError(null);
     render(items, totalSize);
     window.refreshStorage?.();
@@ -87,7 +87,8 @@ async function load() {
 function trashRow(item) {
   const actions = el('td', undefined, 'row-actions');
   const nameCell = el('td', item.isDir ? `${item.name}/` : item.name, 'name');
-  const folder = item.folder === '' ? t('nav.files') : `${t('nav.files')}/${item.folder}`;
+  const root = t(inFamily ? 'nav.family' : 'nav.files');
+  const folder = item.folder === '' ? root : `${root}/${item.folder}`;
   const where = el('td', t('trash.where', { folder, date: i18n.date(item.deleted), expires: expiresIn(item.expires) }), 'meta');
   const row = el('tr');
   row.append(nameCell, where, el('td', formatSize(item.size), 'meta'), actions);
@@ -104,7 +105,7 @@ function showActions(cell, item) {
 
 async function restore(item) {
   try {
-    const { path } = await api('POST', `/api/trash/${item.id}/restore${scope()}`);
+    const { path } = await api('POST', `${apiRoot}/trash/${item.id}/restore${scope()}`);
     showNotice(() => (path === item.path ? t('files.restored', { path }) : t('trash.restoredAs', { path })));
     await load();
   } catch (error) {
@@ -121,7 +122,7 @@ function confirmPurge(cell, item) {
     el('span', t('trash.confirmDelete', { name: item.name }), 'error'),
     button(t('trash.deleteForever'), async () => {
       try {
-        await api('DELETE', `/api/trash/${item.id}${scope()}`);
+        await api('DELETE', `${apiRoot}/trash/${item.id}${scope()}`);
         showNotice(null);
         await load();
       } catch (error) {
@@ -140,7 +141,7 @@ emptyButton.addEventListener('click', () => {
     el('span', t('trash.confirmEmpty'), 'error'),
     button(t('trash.emptyAll'), async () => {
       try {
-        await api('DELETE', `/api/trash${scope()}`);
+        await api('DELETE', `${apiRoot}/trash${scope()}`);
         showNotice(() => t('trash.emptied'));
         await load();
       } catch (error) {

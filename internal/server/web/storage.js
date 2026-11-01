@@ -1,7 +1,8 @@
 (() => {
   const header = document.querySelector('header.bar');
   if (!header) return;
-  const onTrash = window.location.pathname === '/trash';
+  const trashPath = inFamily ? '/family/trash' : '/trash';
+  const onTrash = window.location.pathname === trashPath;
 
   const el = (tag, text, className) => {
     const node = document.createElement(tag);
@@ -44,13 +45,13 @@
 
   function trashLine(data) {
     if (data.trashBytes <= 0) return null;
-    const line = el('span', `${t('storage.trashHolds', { size: format(data.trashBytes) })} `);
+    const line = el('span', `${t(inFamily ? 'storage.familyTrashHolds' : 'storage.trashHolds', { size: format(data.trashBytes) })} `);
     if (onTrash) {
       line.append(t('storage.emptyBelow'));
       return line;
     }
     const link = el('a', t('storage.emptyLink'), 'link');
-    link.href = '/trash';
+    link.href = trashPath;
     line.append(link);
     return line;
   }
@@ -88,7 +89,7 @@
 
   async function refresh() {
     try {
-      const response = await fetch('/api/storage');
+      const response = await fetch(`${apiRoot}/storage`);
       if (!response.ok) return null;
       const data = await response.json();
       render(data);

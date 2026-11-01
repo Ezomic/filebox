@@ -243,3 +243,7 @@
   };
   window.t = t;
 })();
+
+// The Family pages are the file pages again on another root, picked by the page and never by the user.
+const apiRoot = document.documentElement.dataset.scope === 'family' ? '/api/family' : '/api';
+const inFamily = apiRoot !== '/api';

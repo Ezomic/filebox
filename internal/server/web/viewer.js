@@ -31,9 +31,9 @@ function viewItem(path, name, size, extra) {
     name,
     size,
     kind,
-    url: `/api/files/${converted ? 'preview' : 'view'}?${query}`,
-    downloadUrl: `/api/files/download?${query}`,
-    posterUrl: kind === 'video' ? `/api/files/thumb?${query}` : null,
+    url: `${apiRoot}/files/${converted ? 'preview' : 'view'}?${query}`,
+    downloadUrl: `${apiRoot}/files/download?${query}`,
+    posterUrl: kind === 'video' ? `${apiRoot}/files/thumb?${query}` : null,
   };
 }
 

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// SweepAllTrash deletes trash items older than maxAge from the data root and from every user's own files folder.
+// SweepAllTrash deletes trash items older than maxAge from the data root, the family folder and every user's own files folder.
 func SweepAllTrash(base string, now time.Time, maxAge time.Duration) (int, error) {
 	cutoff := now.Add(-maxAge)
 

@@ -34,7 +34,9 @@ type PortalDeps struct {
 	Roles    Roles
 	// OpenFiles returns a Files confined to that user's own folder; it is closed after each request.
 	OpenFiles func(user string) (system.Files, error)
-	MaxUpload int64
+	// OpenFamily returns a Files confined to the folder every signed-in user shares; nil switches the Family pages off.
+	OpenFamily func() (system.Files, error)
+	MaxUpload  int64
 	// Disk reports the usage of the filesystem holding the files; nil turns the storage bar off and never blocks an upload.
 	Disk system.DiskSpace
 	// TV is the streambox add-on; nil when it is not installed.
@@ -54,6 +56,7 @@ type Portal struct {
 	users      system.Users
 	roles      Roles
 	openFiles  func(user string) (system.Files, error)
+	openFamily func() (system.Files, error)
 	maxUpload  int64
 	space      *storageProbe
 	thumbs     *Thumbs
@@ -84,6 +87,7 @@ func NewPortal(deps PortalDeps) *Portal {
 		users:      deps.Users,
 		roles:      deps.Roles,
 		openFiles:  deps.OpenFiles,
+		openFamily: deps.OpenFamily,
 		maxUpload:  deps.MaxUpload,
 		space:      newStorageProbe(deps.Disk, deps.Users),
 		thumbs:     deps.Thumbs,
@@ -131,27 +135,32 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.HandleFunc("DELETE /api/admin/users/{name}/quota", p.requireAdmin(p.adminClearQuota))
 	p.mux.HandleFunc("DELETE /api/admin/users/{name}", p.requireAdmin(p.adminDelete))
 	p.mux.HandleFunc("GET /api/storage", p.requireSession(p.storage))
-	p.mux.HandleFunc("GET /api/files", p.fileRoute(fileHandlers.listFiles))
-	p.mux.HandleFunc("DELETE /api/files", p.fileRoute(fileHandlers.deleteFile))
-	p.mux.HandleFunc("GET /api/files/download", p.fileRoute(fileHandlers.downloadFile))
-	p.mux.HandleFunc("GET /api/files/view", p.fileRoute(fileHandlers.viewFile))
+	p.fileAPI("GET /api/files", fileHandlers.listFiles)
+	p.fileAPI("DELETE /api/files", fileHandlers.deleteFile)
+	p.fileAPI("GET /api/files/download", fileHandlers.downloadFile)
+	p.fileAPI("GET /api/files/view", fileHandlers.viewFile)
 	p.mux.HandleFunc("GET /photos", p.photosPage)
 	p.mux.HandleFunc("GET /backup", p.backupPage)
 	p.mux.HandleFunc("GET /api/files/photos", p.fileRoute(fileHandlers.listPhotos))
 	p.mux.HandleFunc("PUT /api/files/photo-date", p.fileRoute(fileHandlers.setPhotoDate))
 	p.mux.HandleFunc("DELETE /api/files/photo-date", p.fileRoute(fileHandlers.resetPhotoDate))
-	p.mux.HandleFunc("GET /api/files/thumb", p.fileRoute(fileHandlers.thumbFile))
-	p.mux.HandleFunc("GET /api/files/preview", p.fileRoute(fileHandlers.previewFile))
-	p.mux.HandleFunc("PUT /api/files/content", p.fileRoute(fileHandlers.uploadFile))
-	p.mux.HandleFunc("POST /api/files/folder", p.fileRoute(fileHandlers.createFolder))
-	p.mux.HandleFunc("POST /api/files/rename", p.fileRoute(fileHandlers.renameFile))
-	p.mux.HandleFunc("POST /api/files/exists", p.fileRoute(fileHandlers.checkExists))
-	p.mux.HandleFunc("GET /api/files/zip", p.fileRoute(fileHandlers.downloadZip))
+	p.fileAPI("GET /api/files/thumb", fileHandlers.thumbFile)
+	p.fileAPI("GET /api/files/preview", fileHandlers.previewFile)
+	p.fileAPI("PUT /api/files/content", fileHandlers.uploadFile)
+	p.fileAPI("POST /api/files/folder", fileHandlers.createFolder)
+	p.fileAPI("POST /api/files/rename", fileHandlers.renameFile)
+	p.fileAPI("POST /api/files/exists", fileHandlers.checkExists)
+	p.fileAPI("GET /api/files/zip", fileHandlers.downloadZip)
 	p.mux.HandleFunc("GET /trash", p.trashPage)
-	p.mux.HandleFunc("GET /api/trash", p.fileRoute(fileHandlers.listTrash))
-	p.mux.HandleFunc("DELETE /api/trash", p.fileRoute(fileHandlers.emptyTrash))
-	p.mux.HandleFunc("POST /api/trash/{id}/restore", p.fileRoute(fileHandlers.restoreTrash))
-	p.mux.HandleFunc("DELETE /api/trash/{id}", p.fileRoute(fileHandlers.purgeTrash))
+	p.fileAPI("GET /api/trash", fileHandlers.listTrash)
+	p.fileAPI("DELETE /api/trash", fileHandlers.emptyTrash)
+	p.fileAPI("POST /api/trash/{id}/restore", fileHandlers.restoreTrash)
+	p.fileAPI("DELETE /api/trash/{id}", fileHandlers.purgeTrash)
+	if p.openFamily != nil {
+		p.mux.HandleFunc("GET /family", p.familyPage)
+		p.mux.HandleFunc("GET /family/trash", p.familyTrashPage)
+		p.mux.HandleFunc("GET /api/family/storage", p.requireSession(p.familyStorage))
+	}
 	p.mux.HandleFunc("GET /api/tv", p.requireSession(p.tvInfo))
 	if p.tv != nil {
 		p.mux.HandleFunc("GET /tv", p.tvPage)
@@ -159,10 +168,10 @@ func NewPortal(deps PortalDeps) *Portal {
 		p.mux.HandleFunc("GET /tv/s/{token}/epg.xml", p.tvGuide)
 		p.mux.HandleFunc("GET /tv/s/{token}/hls/{id}/{file}", p.tvSegment)
 	}
-	p.mux.HandleFunc("POST /api/uploads", p.fileRoute(fileHandlers.createUpload))
-	p.mux.HandleFunc("GET /api/uploads/{id}", p.fileRoute(fileHandlers.uploadStatus))
-	p.mux.HandleFunc("PUT /api/uploads/{id}", p.fileRoute(fileHandlers.appendChunk))
-	p.mux.HandleFunc("POST /api/uploads/{id}/finish", p.fileRoute(fileHandlers.finishUpload))
+	p.fileAPI("POST /api/uploads", fileHandlers.createUpload)
+	p.fileAPI("GET /api/uploads/{id}", fileHandlers.uploadStatus)
+	p.fileAPI("PUT /api/uploads/{id}", fileHandlers.appendChunk)
+	p.fileAPI("POST /api/uploads/{id}/finish", fileHandlers.finishUpload)
 
 	return p
 }
@@ -440,8 +449,28 @@ func (p *Portal) requireSession(next func(http.ResponseWriter, *http.Request, st
 
 // The user's files folder is opened per request, so a handler can only ever see the signed-in user's own files.
 func (p *Portal) fileRoute(call func(fileHandlers, http.ResponseWriter, *http.Request)) http.HandlerFunc {
+	return p.scopedRoute(p.openUserFiles, call)
+}
+
+// The family folder is the same file API opened on a different root. Which root is decided here, by the route, and
+// never by a parameter the client sends, so a request cannot choose its way from one folder into the other.
+func (p *Portal) familyRoute(call func(fileHandlers, http.ResponseWriter, *http.Request)) http.HandlerFunc {
+	return p.scopedRoute(p.openFamilyFiles, call)
+}
+
+// fileAPI serves one file route for the signed-in user's own folder, and under /api/family for the shared folder.
+func (p *Portal) fileAPI(pattern string, call func(fileHandlers, http.ResponseWriter, *http.Request)) {
+	p.mux.HandleFunc(pattern, p.fileRoute(call))
+	if p.openFamily == nil {
+		return
+	}
+	method, path, _ := strings.Cut(pattern, " ")
+	p.mux.HandleFunc(method+" /api/family"+strings.TrimPrefix(path, "/api"), p.familyRoute(call))
+}
+
+func (p *Portal) scopedRoute(open func(http.ResponseWriter, string) (system.Files, func(), bool), call func(fileHandlers, http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return p.requireSession(func(w http.ResponseWriter, r *http.Request, user string) {
-		files, closeFiles, ok := p.openUserFiles(w, user)
+		files, closeFiles, ok := open(w, user)
 		if !ok {
 			return
 		}
@@ -460,11 +489,43 @@ func (p *Portal) openUserFiles(w http.ResponseWriter, user string) (files system
 		writeCoded(w, http.StatusInternalServerError, codeFilesUnavailable, "could not open your files")
 		return nil, nil, false
 	}
-	if closer, isCloser := files.(io.Closer); isCloser {
-		return files, func() { _ = closer.Close() }, true
+
+	return files, closerOf(files), true
+}
+
+func (p *Portal) openFamilyFiles(w http.ResponseWriter, _ string) (files system.Files, closeFiles func(), ok bool) {
+	files, err := p.openFamily()
+	if err != nil {
+		log.Printf("portal: open family folder: %v", err)
+		writeCoded(w, http.StatusInternalServerError, codeFamilyUnavailable, "could not open the family folder")
+		return nil, nil, false
 	}
 
-	return files, func() {}, true
+	return files, closerOf(files), true
+}
+
+func closerOf(files system.Files) func() {
+	if closer, isCloser := files.(io.Closer); isCloser {
+		return func() { _ = closer.Close() }
+	}
+
+	return func() {}
+}
+
+func (p *Portal) familyPage(w http.ResponseWriter, r *http.Request) {
+	p.signedInPage(w, r, "family.html")
+}
+
+func (p *Portal) familyTrashPage(w http.ResponseWriter, r *http.Request) {
+	p.signedInPage(w, r, "family-trash.html")
+}
+
+func (p *Portal) signedInPage(w http.ResponseWriter, r *http.Request, page string) {
+	if _, ok := p.currentUser(r); !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	http.ServeFileFS(w, r, p.pages, page)
 }
 
 type passwordChange struct {
