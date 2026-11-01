@@ -125,7 +125,7 @@ function fileRow(entry) {
   if (entry.isDir) {
     nameCell.append(button(`${entry.name}/`, () => go(path), 'folder'));
   } else if (viewKind(entry.name) !== null) {
-    nameCell.append(button(entry.name, (event) => openPreview(entry, event.currentTarget), 'folder'));
+    nameCell.append(button(entry.name, (event) => openPreview(entry, event.currentTarget), 'folder file'));
   } else {
     nameCell.textContent = entry.name;
   }
