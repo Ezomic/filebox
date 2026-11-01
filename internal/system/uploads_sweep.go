@@ -14,6 +14,11 @@ const UploadMaxAge = 7 * 24 * time.Hour
 // SweepAllUploads clears stale partial uploads from the admin root and from every user's own files folder.
 func SweepAllUploads(base string, now time.Time, maxAge time.Duration) (int, error) {
 	cutoff := now.Add(-maxAge)
+
+	return sweepEveryRoot(base, func(files Files) (int, error) { return files.SweepUploads(cutoff) })
+}
+
+func sweepEveryRoot(base string, sweep func(Files) (int, error)) (int, error) {
 	roots := []string{base}
 	entries, err := os.ReadDir(base)
 	if err != nil {
@@ -28,7 +33,7 @@ func SweepAllUploads(base string, now time.Time, maxAge time.Duration) (int, err
 	swept := 0
 	var errs []error
 	for _, root := range roots {
-		count, err := sweepRoot(root, cutoff)
+		count, err := sweepRoot(root, sweep)
 		swept += count
 		if err != nil {
 			errs = append(errs, err)
@@ -38,7 +43,7 @@ func SweepAllUploads(base string, now time.Time, maxAge time.Duration) (int, err
 	return swept, errors.Join(errs...)
 }
 
-func sweepRoot(root string, cutoff time.Time) (int, error) {
+func sweepRoot(root string, sweep func(Files) (int, error)) (int, error) {
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
 		return 0, nil
 	}
@@ -48,18 +53,22 @@ func sweepRoot(root string, cutoff time.Time) (int, error) {
 	}
 	defer files.(*dirFiles).Close()
 
-	return files.SweepUploads(cutoff)
+	return sweep(files)
 }
 
 // RunUploadSweeper sweeps once straight away and then every interval until ctx ends.
 func RunUploadSweeper(ctx context.Context, base string, interval time.Duration, now func() time.Time) {
+	runSweeper(ctx, interval, "partial uploads", func() (int, error) { return SweepAllUploads(base, now(), UploadMaxAge) })
+}
+
+func runSweeper(ctx context.Context, interval time.Duration, what string, sweep func() (int, error)) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if swept, err := SweepAllUploads(base, now(), UploadMaxAge); err != nil {
-			log.Printf("sweep partial uploads: %v", err)
+		if swept, err := sweep(); err != nil {
+			log.Printf("sweep %s: %v", what, err)
 		} else if swept > 0 {
-			log.Printf("swept %d stale partial uploads", swept)
+			log.Printf("swept %d stale %s", swept, what)
 		}
 		select {
 		case <-ctx.Done():

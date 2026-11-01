@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -22,6 +23,10 @@ func FuzzPortalFilePathsStayInsideTheUser(f *testing.F) {
 		f.Add(uint8(6), seed, "x")
 		f.Add(uint8(7), seed, seed)
 		f.Add(uint8(8), seed, "x")
+		f.Add(uint8(9), seed, "x")
+		f.Add(uint8(10), seed, "x")
+		f.Add(uint8(11), seed, "x")
+		f.Add(uint8(12), seed, "x")
 	}
 	f.Fuzz(func(t *testing.T, op uint8, first, second string) {
 		h := newPortalFilesHarness(t)
@@ -31,7 +36,7 @@ func FuzzPortalFilePathsStayInsideTheUser(f *testing.F) {
 		amy := h.signedIn(t, "amy", amyPassword)
 
 		var rec *httptest.ResponseRecorder
-		switch op % 9 {
+		switch op % 13 {
 		case 0:
 			rec = h.get(amy, "/api/files", first)
 		case 1:
@@ -50,19 +55,33 @@ func FuzzPortalFilePathsStayInsideTheUser(f *testing.F) {
 			rec = h.do("POST", "/api/files/exists", `{"paths":[`+quote(first)+`,`+quote(second)+`]}`, "192.0.2.10", amy)
 		case 8:
 			rec = h.do("POST", "/api/uploads", `{"path":`+quote(first)+`,"size":1}`, "192.0.2.10", amy)
+		case 9:
+			rec = h.do("POST", "/api/trash/"+url.PathEscape(first)+"/restore", "", "192.0.2.10", amy)
+		case 10:
+			rec = h.do("DELETE", "/api/trash/"+url.PathEscape(first), "", "192.0.2.10", amy)
+		case 11:
+			rec = h.do("DELETE", "/api/trash?user="+url.QueryEscape(first), "", "192.0.2.10", amy)
+		case 12:
+			rec = h.do("DELETE", "/api/files?path="+url.QueryEscape(first), "", "192.0.2.10", amy)
+			var trashed struct {
+				ID string `json:"id"`
+			}
+			if json.Unmarshal(rec.Body.Bytes(), &trashed) == nil && trashed.ID != "" {
+				rec = h.do("POST", "/api/trash/"+trashed.ID+"/restore", "", "192.0.2.10", amy)
+			}
 		}
 
 		if rec.Code >= 500 && runtime.GOOS != "windows" {
-			t.Fatalf("op %d %q %q gave a server error %d", op%9, first, second, rec.Code)
+			t.Fatalf("op %d %q %q gave a server error %d", op%13, first, second, rec.Code)
 		}
 		if strings.Contains(rec.Body.String(), bobSecret) {
-			t.Fatalf("op %d %q %q leaked bob's file", op%9, first, second)
+			t.Fatalf("op %d %q %q leaked bob's file", op%13, first, second)
 		}
 		if data, err := os.ReadFile(filepath.Join(h.base, "bob", "files", "secret.txt")); err != nil || string(data) != bobSecret {
-			t.Fatalf("op %d %q %q damaged bob's file: %q %v", op%9, first, second, data, err)
+			t.Fatalf("op %d %q %q damaged bob's file: %q %v", op%13, first, second, data, err)
 		}
 		if entries, err := os.ReadDir(filepath.Join(h.base, "bob", "files")); err != nil || len(entries) != 1 {
-			t.Fatalf("op %d %q %q changed bob's folder: %v %v", op%9, first, second, entries, err)
+			t.Fatalf("op %d %q %q changed bob's folder: %v %v", op%13, first, second, entries, err)
 		}
 	})
 }

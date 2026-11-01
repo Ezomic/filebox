@@ -93,7 +93,7 @@ func TestPortalFileLifecycleStaysInTheUsersOwnFolder(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != "hi there" {
 		t.Fatalf("download got %d: %q", rec.Code, rec.Body)
 	}
-	if rec := h.do("DELETE", "/api/files?path=docs%2Fhi.txt", "", "192.0.2.10", amy); rec.Code != http.StatusNoContent {
+	if rec := h.do("DELETE", "/api/files?path=docs%2Fhi.txt", "", "192.0.2.10", amy); rec.Code != http.StatusOK {
 		t.Fatalf("delete got %d: %s", rec.Code, rec.Body)
 	}
 	if _, err := os.Stat(filepath.Join(h.base, "amy", "files", "docs", "hi.txt")); !os.IsNotExist(err) {
