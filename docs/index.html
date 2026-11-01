@@ -152,7 +152,7 @@ sudo btrfs filesystem df /srv/sftp</code></pre>
 sudo btrfs replace start &lt;devid&gt; /dev/sdX /srv/sftp</code></pre>
 
   <h2 id="quotas">Storage quotas (btrfs)</h2>
-  <p>You and the portal admins can give each person a maximum amount of storage on the Users pages. It is a hard limit enforced by btrfs, so SFTP and the web portal both stop at it. It needs the data partition on btrfs, as in the RAID1 section above. Empty means unlimited, and new accounts start with no limit.</p>
+  <p>You and the portal admins can give each person a maximum amount of storage on the Users pages. It is a hard limit enforced by btrfs, so SFTP and the web portal both stop at it. It needs the data partition on btrfs, as in the RAID1 section above. "No limit" removes it, and new accounts start with no limit.</p>
   <h3>Turn it on</h3>
   <p>Enable btrfs quotas once for the data partition. New accounts are then created with their files folder as a btrfs subvolume.</p>
 <pre><code>sudo btrfs quota enable /srv/sftp
@@ -164,12 +164,12 @@ sudo btrfs quota rescan -w /srv/sftp</code></pre>
 sudo filebox-user --dry-run convert &lt;name&gt;
 sudo filebox-user convert &lt;name&gt;
 sudo systemctl start filebox-panel</code></pre>
-  <p>The old folder is kept next to the new one as <code>/srv/sftp/&lt;name&gt;/files.pre-quota</code>, readable only by root, and it shares its data blocks with the new folder, so it takes almost no extra space. Check that the files are all there (sign in as that person, or look in <code>/srv/sftp/&lt;name&gt;/files</code>). Only then remove the old copy:</p>
+  <p>The old folder is kept next to the new one as <code>/srv/sftp/&lt;name&gt;/files.pre-quota</code>, readable only by root, and it shares its data blocks with the new folder, so at first it takes almost no extra space. Files the person deletes afterwards stay held by the old copy, so their space only comes back after <code>convert-finish</code>. Check that the files are all there (sign in as that person, or look in <code>/srv/sftp/&lt;name&gt;/files</code>). Only then remove the old copy:</p>
 <pre><code>sudo filebox-user convert-finish &lt;name&gt;</code></pre>
   <h3>What counts</h3>
   <ul>
     <li>Everything in the person's files folder counts: files, unfinished web uploads and the web Trash. Emptying the Trash (or waiting for it to empty itself) frees the space.</li>
-    <li>Lowering a limit below what a person already uses deletes nothing. It only blocks new writes until they delete enough.</li>
+    <li>Lowering a limit below what a person already uses deletes nothing. It only blocks new writes until they delete enough. btrfs can also refuse deletes and renames while a user is exactly at the limit, so if someone is stuck, raise their limit a little first, then ask them to clean up.</li>
     <li>The size on the Users pages comes from btrfs, so it matches what the limit counts. Accounts that are not converted yet show their folder scan size and no limit field.</li>
     <li>Over the limit, the web portal says <em>you are over your storage quota</em>. An SFTP app shows its own failure message, usually "Failure" or "Disk quota exceeded", because the SFTP protocol has no special code for it.</li>
   </ul>

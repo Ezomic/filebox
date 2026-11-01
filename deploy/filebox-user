@@ -216,12 +216,12 @@ cmd_list() {
 }
 
 # Prints "<referenced bytes> <limit in bytes or none>" for a subvolume, as the qgroup reports it.
+# Fails quietly on anything unexpected so one odd user cannot hide everyone else's quota.
 subvolume_quota() {
 	local out
 	out=$(btrfs qgroup show -rf --raw "$1" 2>/dev/null |
-		awk '$1 ~ /^0\// { print $2, $4; found = 1 } END { exit !found }') ||
-		die "could not read the btrfs quota of $1"
-	[[ $out =~ ^[0-9]+\ ([0-9]+|none)$ ]] || die "unexpected btrfs quota output for $1"
+		awk '$1 ~ /^0\// { print $2, $4; n++ } END { exit n != 1 }') || return 1
+	[[ $out =~ ^[0-9]+\ ([0-9]+|none)$ ]] || return 1
 	echo "$out"
 }
 
@@ -232,8 +232,11 @@ cmd_quota_list() {
 	require_quotas_enabled
 	while IFS= read -r name; do
 		if is_subvolume "$BASE/$name/files"; then
-			usage=$(subvolume_quota "$BASE/$name/files")
-			echo "$name $usage"
+			if usage=$(subvolume_quota "$BASE/$name/files"); then
+				echo "$name $usage"
+			else
+				echo "$name - -"
+			fi
 		else
 			echo "$name - -"
 		fi
@@ -252,8 +255,14 @@ cmd_quota_clear() {
 	run btrfs qgroup limit none "$BASE/$1/files"
 }
 
+restore_old() {
+	run mv -T -- "$1" "$2"
+	run chown "$3" -- "$2"
+	run chmod "$4" -- "$2"
+}
+
 cmd_convert() {
-	local name=$1 files=$BASE/$1/files old=$BASE/$1/$OLD_FILES uid
+	local name=$1 files=$BASE/$1/files old=$BASE/$1/$OLD_FILES uid owner mode
 	require_sftp_user "$name"
 	require_btrfs
 	require_quotas_enabled
@@ -266,22 +275,28 @@ cmd_convert() {
 	! systemctl is-active --quiet filebox-panel.service 2>/dev/null ||
 		die "stop the panel first (systemctl stop filebox-panel), because the portal writes into the same folder"
 
+	owner=$(stat -c %u:%g -- "$files")
+	mode=$(stat -c %a -- "$files")
 	run mv -T -- "$files" "$old" || die "could not move the files folder aside"
+	# Locked at once so nobody can add to the kept copy while the new folder is filled.
+	run chown root:root -- "$old"
+	run chmod 0700 -- "$old"
 	if ! run btrfs subvolume create "$files"; then
-		run mv -T -- "$old" "$files"
+		restore_old "$old" "$files" "$owner" "$mode"
 		die "could not create the subvolume, nothing was changed"
 	fi
 	# Reflinks share the data blocks, so the copy is quick and takes almost no extra space.
 	if ! run cp -a --reflink=always -- "$old/." "$files/"; then
 		run btrfs subvolume delete "$files"
-		run mv -T -- "$old" "$files"
+		restore_old "$old" "$files" "$owner" "$mode"
 		die "could not copy the files, nothing was changed"
 	fi
-	run chown --reference="$old" -- "$files"
-	run chmod --reference="$old" -- "$files"
-	# The user must not be able to reach or change the kept copy.
-	run chown root:root -- "$old"
-	run chmod 0700 -- "$old"
+	if ! run chown "$owner" -- "$files" || ! run chmod "$mode" -- "$files"; then
+		run btrfs subvolume delete "$files"
+		restore_old "$old" "$files" "$owner" "$mode"
+		die "could not set the owner of the new folder, nothing was changed"
+	fi
+	[ "$DRY_RUN" -eq 0 ] || return 0
 	echo "converted $name. The previous folder is kept at $old; once you have checked the files, run: filebox-user convert-finish $name"
 }
 
@@ -291,6 +306,7 @@ cmd_convert_finish() {
 	require_btrfs
 	is_subvolume "$files" || die "the files folder is not a subvolume, so it was not converted"
 	[ -d "$old" ] && [ ! -L "$old" ] || die "there is no $old to remove"
+	[ "$(stat -c '%u %a' -- "$old")" = "0 700" ] || die "$old is not locked, so the conversion did not finish; do not remove it"
 	run rm -rf --one-file-system -- "$old"
 }
 

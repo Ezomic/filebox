@@ -10,7 +10,7 @@ import (
 
 const (
 	quotasUnavailableMessage = "quotas are not enabled for this user: the server needs btrfs quotas and the user's folder converted to a subvolume"
-	overQuotaMessage         = "you are over your storage quota: delete some files, empty the trash, or ask an admin for more space"
+	overQuotaMessage         = "you are over your storage quota: empty the trash, delete files, or ask an admin for more space"
 )
 
 // quotaRequest takes whole bytes only. The friendly units live in the page, so the wire format has one meaning.

@@ -120,7 +120,7 @@ function showQuotaForm(cell, user, quotas) {
   amount.setAttribute('aria-label', `Storage limit for ${user.name}`);
   const unit = el('select');
   unit.setAttribute('aria-label', 'Unit');
-  for (const name of Object.keys(QUOTA_UNITS)) unit.append(new Option(name, name));
+  for (const name of Object.keys(QUOTA_UNITS)) unit.append(new Option(`${name[0]}iB`, name));
   unit.value = 'GB';
   if (user.quota !== null) {
     const best = Object.keys(QUOTA_UNITS).reverse().find((name) => user.quota >= QUOTA_UNITS[name]) || 'MB';
@@ -154,7 +154,7 @@ function showQuotaForm(cell, user, quotas) {
     event.preventDefault();
     const bytes = quotaBytes(amount.value, unit.value);
     if (bytes === null) {
-      message.textContent = 'Enter a limit between 1 MB and 1 PB.';
+      message.textContent = 'Enter a limit between 1 MiB and 1 PiB.';
       return;
     }
     changeQuota('PUT', { bytes });
