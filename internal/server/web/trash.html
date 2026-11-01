@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Filebox trash</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="wide">
+    <header class="bar">
+      <h1>Trash</h1>
+      <nav class="actions">
+        <a class="link" href="/">Dashboard</a>
+        <a class="link" href="/files">Files</a>
+        <a class="link" href="/users">Users</a>
+        <a class="link" href="/logs">Logs</a>
+        <button class="link" id="logout" type="button">Sign out</button>
+      </nav>
+    </header>
+    <p class="error" id="status" role="status"></p>
+    <p class="notice" id="notice" role="status" hidden></p>
+    <section class="card">
+      <div class="toolbar">
+        <label for="trash-user">Show</label>
+        <select id="trash-user">
+          <option value="">Deleted from the Files page</option>
+        </select>
+      </div>
+      <p class="detail" id="summary"></p>
+      <table id="files">
+        <tbody id="file-rows"></tbody>
+      </table>
+      <p class="detail" id="empty" hidden>The trash is empty.</p>
+      <div class="toolbar">
+        <button type="button" id="empty-trash" class="danger-solid" hidden>Empty trash</button>
+        <span id="empty-confirm" class="toolbar"></span>
+      </div>
+    </section>
+  </main>
+  <script src="/static/trash.js"></script>
+</body>
+</html>

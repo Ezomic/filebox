@@ -31,6 +31,9 @@ var (
 // UploadsDir holds partial uploads at the top of a Files root. It is invisible to every file operation.
 const UploadsDir = ".uploads"
 
+// TrashDir holds deleted items at the top of a Files root. Like UploadsDir it is invisible to every file operation.
+const TrashDir = ".trash"
+
 type FileInfo struct {
 	Name     string    `json:"name"`
 	IsDir    bool      `json:"isDir"`
@@ -70,6 +73,17 @@ type Files interface {
 	FinishUpload(id string) error
 	// SweepUploads deletes partial uploads that were last written before cutoff and reports how many.
 	SweepUploads(cutoff time.Time) (int, error)
+
+	// Trash moves a file or a whole folder into the hidden trash as one item. Nothing is copied or followed.
+	Trash(path string) (TrashItem, error)
+	ListTrash() ([]TrashItem, error)
+	// RestoreTrash puts an item back where it was and returns the path it landed on. It never overwrites:
+	// a clash gets a "(restored)" name instead.
+	RestoreTrash(id string) (string, error)
+	PurgeTrash(id string) error
+	EmptyTrash() (int, error)
+	// SweepTrash deletes items that were trashed before cutoff and reports how many.
+	SweepTrash(cutoff time.Time) (int, error)
 }
 
 // CleanPath is a cheap first filter. The real confinement is os.Root, so this only
@@ -93,7 +107,7 @@ func CleanPath(path string) (string, error) {
 // Names ending in a dot or space are refused because Windows silently strips them,
 // which would make two different names address the same file.
 func validSegment(segment string) bool {
-	if segment == "" || segment == "." || segment == ".." || len(segment) > maxSegmentBytes || strings.EqualFold(segment, UploadsDir) {
+	if segment == "" || segment == "." || segment == ".." || len(segment) > maxSegmentBytes || strings.EqualFold(segment, UploadsDir) || strings.EqualFold(segment, TrashDir) {
 		return false
 	}
 	if last := segment[len(segment)-1]; last == '.' || last == ' ' {

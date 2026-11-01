@@ -26,14 +26,16 @@ const (
 )
 
 type Deps struct {
-	Host      system.Host
-	Users     system.Users
-	Files     system.Files
-	Logs      system.Logs
-	Power     system.Power
-	Usage     system.Usage
-	Smart     system.Smart
-	MaxUpload int64
+	Host  system.Host
+	Users system.Users
+	Files system.Files
+	// OpenUserFiles opens one user's own files folder so an admin can manage that user's trash; it is closed after each request.
+	OpenUserFiles func(user string) (system.Files, error)
+	Logs          system.Logs
+	Power         system.Power
+	Usage         system.Usage
+	Smart         system.Smart
+	MaxUpload     int64
 	// PowerDelay is how long shutdown and reboot wait so the response can reach the browser first.
 	PowerDelay time.Duration
 	// OnUserChanged runs after an admin changes a user's password or deletes the user.
@@ -44,20 +46,21 @@ type Deps struct {
 }
 
 type Server struct {
-	store      *auth.Store
-	host       system.Host
-	users      system.Users
-	files      system.Files
-	logs       system.Logs
-	power      system.Power
-	usage      system.Usage
-	smart      system.Smart
-	powerDelay time.Duration
-	maxUpload  int64
-	sessions   *sessions
-	limiter    *loginLimiter
-	pages      fs.FS
-	fh         fileHandlers
+	store         *auth.Store
+	host          system.Host
+	users         system.Users
+	files         system.Files
+	openUserFiles func(user string) (system.Files, error)
+	logs          system.Logs
+	power         system.Power
+	usage         system.Usage
+	smart         system.Smart
+	powerDelay    time.Duration
+	maxUpload     int64
+	sessions      *sessions
+	limiter       *loginLimiter
+	pages         fs.FS
+	fh            fileHandlers
 
 	onUserChanged    func(name string)
 	portalCertExpiry func() time.Time
@@ -71,20 +74,21 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	}
 
 	s := &Server{
-		store:      store,
-		host:       deps.Host,
-		users:      deps.Users,
-		files:      deps.Files,
-		logs:       deps.Logs,
-		power:      deps.Power,
-		usage:      deps.Usage,
-		smart:      deps.Smart,
-		powerDelay: deps.PowerDelay,
-		maxUpload:  deps.MaxUpload,
-		sessions:   newSessions(sessionTTL),
-		limiter:    newLoginLimiter(maxLoginFails, failWindow),
-		pages:      pages,
-		fh:         fileHandlers{files: deps.Files, maxUpload: deps.MaxUpload},
+		store:         store,
+		host:          deps.Host,
+		users:         deps.Users,
+		files:         deps.Files,
+		openUserFiles: deps.OpenUserFiles,
+		logs:          deps.Logs,
+		power:         deps.Power,
+		usage:         deps.Usage,
+		smart:         deps.Smart,
+		powerDelay:    deps.PowerDelay,
+		maxUpload:     deps.MaxUpload,
+		sessions:      newSessions(sessionTTL),
+		limiter:       newLoginLimiter(maxLoginFails, failWindow),
+		pages:         pages,
+		fh:            fileHandlers{files: deps.Files, maxUpload: deps.MaxUpload},
 
 		onUserChanged:    deps.OnUserChanged,
 		portalCertExpiry: deps.PortalCertExpiry,
@@ -122,6 +126,11 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("GET /api/uploads/{id}", s.requireSession(s.fh.uploadStatus))
 	mux.HandleFunc("PUT /api/uploads/{id}", s.requireSession(s.fh.appendChunk))
 	mux.HandleFunc("POST /api/uploads/{id}/finish", s.requireSession(s.fh.finishUpload))
+	mux.HandleFunc("GET /trash", s.trashPage)
+	mux.HandleFunc("GET /api/trash", s.trashRoute(fileHandlers.listTrash))
+	mux.HandleFunc("DELETE /api/trash", s.trashRoute(fileHandlers.emptyTrash))
+	mux.HandleFunc("POST /api/trash/{id}/restore", s.trashRoute(fileHandlers.restoreTrash))
+	mux.HandleFunc("DELETE /api/trash/{id}", s.trashRoute(fileHandlers.purgeTrash))
 	mux.HandleFunc("GET /api/disks", s.requireSession(s.disks))
 	mux.HandleFunc("GET /api/logs", s.requireSession(s.readLogs))
 	mux.HandleFunc("POST /api/system/restart-sshd", s.requireSession(s.powerAction(system.RestartSSHD)))

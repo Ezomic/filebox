@@ -148,7 +148,7 @@ function showActions(cell, entry, path) {
   }
   nodes.push(
     button('Rename', () => showRenameForm(cell, entry, path), 'link'),
-    button('Delete', () => showDeleteConfirm(cell, entry, path), 'link danger'),
+    button('Delete', () => deleteEntry(path), 'link danger'),
   );
   cell.replaceChildren(...nodes);
 }
@@ -185,22 +185,47 @@ function showRenameForm(cell, entry, path) {
   input.select();
 }
 
-function showDeleteConfirm(cell, entry, path) {
-  const message = el('span', undefined, 'error');
-  const what = entry.isDir ? `the folder ${entry.name}` : entry.name;
-  cell.replaceChildren(
-    el('span', `This deletes ${what} for good.`, 'error'),
-    button('Delete', async () => {
-      try {
-        await api('DELETE', `/api/files?path=${encodeURIComponent(path)}`);
-        await load();
-      } catch (error) {
-        message.textContent = error.message;
-      }
-    }, 'danger-solid'),
-    button('Cancel', () => showActions(cell, entry, path), 'link'),
-    message,
-  );
+const UNDO_VISIBLE_MS = 30000;
+const undoBar = el('p', undefined, 'notice');
+const undoText = el('span');
+let undoTimer = null;
+undoBar.hidden = true;
+statusBox.after(undoBar);
+
+function hideUndo() {
+  clearTimeout(undoTimer);
+  undoBar.hidden = true;
+}
+
+function showUndo(message, id) {
+  clearTimeout(undoTimer);
+  undoText.textContent = message;
+  undoBar.replaceChildren(undoText);
+  if (id !== undefined) undoBar.append(button('Undo', () => undoDelete(id), 'link'));
+  undoBar.hidden = false;
+  undoTimer = setTimeout(hideUndo, UNDO_VISIBLE_MS);
+}
+
+async function deleteEntry(path) {
+  try {
+    const { id } = await api('DELETE', `/api/files?path=${encodeURIComponent(path)}`);
+    showError('');
+    showUndo('Deleted.', id);
+    await load();
+  } catch (error) {
+    if (error.message !== 'signed out') showError(error.message);
+  }
+}
+
+async function undoDelete(id) {
+  try {
+    const { path } = await api('POST', `/api/trash/${id}/restore`);
+    showError('');
+    showUndo(`Restored ${path}.`);
+    await load();
+  } catch (error) {
+    if (error.message !== 'signed out') showError(error.message);
+  }
 }
 
 byId('folder-form').addEventListener('submit', async (event) => {
