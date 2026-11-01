@@ -29,8 +29,8 @@ func main() {
 	dataDir := flag.String("data", "./data", "directory for the admin password and TLS certificate")
 	disk := flag.String("disk", "/", "path on the filesystem whose usage the dashboard shows, normally the SFTP storage")
 	sans := flag.String("san", "localhost,127.0.0.1", "comma-separated hostnames and IPs for the self-signed certificate")
-	filesDir := flag.String("files", "/srv/sftp", "directory the file browser is confined to")
-	maxUpload := flag.Int64("max-upload", 16<<30, "largest file the file browser accepts, in bytes")
+	filesDir := flag.String("files", "/srv/sftp", "directory holding each user's files folder, used by the portal and the housekeeping sweeps")
+	maxUpload := flag.Int64("max-upload", 16<<30, "largest file the portal accepts, in bytes")
 	portalListen := flag.String("portal-listen", "", "address for the public user portal, empty to disable it")
 	portalCert := flag.String("portal-cert", "", "PEM certificate for the portal")
 	portalKey := flag.String("portal-key", "", "PEM private key for the portal")
@@ -51,10 +51,6 @@ func main() {
 	}
 	if !store.Configured() {
 		log.Printf("no admin yet: the setup token is in %s", filepath.Join(*dataDir, "setup-token"))
-	}
-	files, err := system.NewFiles(*filesDir)
-	if err != nil {
-		log.Fatalf("open file root %s: %v", *filesDir, err)
 	}
 	cert, err := tlsutil.LoadOrCreate(*dataDir, strings.Split(*sans, ","))
 	if err != nil {
@@ -85,17 +81,13 @@ func main() {
 	})
 
 	deps := server.Deps{
-		Host:          system.NewHost(*disk),
-		Users:         users,
-		Files:         files,
-		OpenUserFiles: system.UserFilesOpener(*filesDir),
-		Logs:          system.NewLogs(),
-		Power:         system.NewPower(),
-		Usage:         system.NewUsage(*filesDir),
-		Smart:         system.NewSmart(),
-		PowerDelay:    time.Second,
-		MaxUpload:     *maxUpload,
-		Thumbs:        thumbs,
+		Host:       system.NewHost(*disk),
+		Users:      users,
+		Logs:       system.NewLogs(),
+		Power:      system.NewPower(),
+		Usage:      system.NewUsage(*filesDir),
+		Smart:      system.NewSmart(),
+		PowerDelay: time.Second,
 
 		OnUserChanged: portal.EndSessions,
 		Version:       version,

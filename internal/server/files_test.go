@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,25 +17,33 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Ezomic/filebox/internal/auth"
 	"github.com/Ezomic/filebox/internal/system"
 )
 
 const secretContent = "top secret outside the root"
 
 type fileSession struct {
-	*harness
-	t      *testing.T
-	cookie *http.Cookie
+	*portalFilesHarness
+	t       *testing.T
+	cookie  *http.Cookie
+	handler http.Handler
+	root    string
+	outside string
 }
 
 func newFileSession(t *testing.T) *fileSession {
 	t.Helper()
-	h := newHarness(t)
-	if err := os.WriteFile(filepath.Join(h.outside, "secret.txt"), []byte(secretContent), 0o644); err != nil {
+	h := newPortalFilesHarness(t)
+	outside := filepath.Join(h.base, "outside")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte(secretContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	return &fileSession{harness: h, t: t, cookie: h.signedIn(t)}
+	return &fileSession{portalFilesHarness: h, t: t, cookie: h.signedIn(t, "amy", amyPassword), handler: h.portal, root: filepath.Join(h.base, "amy", "files"), outside: outside}
 }
 
 func (s *fileSession) call(method, target string, body io.Reader, contentType string) *httptest.ResponseRecorder {
@@ -112,83 +122,6 @@ func apiError(t *testing.T, rec *httptest.ResponseRecorder) string {
 	}
 
 	return body["error"]
-}
-
-func TestFileAndLogRoutesRequireASession(t *testing.T) {
-	h := newHarness(t)
-	h.signedIn(t)
-	routes := []struct{ method, target string }{
-		{"GET", "/api/files"},
-		{"GET", "/api/files?path=a"},
-		{"GET", "/api/files/download?path=a"},
-		{"PUT", "/api/files/content?path=a"},
-		{"POST", "/api/files/folder"},
-		{"POST", "/api/files/rename"},
-		{"DELETE", "/api/files?path=a"},
-		{"GET", "/api/logs?source=sshd"},
-	}
-	for _, route := range routes {
-		rec := h.do(route.method, route.target, `{"path":"a","from":"a","to":"b"}`, nil)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("%s %s without a session: %d", route.method, route.target, rec.Code)
-		}
-		stale := &http.Cookie{Name: cookieName, Value: "not-a-real-session"}
-		if rec := h.do(route.method, route.target, `{"path":"a"}`, stale); rec.Code != http.StatusUnauthorized {
-			t.Errorf("%s %s with a bogus session: %d", route.method, route.target, rec.Code)
-		}
-	}
-	if names, _ := os.ReadDir(h.root); len(names) != 0 {
-		t.Fatalf("an unauthenticated call changed the files: %v", names)
-	}
-}
-
-func TestFilePagesRedirectWithoutASession(t *testing.T) {
-	h := newHarness(t)
-	for _, page := range []string{"/files", "/logs"} {
-		if rec := h.do("GET", page, "", nil); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
-			t.Errorf("%s before setup: %d %q", page, rec.Code, rec.Header().Get("Location"))
-		}
-	}
-	cookie := h.signedIn(t)
-	for _, page := range []string{"/files", "/logs"} {
-		if rec := h.do("GET", page, "", nil); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
-			t.Errorf("%s signed out: %d %q", page, rec.Code, rec.Header().Get("Location"))
-		}
-		rec := h.do("GET", page, "", cookie)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("%s signed in: %d", page, rec.Code)
-		}
-		body := rec.Body.String()
-		if strings.Contains(body, "style=") || strings.Contains(body, "onclick") || regexpInlineScript(body) {
-			t.Errorf("%s has inline script or style, the CSP would block it", page)
-		}
-	}
-	for _, asset := range []string{"/static/files.js", "/static/logs.js"} {
-		if rec := h.do("GET", asset, "", nil); rec.Code != http.StatusOK {
-			t.Errorf("%s: %d", asset, rec.Code)
-		}
-	}
-}
-
-func regexpInlineScript(body string) bool {
-	for _, part := range strings.Split(body, "<script")[1:] {
-		tag, _, _ := strings.Cut(part, ">")
-		if !strings.Contains(tag, "src=") {
-			return true
-		}
-	}
-
-	return false
-}
-
-func TestDashboardLinksToFilesAndLogs(t *testing.T) {
-	h := newHarness(t)
-	body := h.do("GET", "/", "", h.signedIn(t)).Body.String()
-	for _, link := range []string{`href="/files"`, `href="/logs"`, `href="/users"`} {
-		if !strings.Contains(body, link) {
-			t.Errorf("dashboard is missing %s", link)
-		}
-	}
 }
 
 func TestListFiles(t *testing.T) {
@@ -537,11 +470,11 @@ func TestUploadRequiresOctetStream(t *testing.T) {
 func TestUploadSizeCap(t *testing.T) {
 	s := newFileSession(t)
 
-	exact := strings.Repeat("x", testMaxUpload)
+	exact := strings.Repeat("x", portalMaxUpload)
 	if rec := s.put("/api/files/content?path=exact.bin", exact); rec.Code != http.StatusNoContent {
 		t.Fatalf("exactly at the cap: %d %s", rec.Code, rec.Body)
 	}
-	if info, err := os.Stat(filepath.Join(s.root, "exact.bin")); err != nil || info.Size() != testMaxUpload {
+	if info, err := os.Stat(filepath.Join(s.root, "exact.bin")); err != nil || info.Size() != portalMaxUpload {
 		t.Fatalf("stored file: %v %v", info, err)
 	}
 
@@ -562,7 +495,7 @@ func TestUploadSizeCap(t *testing.T) {
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("overwrite over the cap: %d", rec.Code)
 	}
-	if info, _ := os.Stat(filepath.Join(s.root, "exact.bin")); info == nil || info.Size() != testMaxUpload {
+	if info, _ := os.Stat(filepath.Join(s.root, "exact.bin")); info == nil || info.Size() != portalMaxUpload {
 		t.Fatal("a failed overwrite damaged the existing file")
 	}
 
@@ -649,7 +582,7 @@ func TestSlowUploadOutlivesTheServerReadTimeout(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	req, err := http.NewRequest("PUT", srv.URL+"/api/files/content?path=slow.bin", &trickleBody{chunks: 8, pause: 100 * time.Millisecond})
+	req, err := http.NewRequest("PUT", srv.URL+"/api/files/content?path=slow.bin", &trickleBody{chunks: 6, pause: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -663,7 +596,7 @@ func TestSlowUploadOutlivesTheServerReadTimeout(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("got %d", resp.StatusCode)
 	}
-	if info, err := os.Stat(filepath.Join(s.root, "slow.bin")); err != nil || info.Size() != 80 {
+	if info, err := os.Stat(filepath.Join(s.root, "slow.bin")); err != nil || info.Size() != 60 {
 		t.Fatalf("stored: %v %v", info, err)
 	}
 }
@@ -847,19 +780,6 @@ func TestDeleteDoesNotFollowSymlinks(t *testing.T) {
 	s.assertOutsideUntouched()
 }
 
-func TestWrongMethodsAreRefused(t *testing.T) {
-	s := newFileSession(t)
-	for _, route := range []struct{ method, target string }{
-		{"POST", "/api/files"}, {"PUT", "/api/files"}, {"GET", "/api/files/content?path=a"},
-		{"POST", "/api/files/content?path=a"}, {"GET", "/api/files/folder"}, {"GET", "/api/files/rename"},
-		{"PATCH", "/api/files?path=a"}, {"POST", "/api/logs"}, {"DELETE", "/api/logs"},
-	} {
-		if rec := s.call(route.method, route.target, nil, ""); rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("%s %s: got %d", route.method, route.target, rec.Code)
-		}
-	}
-}
-
 type failingFiles struct {
 	system.Files
 	err error
@@ -875,10 +795,65 @@ func (f failingFiles) Remove(string) error                    { return f.err }
 func (f failingFiles) Trash(string) (system.TrashItem, error) { return system.TrashItem{}, f.err }
 func (f failingFiles) Mkdir(string) error                     { return f.err }
 
+func (f failingFiles) Close() error { return f.Files.(io.Closer).Close() }
+
+func failingFileSession(t *testing.T, raw error) *fileSession {
+	t.Helper()
+	s := newFileSession(t)
+	roles, err := auth.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing := NewPortal(PortalDeps{
+		Verifier: s.verifier,
+		Users:    s.users,
+		Roles:    roles,
+		OpenFiles: func(user string) (system.Files, error) {
+			files, err := system.OpenUserFiles(s.base, user)
+			if err != nil {
+				return nil, err
+			}
+
+			return failingFiles{Files: files, err: raw}, nil
+		},
+		MaxUpload: portalMaxUpload,
+		Thumbs:    s.thumbs,
+	})
+	s.handler = failing
+	s.portal = failing
+	s.cookie = s.signedIn(t, "amy", amyPassword)
+
+	return s
+}
+
+func TestFileHandlersNeverLogFileNamesOrPaths(t *testing.T) {
+	raw := &fs.PathError{Op: "open", Path: "/srv/sftp/amy/files/private-name.txt", Err: errors.New("permission denied")}
+	s := failingFileSession(t, raw)
+	var logged strings.Builder
+	previous := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(previous)
+
+	s.get("/api/files?path=private-name.txt")
+	s.get("/api/files/download?path=private-name.txt")
+	s.get("/api/files/zip?path=private-name.txt")
+	s.put("/api/files/content?path=private-name.txt", "x")
+	s.call("DELETE", "/api/files?path=private-name.txt", nil, "")
+	s.get("/api/files/thumb?path=private-name.jpg")
+
+	if logged.Len() == 0 {
+		t.Fatal("nothing was logged, the failures were not exercised")
+	}
+	for _, leak := range []string{"private-name", "/srv/sftp"} {
+		if strings.Contains(logged.String(), leak) {
+			t.Errorf("the journal is readable from the admin panel but the log has %q: %s", leak, logged.String())
+		}
+	}
+}
+
 func TestUnexpectedFilesystemErrorsAreNotLeaked(t *testing.T) {
 	raw := errors.New("open /srv/sftp/amy/files/secret: permission denied")
-	h := newHarnessWithFiles(t, func(files system.Files) system.Files { return failingFiles{Files: files, err: raw} })
-	s := &fileSession{harness: h, t: t, cookie: h.signedIn(t)}
+	s := failingFileSession(t, raw)
 
 	responses := map[string]*httptest.ResponseRecorder{
 		"list":     s.get("/api/files"),

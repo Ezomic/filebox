@@ -28,16 +28,10 @@ const (
 type Deps struct {
 	Host  system.Host
 	Users system.Users
-	Files system.Files
-	// OpenUserFiles opens one user's own files folder so an admin can manage that user's trash; it is closed after each request.
-	OpenUserFiles func(user string) (system.Files, error)
-	Logs          system.Logs
-	Power         system.Power
-	Usage         system.Usage
-	Smart         system.Smart
-	MaxUpload     int64
-	// Thumbs makes photo thumbnails; nil turns the thumbnail routes into a 503.
-	Thumbs *Thumbs
+	Logs  system.Logs
+	Power system.Power
+	Usage system.Usage
+	Smart system.Smart
 	// PowerDelay is how long shutdown and reboot wait so the response can reach the browser first.
 	PowerDelay time.Duration
 	// OnUserChanged runs after an admin changes a user's password or deletes the user.
@@ -50,22 +44,17 @@ type Deps struct {
 }
 
 type Server struct {
-	store         *auth.Store
-	host          system.Host
-	users         system.Users
-	files         system.Files
-	openUserFiles func(user string) (system.Files, error)
-	logs          system.Logs
-	power         system.Power
-	usage         system.Usage
-	smart         system.Smart
-	powerDelay    time.Duration
-	maxUpload     int64
-	thumbs        *Thumbs
-	sessions      *sessions
-	limiter       *loginLimiter
-	pages         fs.FS
-	fh            fileHandlers
+	store      *auth.Store
+	host       system.Host
+	users      system.Users
+	logs       system.Logs
+	power      system.Power
+	usage      system.Usage
+	smart      system.Smart
+	powerDelay time.Duration
+	sessions   *sessions
+	limiter    *loginLimiter
+	pages      fs.FS
 
 	onUserChanged    func(name string)
 	portalCertExpiry func() time.Time
@@ -80,22 +69,17 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	}
 
 	s := &Server{
-		store:         store,
-		host:          deps.Host,
-		users:         deps.Users,
-		files:         deps.Files,
-		openUserFiles: deps.OpenUserFiles,
-		logs:          deps.Logs,
-		power:         deps.Power,
-		usage:         deps.Usage,
-		smart:         deps.Smart,
-		powerDelay:    deps.PowerDelay,
-		maxUpload:     deps.MaxUpload,
-		thumbs:        deps.Thumbs,
-		sessions:      newSessions(sessionTTL),
-		limiter:       newLoginLimiter(maxLoginFails, failWindow),
-		pages:         pages,
-		fh:            fileHandlers{files: deps.Files, maxUpload: deps.MaxUpload, thumbs: deps.Thumbs},
+		store:      store,
+		host:       deps.Host,
+		users:      deps.Users,
+		logs:       deps.Logs,
+		power:      deps.Power,
+		usage:      deps.Usage,
+		smart:      deps.Smart,
+		powerDelay: deps.PowerDelay,
+		sessions:   newSessions(sessionTTL),
+		limiter:    newLoginLimiter(maxLoginFails, failWindow),
+		pages:      pages,
 
 		onUserChanged:    deps.OnUserChanged,
 		portalCertExpiry: deps.PortalCertExpiry,
@@ -104,10 +88,9 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(s.pages))))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(adminAssets{s.pages}))))
 	mux.HandleFunc("GET /{$}", s.dashboardPage)
 	mux.HandleFunc("GET /users", s.usersPage)
-	mux.HandleFunc("GET /files", s.filesPage)
 	mux.HandleFunc("GET /logs", s.logsPage)
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("GET /setup", s.setupPage)
@@ -129,28 +112,6 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("PUT /api/users/{name}/quota", s.requireSession(s.setUserQuota))
 	mux.HandleFunc("DELETE /api/users/{name}/quota", s.requireSession(s.clearUserQuota))
 	mux.HandleFunc("DELETE /api/users/{name}", s.requireSession(s.deleteUser))
-	mux.HandleFunc("GET /api/files", s.requireSession(s.fh.listFiles))
-	mux.HandleFunc("DELETE /api/files", s.scopedRoute(fileHandlers.deleteFile))
-	mux.HandleFunc("GET /api/files/download", s.scopedRoute(fileHandlers.downloadFile))
-	mux.HandleFunc("GET /api/files/view", s.scopedRoute(fileHandlers.viewFile))
-	mux.HandleFunc("GET /photos", s.photosPage)
-	mux.HandleFunc("GET /api/files/photos", s.scopedRoute(fileHandlers.listPhotos))
-	mux.HandleFunc("GET /api/files/thumb", s.scopedRoute(fileHandlers.thumbFile))
-	mux.HandleFunc("GET /api/files/preview", s.scopedRoute(fileHandlers.previewFile))
-	mux.HandleFunc("PUT /api/files/content", s.requireSession(s.fh.uploadFile))
-	mux.HandleFunc("POST /api/files/folder", s.requireSession(s.fh.createFolder))
-	mux.HandleFunc("POST /api/files/rename", s.requireSession(s.fh.renameFile))
-	mux.HandleFunc("POST /api/files/exists", s.requireSession(s.fh.checkExists))
-	mux.HandleFunc("GET /api/files/zip", s.requireSession(s.fh.downloadZip))
-	mux.HandleFunc("POST /api/uploads", s.requireSession(s.fh.createUpload))
-	mux.HandleFunc("GET /api/uploads/{id}", s.requireSession(s.fh.uploadStatus))
-	mux.HandleFunc("PUT /api/uploads/{id}", s.requireSession(s.fh.appendChunk))
-	mux.HandleFunc("POST /api/uploads/{id}/finish", s.requireSession(s.fh.finishUpload))
-	mux.HandleFunc("GET /trash", s.trashPage)
-	mux.HandleFunc("GET /api/trash", s.scopedRoute(fileHandlers.listTrash))
-	mux.HandleFunc("DELETE /api/trash", s.scopedRoute(fileHandlers.emptyTrash))
-	mux.HandleFunc("POST /api/trash/{id}/restore", s.scopedRoute(fileHandlers.restoreTrash))
-	mux.HandleFunc("DELETE /api/trash/{id}", s.scopedRoute(fileHandlers.purgeTrash))
 	mux.HandleFunc("GET /api/disks", s.requireSession(s.disks))
 	mux.HandleFunc("GET /api/logs", s.requireSession(s.readLogs))
 	mux.HandleFunc("POST /api/system/restart-sshd", s.requireSession(s.powerAction(system.RestartSSHD)))
@@ -179,6 +140,19 @@ func assetsOnly(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// adminAssets exposes only the scripts the admin pages load. The file browser scripts stay
+// embedded for the portal, but the admin listener never serves them.
+type adminAssets struct{ fs.FS }
+
+func (a adminAssets) Open(name string) (fs.File, error) {
+	switch name {
+	case "style.css", "auth.js", "dashboard.js", "users.js", "logs.js", "tv.js", "tvlink.js":
+		return a.FS.Open(name)
+	}
+
+	return nil, fs.ErrNotExist
 }
 
 func (s *Server) dashboardPage(w http.ResponseWriter, r *http.Request) {

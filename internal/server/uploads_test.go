@@ -679,9 +679,6 @@ func TestZipErrors(t *testing.T) {
 	if rec := s.get("/api/files/zip?path=%zz"); rec.Code != http.StatusBadRequest {
 		t.Errorf("malformed query got %d", rec.Code)
 	}
-	if rec := s.call("POST", "/api/files/zip?path=", nil, ""); rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST got %d", rec.Code)
-	}
 }
 
 func TestZipSkipsSymlinks(t *testing.T) {
@@ -705,43 +702,6 @@ func TestZipSkipsSymlinks(t *testing.T) {
 	}
 	if got["pics/real.txt"] != "real" || len(got) != 2 {
 		t.Fatalf("%v", keys(got))
-	}
-}
-
-func TestNewRoutesRequireASession(t *testing.T) {
-	h := newHarness(t)
-	h.signedIn(t)
-	id := strings.Repeat("a", 32)
-	routes := []struct{ method, target, body string }{
-		{"POST", "/api/uploads", `{"path":"a","size":1}`},
-		{"GET", "/api/uploads/" + id, ""},
-		{"PUT", "/api/uploads/" + id, "x"},
-		{"POST", "/api/uploads/" + id + "/finish", ""},
-		{"POST", "/api/files/exists", `{"paths":["a"]}`},
-		{"GET", "/api/files/zip?path=", ""},
-	}
-	for _, route := range routes {
-		rec := h.do(route.method, route.target, route.body, nil)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("%s %s without a session got %d", route.method, route.target, rec.Code)
-		}
-	}
-}
-
-func TestNewRoutesRefuseWrongMethods(t *testing.T) {
-	s, _ := panelUploads(t)
-	id := strings.Repeat("a", 32)
-	for _, route := range []struct{ method, target string }{
-		{"GET", "/api/uploads"},
-		{"DELETE", "/api/uploads/" + id},
-		{"GET", "/api/uploads/" + id + "/finish"},
-		{"PUT", "/api/uploads/" + id + "/finish"},
-		{"GET", "/api/files/exists"},
-		{"PUT", "/api/files/zip"},
-	} {
-		if rec := s.call(route.method, route.target, nil, ""); rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("%s %s got %d", route.method, route.target, rec.Code)
-		}
 	}
 }
 

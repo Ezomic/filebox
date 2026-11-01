@@ -5,8 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -22,28 +20,13 @@ type harness struct {
 	store   *auth.Store
 	host    *system.Fake
 	users   *spyUsers
-	files   system.Files
 	logs    *spyLogs
 	power   *system.FakePower
 	smart   *system.FakeSmart
 	usage   *system.FakeUsage
-	root    string
-	outside string
-	tool    *system.FakeThumbnailer
-	thumbs  *Thumbs
-
-	usersBase string
 }
-
-const testMaxUpload = 1024
 
 func newHarness(t *testing.T) *harness {
-	t.Helper()
-
-	return newHarnessWithFiles(t, func(files system.Files) system.Files { return files })
-}
-
-func newHarnessWithFiles(t *testing.T, wrap func(system.Files) system.Files) *harness {
 	t.Helper()
 
 	store, err := auth.Open(t.TempDir())
@@ -51,39 +34,14 @@ func newHarnessWithFiles(t *testing.T, wrap func(system.Files) system.Files) *ha
 		t.Fatal(err)
 	}
 	host := &system.Fake{Value: system.Metrics{CPUPercent: 12.5, MemTotal: 100, MemUsed: 40}}
-
 	users := &spyUsers{FakeUsers: system.NewFakeUsers("amy", "bob")}
-
-	base := t.TempDir()
-	root, outside := filepath.Join(base, "root"), filepath.Join(base, "outside")
-	for _, dir := range []string{root, outside} {
-		if err := os.Mkdir(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	files, err := system.NewDirFiles(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = files.(io.Closer).Close() })
 	logs := &spyLogs{FakeLogs: system.NewFakeLogs()}
 	power := &system.FakePower{}
 	smart := system.NewFakeSmart()
 	usage := &system.FakeUsage{Bytes: map[string]uint64{"amy": 2048}, Ready: true}
+	handler := New(store, Deps{Host: host, Users: users, Logs: logs, Power: power, Smart: smart, Usage: usage})
 
-	usersBase := filepath.Join(base, "users")
-	for _, user := range []string{"amy", "bob"} {
-		if err := os.MkdirAll(filepath.Join(usersBase, user, "files"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	openUser := func(user string) (system.Files, error) { return system.OpenUserFiles(usersBase, user) }
-
-	tool := system.NewFakeThumbnailer()
-	thumbs := NewThumbs(tool)
-	handler := New(store, Deps{Host: host, Users: users, Files: wrap(files), OpenUserFiles: openUser, Logs: logs, Power: power, Smart: smart, Usage: usage, MaxUpload: testMaxUpload, Thumbs: thumbs})
-
-	return &harness{handler: handler, store: store, host: host, users: users, files: files, logs: logs, power: power, smart: smart, usage: usage, root: root, outside: outside, tool: tool, thumbs: thumbs, usersBase: usersBase}
+	return &harness{handler: handler, store: store, host: host, users: users, logs: logs, power: power, smart: smart, usage: usage}
 }
 
 func (h *harness) do(method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -405,4 +363,38 @@ func TestVersionNeedsSession(t *testing.T) {
 	if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "v9.9.9") {
 		t.Fatalf("got %d %s", got.Code, got.Body)
 	}
+}
+
+type adminSession struct {
+	*harness
+	t      *testing.T
+	cookie *http.Cookie
+}
+
+func newAdminSession(t *testing.T) *adminSession {
+	t.Helper()
+	h := newHarness(t)
+
+	return &adminSession{harness: h, t: t, cookie: h.signedIn(t)}
+}
+
+func (s *adminSession) call(method, target string, body io.Reader, contentType string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, target, body)
+	req.RemoteAddr = "192.0.2.10:5555"
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.AddCookie(s.cookie)
+	rec := httptest.NewRecorder()
+	s.handler.ServeHTTP(rec, req)
+
+	return rec
+}
+
+func (s *adminSession) get(target string) *httptest.ResponseRecorder {
+	return s.call("GET", target, nil, "")
+}
+
+func (s *adminSession) post(target string, fields map[string]any) *httptest.ResponseRecorder {
+	return s.call("POST", target, strings.NewReader(jsonBody(s.t, fields)), "application/json")
 }

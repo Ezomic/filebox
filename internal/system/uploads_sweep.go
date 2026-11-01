@@ -11,7 +11,7 @@ import (
 
 const UploadMaxAge = 7 * 24 * time.Hour
 
-// SweepAllUploads clears stale partial uploads from the admin root and from every user's own files folder.
+// SweepAllUploads clears stale partial uploads from the data root and from every user's own files folder.
 func SweepAllUploads(base string, now time.Time, maxAge time.Duration) (int, error) {
 	cutoff := now.Add(-maxAge)
 

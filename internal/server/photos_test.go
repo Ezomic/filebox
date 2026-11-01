@@ -55,26 +55,10 @@ func (s photoSurface) thumbFiles() []string {
 
 func photoSurfaces(t *testing.T) []photoSurface {
 	t.Helper()
-	panel := newFileSession(t)
 	portal := newPortalFilesHarness(t)
 	amy := portal.signedIn(t, "amy", amyPassword)
 
 	return []photoSurface{
-		{
-			name: "panel",
-			call: func(method, target, body string) *httptest.ResponseRecorder {
-				rec := httptest.NewRecorder()
-				panel.handler.ServeHTTP(rec, trashRequest(method, target, body, panel.cookie))
-
-				return rec
-			},
-			seed:   func(t *testing.T, path, content string) { t.Helper(); panel.seed(path, content) },
-			root:   panel.root,
-			tool:   panel.tool,
-			thumbs: panel.thumbs,
-			cookie: panel.cookie,
-			serve:  panel.handler.ServeHTTP,
-		},
 		{
 			name: "portal",
 			call: func(method, target, body string) *httptest.ResponseRecorder {
@@ -639,40 +623,6 @@ func TestThumbsFolderIsHiddenFromEveryFileRoute(t *testing.T) {
 	})
 }
 
-func TestHostilePathsNeverReachTheThumbnailRoutes(t *testing.T) {
-	s := newFileSession(t)
-	s.seed("inside.jpg", "inside")
-	if err := os.WriteFile(filepath.Join(s.outside, "secret.jpg"), []byte(secretContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s.plantSymlinks()
-	if err := os.Symlink(filepath.Join(s.outside, "secret.jpg"), filepath.Join(s.root, "photo.jpg")); err != nil {
-		t.Logf("symlinks are not available here: %v", err)
-	}
-	extra := map[string]string{"outside jpg": "../outside/secret.jpg", "symlinked photo": "photo.jpg", "through symlinked dir": "escape/secret.jpg", "link to file": "link.txt"}
-	for name, raw := range hostilePaths {
-		extra[name] = raw
-	}
-
-	for name, raw := range extra {
-		for _, route := range []string{"/api/files/thumb?path=", "/api/files/preview?path="} {
-			rec := s.get(route + raw)
-			if rec.Code == http.StatusOK || strings.Contains(rec.Body.String(), secretContent) {
-				t.Errorf("%s%s (%s) got %d", route, raw, name, rec.Code)
-			}
-		}
-	}
-	if s.tool.Calls() != 0 {
-		t.Fatalf("the tool ran %d times for hostile paths", s.tool.Calls())
-	}
-	entries, _ := os.ReadDir(s.outside)
-	for _, entry := range entries {
-		if entry.Name() == system.ThumbsDir {
-			t.Fatal("a thumbnail folder appeared outside the root")
-		}
-	}
-}
-
 func TestUnusualFileNamesWork(t *testing.T) {
 	eachPhotoSurface(t, func(t *testing.T, s photoSurface) {
 		names := []string{"-rf.jpg", "--version.heic", "with space.png", "ünï 日本.jpg", strings.Repeat("a", 251) + ".jpg", "a&b=c#d.jpg", "%2e%2e.jpg", "100%.jpg"}
@@ -820,49 +770,5 @@ func TestPhotoRoutesNeedASessionAndTheRightMethod(t *testing.T) {
 		if rec := h.do("GET", asset, "", "192.0.2.10", nil); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
 			t.Errorf("%s got %d", asset, rec.Code)
 		}
-	}
-}
-
-func TestPanelPhotosCanBeScopedToOneUser(t *testing.T) {
-	s := newFileSession(t)
-	if err := os.WriteFile(filepath.Join(s.usersBase, "amy", "files", "amy-photo.jpg"), []byte("amy"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s.seed("root-photo.jpg", "root")
-	list := func(query string) photoListing {
-		var listing photoListing
-		rec := s.get("/api/files/photos" + query)
-		if err := json.Unmarshal(rec.Body.Bytes(), &listing); err != nil || rec.Code != http.StatusOK {
-			t.Fatalf("list%s got %d: %s", query, rec.Code, rec.Body)
-		}
-
-		return listing
-	}
-
-	if got := list("").paths(); !slices.Equal(got, []string{"root-photo.jpg"}) {
-		t.Fatalf("the panel root: %v", got)
-	}
-	if got := list("?user=amy").paths(); !slices.Equal(got, []string{"amy-photo.jpg"}) {
-		t.Fatalf("amy's files: %v", got)
-	}
-	if rec := s.get("/api/files/thumb?user=amy&path=amy-photo.jpg"); rec.Code != http.StatusOK {
-		t.Fatalf("thumbnail in amy's files: %d", rec.Code)
-	}
-	if _, err := os.Stat(filepath.Join(s.usersBase, "amy", "files", system.ThumbsDir)); err != nil {
-		t.Fatal("amy's thumbnail must live in amy's folder")
-	}
-	if rec := s.get("/api/files/thumb?path=amy-photo.jpg"); rec.Code != http.StatusNotFound {
-		t.Fatalf("amy's picture does not exist in the panel root: %d", rec.Code)
-	}
-	for _, query := range []string{"?user=nobody", "?user=..", "?user=amy/../bob", "?user=%zz", "?user=" + url.QueryEscape("../x")} {
-		if rec := s.get("/api/files/photos" + query); rec.Code < 400 || rec.Code >= 500 {
-			t.Errorf("%s got %d", query, rec.Code)
-		}
-	}
-	if rec := s.call("DELETE", "/api/files?user=amy&path=amy-photo.jpg", nil, ""); rec.Code != http.StatusOK {
-		t.Fatalf("delete in amy's files: %d %s", rec.Code, rec.Body)
-	}
-	if _, err := os.Stat(filepath.Join(s.usersBase, "amy", "files", "amy-photo.jpg")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("the scoped delete did not remove amy's photo")
 	}
 }

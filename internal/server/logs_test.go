@@ -48,7 +48,7 @@ func logsURL(source, lines, filter string) string {
 }
 
 func TestLogsDefaults(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	rec := s.get("/api/logs?source=sshd")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
@@ -65,7 +65,7 @@ func TestLogsDefaults(t *testing.T) {
 }
 
 func TestLogsAcceptsEachSourceAndLineBounds(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	for _, source := range []string{"sshd", "panel"} {
 		for _, lines := range []string{"1", "2", "499", "500"} {
 			if rec := s.get(logsURL(source, lines, "")); rec.Code != http.StatusOK {
@@ -79,7 +79,7 @@ func TestLogsAcceptsEachSourceAndLineBounds(t *testing.T) {
 }
 
 func TestLogsRejectsBadSource(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	sources := []string{"", " ", "SSHD", "ssh", "kernel", "sshd panel", "sshd,panel", "../../etc/passwd", "-u ssh", "sshd;reboot", "sshd\nreboot", "$(id)", "`id`", "|", "'", "filebox-panel", strings.Repeat("a", 5000), "ｓｓｈｄ", "sshd\x00"}
 	for _, source := range sources {
 		rec := s.call("GET", "/api/logs?source="+url.QueryEscape(source), nil, "")
@@ -97,7 +97,7 @@ func TestLogsRejectsBadSource(t *testing.T) {
 }
 
 func TestLogsRejectsBadLineCounts(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	for _, lines := range []string{"0", "501", "-1", "abc", " 5", "5 ", "1e2", "5.0", "0x10", "+5", "٥", "99999999999999999999", "-0", "1,2", "%00", ""} {
 		target := "/api/logs?source=sshd&lines=" + url.QueryEscape(lines)
 		if rec := s.get(target); rec.Code != http.StatusUnprocessableEntity {
@@ -110,7 +110,7 @@ func TestLogsRejectsBadLineCounts(t *testing.T) {
 }
 
 func TestLogsFilterIsPassedThroughLiterally(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	filters := []string{"Failed password", "[a-z]+", ".*", "(", "\\", "$(id)", "a|b", "日本語", "ünï", "!!!", "  padded  ", strings.Repeat("a", 100), strings.Repeat("日", 100)}
 	for _, filter := range filters {
 		s.logs.calls = nil
@@ -126,7 +126,7 @@ func TestLogsFilterIsPassedThroughLiterally(t *testing.T) {
 }
 
 func TestLogsRejectsBadFilters(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	filters := []string{strings.Repeat("a", 101), strings.Repeat("日", 101), "a\x00b", "a\nb", "a\rb", "a\tb", "\x1b[31m", "\x7f", "\xff"}
 	for _, filter := range filters {
 		rec := s.call("GET", "/api/logs?source=sshd&filter="+url.QueryEscape(filter), nil, "")
@@ -140,7 +140,7 @@ func TestLogsRejectsBadFilters(t *testing.T) {
 }
 
 func TestLogsFilterNarrowsResults(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	rec := s.get(logsURL("sshd", "100", "no-such-text-anywhere"))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"lines":[]`) {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
@@ -148,7 +148,7 @@ func TestLogsFilterNarrowsResults(t *testing.T) {
 }
 
 func TestLogsFirstValueWinsForDuplicateParameters(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	if rec := s.get("/api/logs?source=sshd&source=evil"); rec.Code != http.StatusOK {
 		t.Fatalf("got %d", rec.Code)
 	}
@@ -158,7 +158,7 @@ func TestLogsFirstValueWinsForDuplicateParameters(t *testing.T) {
 }
 
 func TestLogReadFailureIsGeneric(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	s.logs.failWith = errors.New("journalctl: permission denied reading /var/log/journal/abc")
 	rec := s.get("/api/logs?source=sshd")
 	if rec.Code != http.StatusInternalServerError {
