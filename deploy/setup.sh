@@ -66,7 +66,8 @@ install_packages() {
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update -qq
 	apt-get install -y -qq --no-install-recommends \
-		ca-certificates curl gnupg jq sudo openssh-server fail2ban nftables python3 python3-systemd smartmontools unattended-upgrades btrfs-progs
+		ca-certificates curl gnupg jq sudo openssh-server fail2ban nftables python3 python3-systemd smartmontools unattended-upgrades btrfs-progs \
+		libvips-tools ffmpeg libheif-plugin-libde265
 
 	# Only in Debian 13: without it the panel works as before and the web portal stays off.
 	apt-get install -y -qq --no-install-recommends lego ||

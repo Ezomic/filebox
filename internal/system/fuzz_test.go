@@ -5,11 +5,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 var pathSeeds = []string{
 	"", "a", "a/b/c.txt", "../x", "..", "/etc/passwd", "a/../b", "a//b", "link", "link/secret.txt", "filelink",
 	"escape/secret.txt", `a\b`, "a\x00b", "%2e%2e/x", "....//x", "a/./b", strings.Repeat("a/", 50), "secret.txt", ".",
+	".thumbs", ".THUMBS/x.t.jpg", "a/.Thumbs/b.jpg", "escape/secret.jpg", "photo.jpg", "link/photo.jpg", "filelink.jpg",
 }
 
 func FuzzCleanPath(f *testing.F) {
@@ -41,6 +43,9 @@ func FuzzDirFilesStaysInRoot(f *testing.F) {
 		f.Add(uint8(4), "a", seed)
 		f.Add(uint8(7), seed, "x")
 		f.Add(uint8(8), seed, seed)
+		f.Add(uint8(9), seed, "x")
+		f.Add(uint8(10), seed, "x")
+		f.Add(uint8(11), seed, "x")
 	}
 	f.Fuzz(func(t *testing.T, op uint8, first, second string) {
 		base := t.TempDir()
@@ -59,6 +64,9 @@ func FuzzDirFilesStaysInRoot(f *testing.F) {
 		}
 		_ = os.Symlink(outside, filepath.Join(root, "link"))
 		_ = os.Symlink(secret, filepath.Join(root, "filelink"))
+		_ = os.Symlink(secret, filepath.Join(root, "filelink.jpg"))
+		_ = os.WriteFile(filepath.Join(outside, "secret.jpg"), []byte("secret"), 0o644)
+		_ = os.Symlink(filepath.Join(outside, "secret.jpg"), filepath.Join(root, "photo.jpg"))
 
 		files, err := NewDirFiles(root)
 		if err != nil {
@@ -66,7 +74,7 @@ func FuzzDirFilesStaysInRoot(f *testing.F) {
 		}
 		defer files.(interface{ Close() error }).Close()
 
-		switch op % 9 {
+		switch op % 12 {
 		case 0:
 			_, _ = files.List(first)
 		case 1:
@@ -102,16 +110,39 @@ func FuzzDirFilesStaysInRoot(f *testing.F) {
 				_, _ = files.EmptyTrash()
 			}
 			_, _ = files.ListTrash()
+		case 9:
+			if file, _, err := files.OpenPhoto(first); err == nil {
+				buf := make([]byte, 64)
+				n, _ := file.Read(buf)
+				_ = file.Close()
+				if strings.Contains(string(buf[:n]), "secret") {
+					t.Fatalf("OpenPhoto(%q) read the file outside the root", first)
+				}
+			}
+		case 10:
+			if page, err := files.ListPhotos(second, 10); err == nil {
+				for _, photo := range page.Photos {
+					if strings.Contains(photo.Path, "secret") || photo.Path == "photo.jpg" || photo.Path == "filelink.jpg" {
+						t.Fatalf("ListPhotos returned %q", photo.Path)
+					}
+				}
+			}
+		case 11:
+			_ = files.WriteThumb(first, []byte("planted"))
+			if file, err := files.ReadThumb(first); err == nil {
+				_ = file.Close()
+			}
+			_, _ = files.SweepThumbs(time.Now())
 		}
 
 		if data, err := os.ReadFile(secret); err != nil || string(data) != "secret" {
-			t.Fatalf("op %d %q %q damaged the outside file: %q %v", op%9, first, second, data, err)
+			t.Fatalf("op %d %q %q damaged the outside file: %q %v", op%12, first, second, data, err)
 		}
-		if entries, err := os.ReadDir(outside); err != nil || len(entries) != 1 {
-			t.Fatalf("op %d %q %q changed the outside folder: %v %v", op%9, first, second, entries, err)
+		if entries, err := os.ReadDir(outside); err != nil || len(entries) != 2 {
+			t.Fatalf("op %d %q %q changed the outside folder: %v %v", op%12, first, second, entries, err)
 		}
 		if entries, err := os.ReadDir(base); err != nil || len(entries) != 2 {
-			t.Fatalf("op %d %q %q created something next to the root: %v %v", op%9, first, second, entries, err)
+			t.Fatalf("op %d %q %q created something next to the root: %v %v", op%12, first, second, entries, err)
 		}
 	})
 }

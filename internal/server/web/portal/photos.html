@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your photos</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="wide">
+    <header class="bar">
+      <h1>Your photos</h1>
+      <nav class="actions">
+        <a class="link" href="/">Files</a>
+        <a class="link" href="/photos" aria-current="page">Photos</a>
+        <a class="link" id="tv-link" href="/tv" hidden>TV</a>
+        <a class="link" href="/trash">Trash</a>
+        <a class="link" href="/password">Password</a>
+        <button class="link" id="logout" type="button">Sign out</button>
+      </nav>
+    </header>
+    <p class="error" id="status" role="status"></p>
+    <section class="card">
+      <p class="detail" id="summary"></p>
+      <div id="photo-groups"></div>
+      <p class="detail" id="empty" hidden>No photos or videos here yet.</p>
+      <div id="sentinel" class="sentinel"></div>
+    </section>
+  </main>
+  <script src="/static/viewer.js"></script>
+  <script src="/static/photos.js"></script>
+  <script src="/static/tvlink.js"></script>
+</body>
+</html>
