@@ -613,6 +613,7 @@ async function runUploads(found, base) {
 
 async function startUpload(collect) {
   if (uploading) return;
+  const base = currentPath;
   let found;
   try {
     found = await collect();
@@ -620,7 +621,8 @@ async function startUpload(collect) {
     uploadSummary.textContent = 'Could not read what you selected.';
     return;
   }
-  showPreview(found, currentPath);
+  if (uploading) return;
+  showPreview(found, base);
 }
 
 const PREVIEW_THUMBS = 200;
@@ -669,6 +671,7 @@ async function drawThumbnail(file) {
 async function fillThumbnails(session, jobs) {
   for (const { file, holder } of jobs) {
     if (pending !== session) return;
+    if (!holder.isConnected) continue;
     try {
       const canvas = await drawThumbnail(file);
       if (pending !== session) return;
@@ -707,6 +710,7 @@ function previewRow(session, entry, withThumb) {
       return;
     }
     updatePreviewTotals();
+    previewUpload.focus();
   }, 'link');
   remove.setAttribute('aria-label', `Remove ${entry.rel}`);
   row.append(holder, el('span', entry.rel, 'preview-name'), el('span', formatSize(entry.file.size), 'detail'), remove);
@@ -714,8 +718,8 @@ function previewRow(session, entry, withThumb) {
 }
 
 function showPreview(found, base) {
-  closePreview();
   if (found.files.length === 0 && found.dirs.length === 0) return;
+  closePreview();
   uploadSummary.textContent = '';
   uploadDetail.textContent = '';
   byId('upload-failures').replaceChildren();
