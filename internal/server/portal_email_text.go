@@ -7,8 +7,6 @@ const (
 	mailDutch
 )
 
-// The portal sends the language its visitor picked. It only chooses between two fixed templates,
-// so anything that is not exactly the string "nl" gets English.
 func chosenMailLang(value any) mailLang {
 	if code, ok := value.(string); ok && code == "nl" {
 		return mailDutch
