@@ -2,6 +2,8 @@
 # Provisions a fresh Debian 12/13 box as a filebox: hardened SFTP, fail2ban,
 # Tailscale, the admin panel, the DNS updater and the public user portal. Run as root; safe to re-run.
 #   ./setup.sh /path/to/filebox-panel
+#   ADDONS=streambox ./setup.sh /path/to/filebox-panel     also install the TV streaming add-on
+# The chosen add-ons are remembered in /etc/filebox/addons, so filebox-update keeps them up to date.
 #
 # Get the binary from the latest GitHub release and check it before running:
 #   curl -fLO https://github.com/Ezomic/filebox/releases/latest/download/filebox-panel
@@ -12,6 +14,9 @@ set -euo pipefail
 SFTP_PORT=${SFTP_PORT:-2222}
 PANEL_PORT=8443
 PORTAL_PORT=443
+STREAMBOX_PORT=8090
+STREAMBOX_RELEASES=${STREAMBOX_RELEASES:-https://github.com/Ezomic/streambox/releases}
+KNOWN_ADDONS="streambox"
 # Admin SSH stays on port 22 and is reachable from these networks until you
 # have confirmed Tailscale access works (tailnet traffic is always allowed). A
 # firewall that dropped port 22 before you could test the tailnet would lock
@@ -201,7 +206,7 @@ EOF
 	# crafted username from planting a different address earlier in the line.
 	cat >/etc/fail2ban/filter.d/filebox-portal.conf <<'EOF'
 [Definition]
-failregex = portal: (login|password change) (failed|blocked) (user=.* )?ip=<HOST>$
+failregex = portal: (login|password change|tv) (failed|blocked) (user=.* )?ip=<HOST>$
 EOF
 	systemctl enable --now fail2ban
 	fail2ban-client reload >/dev/null
@@ -289,6 +294,110 @@ install_services() {
 	systemctl restart filebox-dns.timer filebox-portal-cert.timer filebox-scrub.timer
 }
 
+# The add-ons asked for, one per line in /etc/filebox/addons. ADDONS (comma separated) adds to them.
+resolve_addons() {
+	local file=/etc/filebox/addons wanted="" name
+	[ -f "$file" ] && wanted=$(cat "$file")
+	wanted="$wanted"$'\n'"$(echo "${ADDONS:-}" | tr ',' '\n')"
+	ADDON_LIST=""
+	for name in $(echo "$wanted" | tr -s ' \n' '\n\n' | sort -u); do
+		[[ " $KNOWN_ADDONS " == *" $name "* ]] || die "unknown add-on: $name (known: $KNOWN_ADDONS)"
+		ADDON_LIST="$ADDON_LIST $name"
+	done
+	# shellcheck disable=SC2086
+	printf '%s\n' $ADDON_LIST >"$file.new"
+	install -m 0600 -o root -g root "$file.new" "$file"
+	rm -f "$file.new"
+}
+
+has_addon() {
+	[[ " $ADDON_LIST " == *" $1 "* ]]
+}
+
+random_token() {
+	head -c 24 /dev/urandom | od -An -vtx1 | tr -d ' \n'
+}
+
+# Installs the streambox release pinned in deploy/streambox-version. Returns non-zero on any
+# problem instead of exiting: a failed add-on must not undo a working filebox. It is called
+# from an || list, where set -e is off, so every step that matters ends in || return 1.
+install_streambox() {
+	log "Installing the streambox add-on"
+	local tag tmp base file current=""
+	tag=$(tr -d ' \n' <"$SRC/streambox-version") || return 1
+	[[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+		echo "setup.sh: bad streambox version: $tag" >&2
+		return 1
+	}
+
+	apt-get install -y -qq --no-install-recommends ffmpeg || return 1
+
+	getent group streambox >/dev/null || groupadd --system streambox || return 1
+	getent passwd streambox >/dev/null ||
+		useradd --system --user-group --no-create-home --home-dir /var/lib/streambox \
+			--shell /usr/sbin/nologin streambox || return 1
+	# The panel reads the tokens in /etc/streambox to talk to the add-on.
+	usermod -aG streambox filebox || return 1
+	install -d -o root -g streambox -m 0750 /etc/streambox || return 1
+	# Videos for the looped channels go here; the add-on can read but not change them.
+	install -d -o root -g streambox -m 0750 /srv/streambox /srv/streambox/media || return 1
+
+	if [ ! -f /etc/streambox/streambox.env ]; then
+		tmp=$(mktemp) || return 1
+		cat >"$tmp" <<ENV
+# Managed by filebox setup.sh; the tokens are generated once and kept.
+STREAMBOX_ADMIN_TOKEN=$(random_token)
+STREAMBOX_VIEW_TOKEN=$(random_token)
+STREAMBOX_LISTEN=127.0.0.1:$STREAMBOX_PORT
+STREAMBOX_MEDIA=/srv/streambox/media
+# The panel and the portal sit in front of it and set the X-Forwarded-* headers.
+STREAMBOX_TRUST_PROXY=1
+ENV
+		install -m 0640 -o root -g streambox "$tmp" /etc/streambox/streambox.env || return 1
+		rm -f "$tmp"
+	fi
+
+	[ -x /usr/local/bin/streambox ] && current=$(/usr/local/bin/streambox -version 2>/dev/null || true)
+	if [ "$current" != "$tag" ]; then
+		tmp=$(mktemp -d) || return 1
+		base=$STREAMBOX_RELEASES/download/$tag
+		for file in streambox streambox.sha256; do
+			curl -fsSL --max-time 300 -o "$tmp/$file" "$base/$file" || {
+				echo "setup.sh: could not download $file from streambox $tag" >&2
+				rm -rf "$tmp"
+				return 1
+			}
+		done
+		(cd "$tmp" && sha256sum -c streambox.sha256 >/dev/null) || {
+			echo "setup.sh: streambox $tag does not match its checksum, not installed" >&2
+			rm -rf "$tmp"
+			return 1
+		}
+		[ "$(head -c 4 "$tmp/streambox")" = $'\177ELF' ] || {
+			echo "setup.sh: streambox $tag is not a Linux executable" >&2
+			rm -rf "$tmp"
+			return 1
+		}
+		install -m 0755 -o root -g root "$tmp/streambox" /usr/local/bin/streambox.new || return 1
+		mv -f /usr/local/bin/streambox.new /usr/local/bin/streambox || return 1
+		rm -rf "$tmp"
+	fi
+
+	install -m 0644 -o root -g root "$SRC/systemd/streambox.service" /etc/systemd/system/streambox.service || return 1
+	systemctl daemon-reload || return 1
+	systemctl enable streambox.service || return 1
+	systemctl restart streambox.service || return 1
+	# The panel picks the add-on up when it starts, and now has the streambox group.
+	systemctl restart --no-block filebox-panel.service
+}
+
+install_addons() {
+	resolve_addons
+	if has_addon streambox; then
+		install_streambox || echo "setup.sh: the streambox add-on was NOT installed; filebox itself is fine. Fix the cause above and re-run: filebox-update" >&2
+	fi
+}
+
 print_next_steps() {
 	if [ -n "${FILEBOX_UPDATE:-}" ]; then
 		echo "Update finished. Roll back with: filebox-update rollback"
@@ -323,6 +432,13 @@ Setup finished. Do these in order:
    to close port 22 to the LAN:
      LAN_SSH_CIDRS="" ./setup.sh /path/to/filebox-panel
 EOF
+	if has_addon streambox; then
+		cat <<TV
+
+TV add-on (streambox): open the panel's TV page to add channels. Copy video files for looped channels to
+/srv/streambox/media. Family members find their playlist link under TV in the web portal.
+TV
+	fi
 }
 
 configure_auto_updates() {
@@ -348,6 +464,7 @@ main() {
 	configure_firewall
 	install_helpers
 	install_services
+	install_addons
 	print_next_steps
 }
 
