@@ -3,6 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0f17" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <title data-i18n="trash.title">Your trash</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/i18n.js"></script>
@@ -14,6 +18,7 @@
       <nav class="actions">
         <a class="link" href="/" data-i18n="nav.files">Files</a>
         <a class="link" href="/photos" data-i18n="nav.photos">Photos</a>
+        <a class="link" href="/backup" data-i18n="nav.backup">Back up</a>
         <a class="link" id="tv-link" href="/tv" data-i18n="nav.tv" hidden>TV</a>
         <a class="link" href="/trash" aria-current="page" data-i18n="nav.trash">Trash</a>
         <a class="link" href="/password" data-i18n="nav.password">Password</a>

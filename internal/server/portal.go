@@ -109,6 +109,10 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.Handle("GET /static/i18n.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/nl.json", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/en.json", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
+	p.mux.HandleFunc("GET /manifest.webmanifest", installAsset(shared, "manifest.webmanifest", "application/manifest+json"))
+	for _, icon := range []string{"icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"} {
+		p.mux.HandleFunc("GET /"+icon, installAsset(shared, icon, "image/png"))
+	}
 	p.mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(p.pages))))
 	p.mux.HandleFunc("/", p.notFound)
 	p.mux.HandleFunc("GET /{$}", p.homePage)
@@ -132,6 +136,7 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.HandleFunc("GET /api/files/download", p.fileRoute(fileHandlers.downloadFile))
 	p.mux.HandleFunc("GET /api/files/view", p.fileRoute(fileHandlers.viewFile))
 	p.mux.HandleFunc("GET /photos", p.photosPage)
+	p.mux.HandleFunc("GET /backup", p.backupPage)
 	p.mux.HandleFunc("GET /api/files/photos", p.fileRoute(fileHandlers.listPhotos))
 	p.mux.HandleFunc("PUT /api/files/photo-date", p.fileRoute(fileHandlers.setPhotoDate))
 	p.mux.HandleFunc("DELETE /api/files/photo-date", p.fileRoute(fileHandlers.resetPhotoDate))
@@ -205,6 +210,14 @@ func (s sharedAssets) Open(name string) (fs.File, error) {
 	return nil, fs.ErrNotExist
 }
 
+// The manifest and icons are public so the browser can fetch them on the sign-in page, and they hold nothing but static files.
+func installAsset(shared fs.FS, name, contentType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", contentType)
+		http.ServeFileFS(w, r, shared, name)
+	}
+}
+
 // Pages that must not reveal themselves answer with this too, so they look like any other unknown path.
 func (p *Portal) notFound(w http.ResponseWriter, r *http.Request) {
 	page, err := fs.ReadFile(p.pages, "notfound.html")
@@ -239,6 +252,14 @@ func (p *Portal) photosPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeFileFS(w, r, p.pages, "photos.html")
+}
+
+func (p *Portal) backupPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := p.currentUser(r); !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	http.ServeFileFS(w, r, p.pages, "backup.html")
 }
 
 func (p *Portal) passwordPage(w http.ResponseWriter, r *http.Request) {

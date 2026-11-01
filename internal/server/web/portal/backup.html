@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0f17" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <title data-i18n="backup.title">Back up photos</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
+</head>
+<body>
+  <main class="wide">
+    <header class="bar">
+      <h1 data-i18n="backup.title">Back up photos</h1>
+      <nav class="actions">
+        <a class="link" href="/" data-i18n="nav.files">Files</a>
+        <a class="link" href="/photos" data-i18n="nav.photos">Photos</a>
+        <a class="link" href="/backup" aria-current="page" data-i18n="nav.backup">Back up</a>
+        <a class="link" id="tv-link" href="/tv" data-i18n="nav.tv" hidden>TV</a>
+        <a class="link" href="/trash" data-i18n="nav.trash">Trash</a>
+        <a class="link" href="/password" data-i18n="nav.password">Password</a>
+        <button class="link" id="logout" type="button" data-i18n="nav.signout">Sign out</button>
+      </nav>
+    </header>
+    <section class="card stacked">
+      <p data-i18n="backup.intro">Choose the photos and videos on this phone that you want to keep safe. They are saved in the folder Photo backup, sorted by year and month.</p>
+      <div class="toolbar">
+        <label class="picker big"><span data-i18n="backup.pick">Choose photos and videos</span> <input type="file" id="backup-input" multiple accept="image/*,video/*"></label>
+      </div>
+      <p class="detail" data-i18n="backup.keepOpen">Keep this page open while it uploads. Your phone can pause the upload when the screen locks or when you switch to another app, and it continues by itself when you come back.</p>
+      <p class="detail" id="backup-awake" role="status"></p>
+      <progress id="backup-total" max="100" value="0" hidden aria-label="Overall progress" data-i18n-attr="aria-label:upload.totalProgress"></progress>
+      <progress id="backup-file" max="100" value="0" hidden aria-label="Progress of the current file" data-i18n-attr="aria-label:upload.fileProgress"></progress>
+      <p class="detail" id="backup-detail" role="status"></p>
+      <p id="backup-summary" role="status"></p>
+      <div class="toolbar" id="backup-waiting" hidden>
+        <button type="button" id="backup-resume" data-i18n="backup.resumeNow">Try now</button>
+      </div>
+      <ul class="failures" id="backup-failures"></ul>
+      <div class="toolbar">
+        <button type="button" id="backup-retry" data-i18n="backup.retry" hidden>Try the failed ones again</button>
+      </div>
+    </section>
+  </main>
+  <script src="/static/nav.js"></script>
+  <script src="/static/storage.js"></script>
+  <script src="/static/upload.js"></script>
+  <script src="/static/backup.js"></script>
+  <script src="/static/tvlink.js"></script>
+</body>
+</html>

@@ -472,3 +472,5 @@ button.folder::before {
 }
 .lang-switch button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
 .lang-switch button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+label.picker.big { min-height: 72px; font-size: 1.15rem; }
