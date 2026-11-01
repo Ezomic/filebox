@@ -509,13 +509,28 @@ func TestResetAndConfirmationTokensAreNotInterchangeable(t *testing.T) {
 	}
 }
 
+func differentFirstCharacter(token string) string {
+	if token[0] == 'x' {
+		return "y" + token[1:]
+	}
+	return "x" + token[1:]
+}
+
+func TestDifferentFirstCharacterNeverReturnsTheInput(t *testing.T) {
+	for _, token := range []string{"xabc", "yabc", "Xabc", "-abc", "_abc"} {
+		if differentFirstCharacter(token) == token {
+			t.Fatalf("%q was returned unchanged", token)
+		}
+	}
+}
+
 func TestResetLinkExpiresAfterThirtyMinutes(t *testing.T) {
 	h := newEmailHarness(t)
 	h.confirmedAddress(t, "bob", "bob@example.com")
 	token := h.requestReset(t, "bob", "192.0.2.72")
 
 	*h.clock = h.clock.Add(29 * time.Minute)
-	if rec := h.reset("x"+token[1:], resetToPassword, "192.0.2.73"); rec.Code != http.StatusBadRequest {
+	if rec := h.reset(differentFirstCharacter(token), resetToPassword, "192.0.2.73"); rec.Code != http.StatusBadRequest {
 		t.Fatal("a wrong guess must not matter")
 	}
 	*h.clock = h.clock.Add(2 * time.Minute)
