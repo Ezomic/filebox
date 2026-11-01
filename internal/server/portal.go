@@ -35,6 +35,8 @@ type PortalDeps struct {
 	// OpenFiles returns a Files confined to that user's own folder; it is closed after each request.
 	OpenFiles func(user string) (system.Files, error)
 	MaxUpload int64
+	// TV is the streambox add-on; nil when it is not installed.
+	TV *TV
 	// Thumbs makes photo thumbnails; nil turns the thumbnail routes into a 503.
 	Thumbs *Thumbs
 	// Contacts, Mail and PortalURL switch on email addresses and password reset by email; all three are needed.
@@ -60,6 +62,8 @@ type Portal struct {
 	pages      fs.FS
 	mux        *http.ServeMux
 	email      *emailFlow
+	tv         *TV
+	tvLimit    *loginLimiter
 }
 
 func NewPortal(deps PortalDeps) *Portal {
@@ -86,6 +90,8 @@ func NewPortal(deps PortalDeps) *Portal {
 		verifyWait: portalVerifyWait,
 		pages:      pages,
 		email:      newEmailFlow(deps),
+		tv:         deps.TV,
+		tvLimit:    newLoginLimiter(tvIPFails, failWindow),
 	}
 
 	p.mux = http.NewServeMux()
@@ -128,6 +134,13 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.HandleFunc("DELETE /api/trash", p.fileRoute(fileHandlers.emptyTrash))
 	p.mux.HandleFunc("POST /api/trash/{id}/restore", p.fileRoute(fileHandlers.restoreTrash))
 	p.mux.HandleFunc("DELETE /api/trash/{id}", p.fileRoute(fileHandlers.purgeTrash))
+	p.mux.HandleFunc("GET /api/tv", p.requireSession(p.tvInfo))
+	if p.tv != nil {
+		p.mux.HandleFunc("GET /tv", p.tvPage)
+		p.mux.HandleFunc("GET /tv/s/{token}/playlist.m3u", p.tvPlaylist)
+		p.mux.HandleFunc("GET /tv/s/{token}/epg.xml", p.tvGuide)
+		p.mux.HandleFunc("GET /tv/s/{token}/hls/{id}/{file}", p.tvSegment)
+	}
 	p.mux.HandleFunc("POST /api/uploads", p.fileRoute(fileHandlers.createUpload))
 	p.mux.HandleFunc("GET /api/uploads/{id}", p.fileRoute(fileHandlers.uploadStatus))
 	p.mux.HandleFunc("PUT /api/uploads/{id}", p.fileRoute(fileHandlers.appendChunk))

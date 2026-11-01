@@ -391,6 +391,7 @@ button.folder::before {
 .notice[hidden] { display: none; }
 #empty-confirm { margin-top: 0; }
 
+[hidden] { display: none !important; }
 .month h2 { font-size: 1rem; margin: 20px 0 8px; }
 .month:first-child h2 { margin-top: 0; }
 .photo-grid { display: grid; gap: 4px; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
