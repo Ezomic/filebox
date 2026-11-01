@@ -121,6 +121,7 @@ func (p *Portal) adminSetQuota(w http.ResponseWriter, r *http.Request, admin str
 	if !validName(w, name) || !decodeJSON(w, r, &body) || !validQuota(w, body.Bytes) || !p.checkQuotaTarget(w, r, admin, name, body.Confirm) {
 		return
 	}
+	defer p.space.invalidate()
 	if err := p.users.SetQuota(name, *body.Bytes); err != nil {
 		quotaFailed(w, "portal: set quota", name, err)
 		return
@@ -135,6 +136,7 @@ func (p *Portal) adminClearQuota(w http.ResponseWriter, r *http.Request, admin s
 	if !validName(w, name) || !decodeJSON(w, r, &body) || !p.checkQuotaTarget(w, r, admin, name, body.Confirm) {
 		return
 	}
+	defer p.space.invalidate()
 	if err := p.users.ClearQuota(name); err != nil {
 		quotaFailed(w, "portal: clear quota", name, err)
 		return

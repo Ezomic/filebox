@@ -70,6 +70,7 @@ func main() {
 	}
 
 	users := system.NewUsers()
+	space := system.NewDiskSpace(*disk)
 	thumbs := server.NewThumbs(system.NewThumbnailer())
 	portalDeps := server.PortalDeps{
 		Verifier:  system.NewVerifier(),
@@ -77,6 +78,7 @@ func main() {
 		Roles:     store,
 		OpenFiles: system.UserFilesOpener(*filesDir),
 		MaxUpload: *maxUpload,
+		Disk:      space,
 		TV:        tv,
 		Thumbs:    thumbs,
 	}
@@ -90,6 +92,7 @@ func main() {
 		Power:      system.NewPower(),
 		Usage:      system.NewUsage(*filesDir),
 		Smart:      system.NewSmart(),
+		Disk:       space,
 		PowerDelay: time.Second,
 
 		OnUserChanged: portal.EndSessions,

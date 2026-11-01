@@ -56,6 +56,9 @@ func (a fileHandlers) createUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "the file is larger than the upload limit")
 		return
 	}
+	if a.refuseWhenFull(w) {
+		return
+	}
 
 	info, err := a.files.CreateUpload(body.Path, *body.Size, body.Overwrite)
 	if err != nil {

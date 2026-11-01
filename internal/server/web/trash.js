@@ -73,6 +73,7 @@ async function load() {
     byId('empty').hidden = items.length > 0;
     emptyButton.hidden = items.length === 0;
     emptyConfirm.replaceChildren();
+    window.refreshStorage?.();
   } catch (error) {
     if (error.message === 'signed out') return;
     showError(error.message);

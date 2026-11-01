@@ -24,6 +24,7 @@ type harness struct {
 	power   *system.FakePower
 	smart   *system.FakeSmart
 	usage   *system.FakeUsage
+	disk    *system.FakeDisk
 }
 
 func newHarness(t *testing.T) *harness {
@@ -39,9 +40,10 @@ func newHarness(t *testing.T) *harness {
 	power := &system.FakePower{}
 	smart := system.NewFakeSmart()
 	usage := &system.FakeUsage{Bytes: map[string]uint64{"amy": 2048}, Ready: true}
-	handler := New(store, Deps{Host: host, Users: users, Logs: logs, Power: power, Smart: smart, Usage: usage})
+	disk := system.NewFakeDisk(diskAt(4000))
+	handler := New(store, Deps{Host: host, Users: users, Logs: logs, Power: power, Smart: smart, Usage: usage, Disk: disk})
 
-	return &harness{handler: handler, store: store, host: host, users: users, logs: logs, power: power, smart: smart, usage: usage}
+	return &harness{handler: handler, store: store, host: host, users: users, logs: logs, power: power, smart: smart, usage: usage, disk: disk}
 }
 
 func (h *harness) do(method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {

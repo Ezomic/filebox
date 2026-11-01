@@ -22,6 +22,7 @@ const transferIdle = 2 * time.Minute
 type fileHandlers struct {
 	files     system.Files
 	maxUpload int64
+	space     *storageProbe
 	thumbs    *Thumbs
 }
 
@@ -86,6 +87,9 @@ func (a fileHandlers) uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.ContentLength > a.maxUpload {
 		writeError(w, http.StatusRequestEntityTooLarge, "the file is larger than the upload limit")
+		return
+	}
+	if a.refuseWhenFull(w) {
 		return
 	}
 
