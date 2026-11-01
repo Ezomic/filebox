@@ -96,9 +96,9 @@ create_accounts() {
 	getent group systemd-journal >/dev/null && usermod -aG systemd-journal filebox
 
 	install -d -o root -g root -m 0755 /srv/sftp
-	# The shared Family folder sits beside the homes, so it is in nobody's quota or subvolume. Its leading underscore
-	# can never be a username. The panel cannot create it itself because it cannot write to /srv/sftp.
-	install -d -o filebox -g sftpusers -m 2770 /srv/sftp/_family
+	# The shared Family folder sits beside the homes, so it is in nobody's quota or subvolume. Only the panel touches it
+	# (SFTP users are chrooted elsewhere), and the panel cannot create it itself because it cannot write to /srv/sftp.
+	install -d -o filebox -g filebox -m 0770 /srv/sftp/_family
 	install -d -o filebox -g filebox -m 0750 /var/lib/filebox
 	install -d -o root -g root -m 0750 /etc/filebox
 	install -d -o root -g root -m 0755 /usr/local/libexec
