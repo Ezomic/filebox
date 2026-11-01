@@ -35,6 +35,8 @@ type PortalDeps struct {
 	// OpenFiles returns a Files confined to that user's own folder; it is closed after each request.
 	OpenFiles func(user string) (system.Files, error)
 	MaxUpload int64
+	// Disk reports the usage of the filesystem holding the files; nil turns the storage bar off and never blocks an upload.
+	Disk system.DiskSpace
 	// TV is the streambox add-on; nil when it is not installed.
 	TV *TV
 	// Thumbs makes photo thumbnails; nil turns the thumbnail routes into a 503.
@@ -53,6 +55,7 @@ type Portal struct {
 	roles      Roles
 	openFiles  func(user string) (system.Files, error)
 	maxUpload  int64
+	space      *storageProbe
 	thumbs     *Thumbs
 	sessions   *userSessions
 	ipLimit    *loginLimiter
@@ -82,6 +85,7 @@ func NewPortal(deps PortalDeps) *Portal {
 		roles:      deps.Roles,
 		openFiles:  deps.OpenFiles,
 		maxUpload:  deps.MaxUpload,
+		space:      newStorageProbe(deps.Disk, deps.Users),
 		thumbs:     deps.Thumbs,
 		sessions:   newUserSessions(portalIdleTTL, portalAbsoluteTTL),
 		ipLimit:    newLoginLimiter(portalIPFails, failWindow),
@@ -101,6 +105,7 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.Handle("GET /static/trash.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/viewer.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/photos.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
+	p.mux.Handle("GET /static/storage.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(p.pages))))
 	p.mux.HandleFunc("/", p.notFound)
 	p.mux.HandleFunc("GET /{$}", p.homePage)
@@ -118,6 +123,7 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.HandleFunc("PUT /api/admin/users/{name}/quota", p.requireAdmin(p.adminSetQuota))
 	p.mux.HandleFunc("DELETE /api/admin/users/{name}/quota", p.requireAdmin(p.adminClearQuota))
 	p.mux.HandleFunc("DELETE /api/admin/users/{name}", p.requireAdmin(p.adminDelete))
+	p.mux.HandleFunc("GET /api/storage", p.requireSession(p.storage))
 	p.mux.HandleFunc("GET /api/files", p.fileRoute(fileHandlers.listFiles))
 	p.mux.HandleFunc("DELETE /api/files", p.fileRoute(fileHandlers.deleteFile))
 	p.mux.HandleFunc("GET /api/files/download", p.fileRoute(fileHandlers.downloadFile))
@@ -188,7 +194,7 @@ func (p *Portal) EndSessions(user string) {
 type sharedAssets struct{ fs.FS }
 
 func (s sharedAssets) Open(name string) (fs.File, error) {
-	if name != "style.css" && name != "files.js" && name != "trash.js" && name != "viewer.js" && name != "photos.js" {
+	if name != "style.css" && name != "files.js" && name != "trash.js" && name != "viewer.js" && name != "photos.js" && name != "storage.js" {
 		return nil, fs.ErrNotExist
 	}
 
@@ -410,17 +416,30 @@ func (p *Portal) requireSession(next func(http.ResponseWriter, *http.Request, st
 // The user's files folder is opened per request, so a handler can only ever see the signed-in user's own files.
 func (p *Portal) fileRoute(call func(fileHandlers, http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return p.requireSession(func(w http.ResponseWriter, r *http.Request, user string) {
-		files, err := p.openFiles(user)
-		if err != nil {
-			log.Printf("portal: open files for %q: %v", user, err)
-			writeError(w, http.StatusInternalServerError, "could not open your files")
+		files, closeFiles, ok := p.openUserFiles(w, user)
+		if !ok {
 			return
 		}
-		if closer, ok := files.(io.Closer); ok {
-			defer closer.Close()
+		defer closeFiles()
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			defer p.space.invalidate()
 		}
-		call(fileHandlers{files: files, maxUpload: p.maxUpload, thumbs: p.thumbs}, w, r)
+		call(fileHandlers{files: files, maxUpload: p.maxUpload, space: p.space, thumbs: p.thumbs}, w, r)
 	})
+}
+
+func (p *Portal) openUserFiles(w http.ResponseWriter, user string) (files system.Files, closeFiles func(), ok bool) {
+	files, err := p.openFiles(user)
+	if err != nil {
+		log.Printf("portal: open files for %q: %v", user, err)
+		writeError(w, http.StatusInternalServerError, "could not open your files")
+		return nil, nil, false
+	}
+	if closer, isCloser := files.(io.Closer); isCloser {
+		return files, func() { _ = closer.Close() }, true
+	}
+
+	return files, func() {}, true
 }
 
 type passwordChange struct {

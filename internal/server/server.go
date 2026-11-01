@@ -32,6 +32,8 @@ type Deps struct {
 	Power system.Power
 	Usage system.Usage
 	Smart system.Smart
+	// Disk reports the usage of the filesystem holding the files, for the storage banner on the admin pages.
+	Disk system.DiskSpace
 	// PowerDelay is how long shutdown and reboot wait so the response can reach the browser first.
 	PowerDelay time.Duration
 	// OnUserChanged runs after an admin changes a user's password or deletes the user.
@@ -51,6 +53,7 @@ type Server struct {
 	power      system.Power
 	usage      system.Usage
 	smart      system.Smart
+	space      *storageProbe
 	powerDelay time.Duration
 	sessions   *sessions
 	limiter    *loginLimiter
@@ -76,6 +79,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 		power:      deps.Power,
 		usage:      deps.Usage,
 		smart:      deps.Smart,
+		space:      newStorageProbe(deps.Disk, nil),
 		powerDelay: deps.PowerDelay,
 		sessions:   newSessions(sessionTTL),
 		limiter:    newLoginLimiter(maxLoginFails, failWindow),
@@ -113,6 +117,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("DELETE /api/users/{name}/quota", s.requireSession(s.clearUserQuota))
 	mux.HandleFunc("DELETE /api/users/{name}", s.requireSession(s.deleteUser))
 	mux.HandleFunc("GET /api/disks", s.requireSession(s.disks))
+	mux.HandleFunc("GET /api/storage", s.requireSession(s.storage))
 	mux.HandleFunc("GET /api/logs", s.requireSession(s.readLogs))
 	mux.HandleFunc("POST /api/system/restart-sshd", s.requireSession(s.powerAction(system.RestartSSHD)))
 	mux.HandleFunc("POST /api/system/shutdown", s.requireSession(s.powerAction(system.Shutdown)))
@@ -148,7 +153,7 @@ type adminAssets struct{ fs.FS }
 
 func (a adminAssets) Open(name string) (fs.File, error) {
 	switch name {
-	case "style.css", "auth.js", "dashboard.js", "users.js", "logs.js", "tv.js", "tvlink.js":
+	case "style.css", "auth.js", "dashboard.js", "users.js", "logs.js", "tv.js", "tvlink.js", "diskalert.js":
 		return a.FS.Open(name)
 	}
 

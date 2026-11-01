@@ -442,6 +442,7 @@ async function deletePhoto(photo) {
     updateViewerItems(photos.map(toItem), index);
     updateSummary();
     showUndo('Deleted.', id);
+    window.refreshStorage?.();
   } catch (error) {
     if (error.message !== 'signed out') showError(error.message);
   }
@@ -454,6 +455,7 @@ async function undoDelete(id) {
     showError('');
     showUndo(`Restored ${path}.`);
     await load();
+    window.refreshStorage?.();
   } catch (error) {
     if (error.message !== 'signed out') showError(error.message);
   }

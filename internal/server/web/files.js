@@ -219,6 +219,7 @@ async function deleteEntry(path) {
     showError('');
     showUndo('Deleted.', id);
     await load();
+    window.refreshStorage?.();
   } catch (error) {
     if (error.message !== 'signed out') showError(error.message);
   }
@@ -230,6 +231,7 @@ async function undoDelete(id) {
     showError('');
     showUndo(`Restored ${path}.`);
     await load();
+    window.refreshStorage?.();
   } catch (error) {
     if (error.message !== 'signed out') showError(error.message);
   }
@@ -272,6 +274,12 @@ const conflictList = byId('conflict-list');
 let uploading = false;
 
 class NetworkError extends Error {}
+
+class DiskFullError extends Error {}
+
+function uploadFailure(body, fallback) {
+  return body.diskFull ? new DiskFullError(body.error) : new Error(body.error || fallback);
+}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -484,7 +492,7 @@ async function sendSmallFile(item, report) {
   const overwrite = item.overwrite ? '&overwrite=1' : '';
   const url = `/api/files/content?path=${encodeURIComponent(item.target)}${overwrite}`;
   const { status, body } = await withRetry(() => sendBlob(url, item.file, {}, report));
-  if (status !== 204) throw new Error(body.error || 'The upload failed.');
+  if (status !== 204) throw uploadFailure(body, 'The upload failed.');
 }
 
 async function resumeSession(item, key) {
@@ -501,7 +509,7 @@ async function resumeSession(item, key) {
 async function createSession(item, key) {
   const payload = { path: item.target, size: item.file.size, overwrite: item.overwrite };
   const { status, body } = await withRetry(() => call('POST', '/api/uploads', payload));
-  if (status !== 201) throw new Error(body.error || 'The upload could not be started.');
+  if (status !== 201) throw uploadFailure(body, 'The upload could not be started.');
   saveSession(key, { id: body.id, overwrite: item.overwrite });
   return { id: body.id, offset: 0, resumed: false };
 }
@@ -630,6 +638,11 @@ async function runUploads(found, base) {
         doneBytes += item.file.size;
       } catch (error) {
         if (error.message === 'signed out') return;
+        if (error instanceof DiskFullError) {
+          failed.push({ item, message: error.message });
+          stopped = 'The remaining files were not uploaded.';
+          break;
+        }
         failed.push({ item, message: error.message });
         if (error instanceof NetworkError) {
           stopped = 'Stopped because the connection was lost. Choose the same files again to continue where they stopped.';
@@ -646,6 +659,7 @@ async function runUploads(found, base) {
   }
   summarize(done, skipped, failed, stopped);
   await load();
+  window.refreshStorage?.();
 }
 
 async function startUpload(collect) {

@@ -12,6 +12,8 @@
   --track: #e6ebf3;
   --danger: #e5383b;
   --danger-soft: #e5383b14;
+  --warn: #b26a00;
+  --warn-soft: #f5a62326;
   --shadow: 0 1px 2px #0f1a330d, 0 8px 24px #0f1a3310;
 }
 
@@ -30,6 +32,8 @@
     --track: #222b3a;
     --danger: #ff7a7d;
     --danger-soft: #ff7a7d1a;
+    --warn: #f6b94a;
+    --warn-soft: #f6b94a22;
     --shadow: 0 1px 2px #0008;
   }
 }
@@ -437,3 +441,17 @@ button.folder::before {
   .jump select { width: auto; }
   .filters .detail { flex: 1 1 100%; }
 }
+
+.storage { display: grid; gap: 8px; margin-bottom: 12px; }
+.storage-text { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.storage .meter { height: 6px; margin: 0; }
+.storage[data-level="warning"] .meter > span { background: var(--warn); }
+.storage[data-level="critical"] .meter > span,
+.storage[data-level="full"] .meter > span { background: var(--danger); }
+
+.storage-banner { margin: 0 0 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--card); overflow-wrap: anywhere; }
+.storage .storage-banner { margin: 0; }
+.storage-banner.warning { border-color: var(--warn); background: var(--warn-soft); }
+.storage-banner.critical,
+.storage-banner.full { border-color: var(--danger); background: var(--danger-soft); }
+.storage-banner a.link { margin-top: 8px; }
