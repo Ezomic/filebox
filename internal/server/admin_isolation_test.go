@@ -76,7 +76,7 @@ func TestAdminPanelNoLongerServesTheFileBrowserScripts(t *testing.T) {
 			t.Errorf("/static/%s: got %d, want 404", name, rec.Code)
 		}
 	}
-	for _, name := range []string{"style.css", "dashboard.js", "users.js", "logs.js", "auth.js"} {
+	for _, name := range []string{"style.css", "dashboard.js", "users.js", "logs.js", "auth.js", "tv.js", "tvlink.js"} {
 		if rec := h.do("GET", "/static/"+name, "", cookie); rec.Code != http.StatusOK {
 			t.Errorf("/static/%s: got %d, want 200", name, rec.Code)
 		}

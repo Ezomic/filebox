@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Filebox TV</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <header class="bar">
+      <h1>TV</h1>
+      <nav class="actions">
+        <a class="link" href="/">Dashboard</a>
+        <a class="link" href="/users">Users</a>
+        <a class="link" href="/logs">Logs</a>
+        <a class="link" href="/tv" aria-current="page">TV</a>
+        <button class="link" id="logout" type="button">Sign out</button>
+      </nav>
+    </header>
+    <p class="error" id="status" role="status"></p>
+    <section class="card">
+      <div class="label">Channels</div>
+      <table id="channels">
+        <tbody id="channel-rows"></tbody>
+      </table>
+      <p class="detail" id="empty" hidden>No channels yet.</p>
+    </section>
+    <form class="card stacked" id="add-form" autocomplete="off">
+      <div class="label">Add channel</div>
+      <p class="detail">Only add streams and files you own or have the right to share.</p>
+      <label for="new-id">Id (a-z, 0-9 and -)</label>
+      <input type="text" id="new-id" required maxlength="32" pattern="[a-z0-9][a-z0-9\-]{0,31}" autocapitalize="none" spellcheck="false">
+      <label for="new-name">Name</label>
+      <input type="text" id="new-name" required maxlength="80">
+      <label for="new-kind">Kind</label>
+      <select id="new-kind">
+        <option value="url">Stream from a URL</option>
+        <option value="files">Loop files from the media folder</option>
+      </select>
+      <div id="url-fields">
+        <label for="new-source">Source URL (http, https, rtsp, rtmp or srt)</label>
+        <input type="text" id="new-source" maxlength="2000" autocapitalize="none" spellcheck="false">
+        <label class="check"><input type="checkbox" id="new-transcode"> Re-encode (uses much more CPU; leave off unless the player cannot play the source)</label>
+      </div>
+      <div id="file-fields" hidden>
+        <label for="new-files">Files (hold Ctrl or Cmd to pick several; they play in the order of this list)</label>
+        <select id="new-files" multiple size="8"></select>
+        <p class="detail" id="no-media" hidden>The media folder is empty. Copy video files to it over SFTP/SSH first.</p>
+      </div>
+      <p class="error" id="add-error" role="alert"></p>
+      <button type="submit">Add channel</button>
+    </form>
+  </main>
+  <script src="/static/tv.js"></script>
+</body>
+</html>

@@ -9,6 +9,7 @@
   on a small new partition, adds a one-time boot entry and (after you type a confirmation) reboots.
 
   -DryRun    shows every step and changes nothing on the disks or in the boot configuration.
+  -Streambox also install the TV streaming add-on (streambox) without asking.
   -Wifi      set up Wi-Fi without asking. Without a cable this happens anyway; the installer prefers a cable if one works.
   -Rollback  removes the boot entry and the staging partition again (before the install has run).
   -Answers   pre-filled answers for the prompts, for testing.
@@ -20,6 +21,7 @@ param(
     [switch]$DryRun,
     [switch]$Rollback,
     [switch]$Wifi,
+    [switch]$Streambox,
     [string]$WorkDir = (Join-Path $env:ProgramData 'filebox-installer'),
     [string[]]$Answers = @()
 )
@@ -227,6 +229,9 @@ if ($keys) {
 $timezone = Ask 'Time zone' 'Europe/Amsterdam'
 $keymap = Ask 'Keyboard layout (us, gb, nl ...)' 'us'
 
+$addons = @()
+if ($Streambox -or (Ask 'Also install the TV add-on (streambox: stream your own videos and channels)? (yes/no)' 'no') -eq 'yes') { $addons = @('streambox') }
+
 $wifiSettings = @{}
 if ($wired -and $wifiAdapter -and -not $Wifi) {
     $useWifi = (Ask 'Also set up Wi-Fi, so the PC keeps working if you move it away from the cable? (yes/no)' 'yes') -eq 'yes'
@@ -270,6 +275,7 @@ $settings = @{
 $password = $null
 foreach ($key in $wifiSettings.Keys) { $settings[$key] = $wifiSettings[$key] }
 if ($data) { $settings.DataPartUuid = $data.PartUuid }
+if ($addons.Count -gt 0) { $settings.Addons = $addons }
 try { Assert-InstallSettings $settings } catch { Stop-Wizard $_.Exception.Message }
 
 Step '4. Review'
@@ -277,6 +283,7 @@ Say "Debian will REPLACE : disk $($target.Disk) partition $($target.Number) ($($
 if ($data) { Say "Data partition      : partition $($data.Number) ($($data.SizeGB) GB) action: $dataAction" } else { Say 'Data partition      : none (files will live on the new system partition)' }
 if ($useWifi) { Say "Network            : cable if plugged in, otherwise Wi-Fi '$($settings.WifiSsid)' (firmware $($settings.FirmwarePackages -join ', '))" } else { Say 'Network            : cable only' }
 Say "Server             : $hostname, login $user, time zone $timezone, keyboard $keymap"
+if ($addons.Count -gt 0) { Say "Add-ons            : $($addons -join ', ')" } else { Say 'Add-ons            : none' }
 Say "Windows           : will be gone afterwards. Everything on partition $($target.Number) is erased."
 if ($dataAction -eq 'format') { Say "The data partition $($data.Number) will ALSO be erased and formatted." }
 if ((Ask 'Have you copied everything you want to keep somewhere else? (yes/no)' 'no') -ne 'yes') { Stop-Wizard 'Back up first, then run the wizard again.' }

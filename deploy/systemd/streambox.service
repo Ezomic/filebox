@@ -1,0 +1,40 @@
+[Unit]
+Description=streambox streaming backend (filebox add-on)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=streambox
+Group=streambox
+# Tokens and settings (STREAMBOX_ADMIN_TOKEN, STREAMBOX_VIEW_TOKEN, ...), mode 0640 root:streambox.
+EnvironmentFile=/etc/streambox/streambox.env
+ExecStart=/usr/local/bin/streambox
+Restart=on-failure
+# Transcoding must not starve SFTP and the panel on an old PC.
+Nice=10
+CPUWeight=50
+RestartSec=5
+UMask=0077
+StateDirectory=streambox
+Environment=STREAMBOX_DATA=/var/lib/streambox
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

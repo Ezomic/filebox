@@ -19,6 +19,8 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
+      - name: add-on installer script
+        run: deploy/test/addons.sh
       - run: go test -race ./...
       - name: fuzz (short)
         run: |
@@ -27,6 +29,7 @@ jobs:
           go test ./internal/system -run '^$' -fuzz '^FuzzExifDate$' -fuzztime 20s
           go test ./internal/server -run '^$' -fuzz '^FuzzPortalFilePathsStayInsideTheUser$' -fuzztime 30s
           go test ./internal/server -run '^$' -fuzz '^FuzzPortalLoginBody$' -fuzztime 20s
+          go test ./internal/server -run '^$' -fuzz '^FuzzPortalStreamPathsReachOnlyStreams$' -fuzztime 20s
           go test ./internal/server -run '^$' -fuzz '^FuzzPortalAdminRequests$' -fuzztime 20s
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
