@@ -216,7 +216,7 @@ func (a fileHandlers) downloadZip(w http.ResponseWriter, r *http.Request) {
 		err = z.zw.Close()
 	}
 	if err != nil {
-		log.Printf("zip %q: %v", name, err)
+		log.Printf("zip: %v", logCause(err))
 		panic(http.ErrAbortHandler)
 	}
 }
@@ -278,7 +278,7 @@ func (z *zipper) addTree(dir, prefix string, modified time.Time) error {
 			continue
 		}
 		if _, err := system.CleanPath(entry.Name); err != nil {
-			log.Printf("zip: skipping %q, its name is not one the file browser can address", entry.Name)
+			log.Printf("zip: skipping an entry whose name the file browser cannot address")
 			continue
 		}
 		path, entryName := joinPath(dir, entry.Name), joinPath(prefix, entry.Name)

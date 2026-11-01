@@ -1,10 +1,6 @@
 package server
 
 import (
-	"errors"
-	"io"
-	"io/fs"
-	"log"
 	"net/http"
 	"time"
 
@@ -71,40 +67,4 @@ func (a fileHandlers) emptyTrash(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"removed": removed})
-}
-
-// The panel browses the data root, so its own trash and photos are the ones from there. An admin
-// reaches one user's with ?user=, which is opened the same way the portal opens it.
-func (s *Server) scopedRoute(call func(fileHandlers, http.ResponseWriter, *http.Request)) http.HandlerFunc {
-	return s.requireSession(func(w http.ResponseWriter, r *http.Request) {
-		user, ok := queryValue(w, r, "user")
-		if !ok {
-			return
-		}
-		if user == "" {
-			call(s.fh, w, r)
-			return
-		}
-		if s.openUserFiles == nil {
-			writeError(w, http.StatusNotFound, "not found")
-			return
-		}
-		files, err := s.openUserFiles(user)
-		switch {
-		case errors.Is(err, system.ErrInvalidUsername):
-			writeError(w, http.StatusBadRequest, "invalid user")
-			return
-		case errors.Is(err, fs.ErrNotExist):
-			writeError(w, http.StatusNotFound, "not found")
-			return
-		case err != nil:
-			log.Printf("open files for %q: %v", user, err)
-			writeError(w, http.StatusInternalServerError, "could not open the files")
-			return
-		}
-		if closer, ok := files.(io.Closer); ok {
-			defer closer.Close()
-		}
-		call(fileHandlers{files: files, maxUpload: s.maxUpload, thumbs: s.thumbs}, w, r)
-	})
 }

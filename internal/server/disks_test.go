@@ -8,7 +8,7 @@ import (
 )
 
 func TestDisksReportsHealth(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	rec := s.get("/api/disks")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got %d", rec.Code)
@@ -29,7 +29,7 @@ func TestDisksReportsHealth(t *testing.T) {
 }
 
 func TestDisksDegradesWhenSmartIsMissing(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	s.smart.Err = errors.New("smartctl is not installed")
 	rec := s.get("/api/disks")
 	if rec.Code != http.StatusOK {
@@ -52,7 +52,7 @@ func TestDisksRequireSession(t *testing.T) {
 }
 
 func TestUsersIncludeDiskUsage(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	var body struct {
 		Ready bool `json:"usageReady"`
 		Users []struct {

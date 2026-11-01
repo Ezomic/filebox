@@ -24,7 +24,7 @@ func waitForActions(t *testing.T, power *system.FakePower, want int) []system.Po
 }
 
 func TestRestartSSHD(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	rec := s.post("/api/system/restart-sshd", map[string]any{"confirm": true})
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
@@ -35,7 +35,7 @@ func TestRestartSSHD(t *testing.T) {
 }
 
 func TestRestartSSHDFailureHidesDetail(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	s.power.Err = errors.New("sudo: a password is required")
 	rec := s.post("/api/system/restart-sshd", map[string]any{"confirm": true})
 	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "sudo") {
@@ -48,7 +48,7 @@ func TestShutdownAndRebootRunAfterResponse(t *testing.T) {
 		"/api/system/shutdown": system.Shutdown,
 		"/api/system/reboot":   system.Reboot,
 	} {
-		s := newFileSession(t)
+		s := newAdminSession(t)
 		rec := s.post(path, map[string]any{"confirm": true})
 		if rec.Code != http.StatusAccepted {
 			t.Fatalf("%s: got %d %s", path, rec.Code, rec.Body)
@@ -61,7 +61,7 @@ func TestShutdownAndRebootRunAfterResponse(t *testing.T) {
 
 func TestPowerRequiresConfirmation(t *testing.T) {
 	for _, path := range []string{"/api/system/restart-sshd", "/api/system/shutdown", "/api/system/reboot"} {
-		s := newFileSession(t)
+		s := newAdminSession(t)
 		for _, fields := range []map[string]any{{}, {"confirm": false}, {"confirm": "yes"}} {
 			if rec := s.post(path, fields); rec.Code == http.StatusAccepted || rec.Code == http.StatusNoContent {
 				t.Fatalf("%s %v: got %d", path, fields, rec.Code)
@@ -75,7 +75,7 @@ func TestPowerRequiresConfirmation(t *testing.T) {
 }
 
 func TestPowerRequiresSessionAndJSON(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	rec := s.do("POST", "/api/system/reboot", `{"confirm":true}`, nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("got %d", rec.Code)
@@ -90,7 +90,7 @@ func TestPowerRequiresSessionAndJSON(t *testing.T) {
 }
 
 func TestPowerRejectsWrongMethod(t *testing.T) {
-	s := newFileSession(t)
+	s := newAdminSession(t)
 	if rec := s.get("/api/system/reboot"); rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("got %d", rec.Code)
 	}
