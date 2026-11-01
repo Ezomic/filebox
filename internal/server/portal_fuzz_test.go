@@ -108,3 +108,33 @@ func quote(s string) string {
 
 	return b.String()
 }
+
+func FuzzPortalAdminRequests(f *testing.F) {
+	for _, seed := range []string{
+		`{"role":"admin","confirm":"` + amyPassword + `"}`, `{"confirm":"` + amyPassword + `"}`, `{"role":"user"}`, `{}`, ``, `[`,
+		`{"password":"` + newPassword + `","confirm":"` + bobPassword + `"}`, `{"role":1,"confirm":5}`,
+	} {
+		f.Add(seed, "cleo", uint8(0))
+	}
+	f.Fuzz(func(t *testing.T, body, name string, op uint8) {
+		h := newPortalHarness(t)
+		amy := h.signedIn(t, "amy", amyPassword)
+		method, suffix := "PUT", "/role"
+		switch op % 3 {
+		case 1:
+			suffix = "/password"
+		case 2:
+			method, suffix = "DELETE", ""
+		}
+		rec := h.do(method, "/api/admin/users/"+url.PathEscape(name)+suffix, body, "192.0.2.10", amy)
+		if rec.Code >= 500 {
+			t.Fatalf("%s %q %q gave a server error %d", method, name, body, rec.Code)
+		}
+		if !strings.Contains(body, amyPassword) && !strings.Contains(body, `\`) && (h.spy.mutations != 0 || h.roles.IsAdmin("cleo") || h.roles.IsAdmin("bob")) {
+			t.Fatalf("%s %q %q changed something without the admin's password", method, name, body)
+		}
+		if !h.roles.IsAdmin("amy") {
+			t.Fatalf("%s %q %q removed the only admin", method, name, body)
+		}
+	})
+}

@@ -37,18 +37,26 @@ type record struct {
 type Store struct {
 	path      string
 	tokenPath string
+	rolesPath string
 
 	mu         sync.RWMutex
 	record     *record
 	setupToken string
+
+	rolesMu sync.RWMutex
+	admins  map[string]struct{}
 }
 
 func Open(dir string) (*Store, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	err := os.MkdirAll(dir, 0o700)
+	if err != nil {
 		return nil, err
 	}
 
-	store := &Store{path: filepath.Join(dir, "admin.json"), tokenPath: filepath.Join(dir, tokenFile)}
+	store := &Store{path: filepath.Join(dir, "admin.json"), tokenPath: filepath.Join(dir, tokenFile), rolesPath: filepath.Join(dir, rolesFile)}
+	if store.admins, err = loadAdmins(store.rolesPath); err != nil {
+		return nil, err
+	}
 
 	content, err := os.ReadFile(store.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -142,7 +150,11 @@ func (s *Store) persist(r *record) error {
 		return err
 	}
 
-	temp := s.path + ".tmp"
+	return writeFileAtomic(s.path, content)
+}
+
+func writeFileAtomic(path string, content []byte) error {
+	temp := path + ".tmp"
 	file, err := os.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
@@ -159,7 +171,7 @@ func (s *Store) persist(r *record) error {
 		return err
 	}
 
-	return os.Rename(temp, s.path)
+	return os.Rename(temp, path)
 }
 
 // The token is kept on disk so it survives the restarts that happen before tailscale is up.

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ezomic/filebox/internal/auth"
 	"github.com/Ezomic/filebox/internal/system"
 )
 
@@ -32,9 +33,14 @@ func newPortalFilesHarness(t *testing.T) *portalFilesHarness {
 	}
 	verifier := &system.FakeVerifier{Passwords: map[string]string{"amy": amyPassword, "bob": bobPassword}}
 	users := system.NewFakeUsers("amy", "bob")
+	roles, err := auth.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	portal := NewPortal(PortalDeps{
 		Verifier:  verifier,
 		Users:     users,
+		Roles:     roles,
 		OpenFiles: func(user string) (system.Files, error) { return system.OpenUserFiles(base, user) },
 		MaxUpload: portalMaxUpload,
 	})
