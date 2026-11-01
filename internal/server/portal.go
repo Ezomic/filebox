@@ -76,6 +76,7 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux = http.NewServeMux()
 	p.mux.Handle("GET /static/style.css", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/files.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
+	p.mux.Handle("GET /static/trash.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(p.pages))))
 	p.mux.HandleFunc("GET /{$}", p.homePage)
 	p.mux.HandleFunc("GET /login", p.loginPage)
@@ -93,6 +94,11 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.HandleFunc("POST /api/files/rename", p.fileRoute(fileHandlers.renameFile))
 	p.mux.HandleFunc("POST /api/files/exists", p.fileRoute(fileHandlers.checkExists))
 	p.mux.HandleFunc("GET /api/files/zip", p.fileRoute(fileHandlers.downloadZip))
+	p.mux.HandleFunc("GET /trash", p.trashPage)
+	p.mux.HandleFunc("GET /api/trash", p.fileRoute(fileHandlers.listTrash))
+	p.mux.HandleFunc("DELETE /api/trash", p.fileRoute(fileHandlers.emptyTrash))
+	p.mux.HandleFunc("POST /api/trash/{id}/restore", p.fileRoute(fileHandlers.restoreTrash))
+	p.mux.HandleFunc("DELETE /api/trash/{id}", p.fileRoute(fileHandlers.purgeTrash))
 	p.mux.HandleFunc("POST /api/uploads", p.fileRoute(fileHandlers.createUpload))
 	p.mux.HandleFunc("GET /api/uploads/{id}", p.fileRoute(fileHandlers.uploadStatus))
 	p.mux.HandleFunc("PUT /api/uploads/{id}", p.fileRoute(fileHandlers.appendChunk))
@@ -135,7 +141,7 @@ func (p *Portal) EndSessions(user string) {
 type sharedAssets struct{ fs.FS }
 
 func (s sharedAssets) Open(name string) (fs.File, error) {
-	if name != "style.css" && name != "files.js" {
+	if name != "style.css" && name != "files.js" && name != "trash.js" {
 		return nil, fs.ErrNotExist
 	}
 
@@ -148,6 +154,14 @@ func (p *Portal) homePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeFileFS(w, r, p.pages, "index.html")
+}
+
+func (p *Portal) trashPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := p.currentUser(r); !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	http.ServeFileFS(w, r, p.pages, "trash.html")
 }
 
 func (p *Portal) passwordPage(w http.ResponseWriter, r *http.Request) {

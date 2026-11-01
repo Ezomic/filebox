@@ -68,15 +68,16 @@ func main() {
 	})
 
 	deps := server.Deps{
-		Host:       system.NewHost(*disk),
-		Users:      users,
-		Files:      files,
-		Logs:       system.NewLogs(),
-		Power:      system.NewPower(),
-		Usage:      system.NewUsage(*filesDir),
-		Smart:      system.NewSmart(),
-		PowerDelay: time.Second,
-		MaxUpload:  *maxUpload,
+		Host:          system.NewHost(*disk),
+		Users:         users,
+		Files:         files,
+		OpenUserFiles: system.UserFilesOpener(*filesDir),
+		Logs:          system.NewLogs(),
+		Power:         system.NewPower(),
+		Usage:         system.NewUsage(*filesDir),
+		Smart:         system.NewSmart(),
+		PowerDelay:    time.Second,
+		MaxUpload:     *maxUpload,
 
 		OnUserChanged: portal.EndSessions,
 		Version:       version,
@@ -108,6 +109,7 @@ func main() {
 	stop, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	go system.RunUploadSweeper(stop, *filesDir, 24*time.Hour, time.Now)
+	go system.RunTrashSweeper(stop, *filesDir, 24*time.Hour, time.Now)
 	failed := make(chan error, len(servers))
 	for _, s := range servers {
 		go func() {

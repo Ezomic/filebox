@@ -808,18 +808,14 @@ func TestDelete(t *testing.T) {
 
 	del := func(target string) *httptest.ResponseRecorder { return s.call("DELETE", target, nil, "") }
 
-	if rec := del("/api/files?path=f.txt"); rec.Code != http.StatusNoContent || s.exists("f.txt") {
+	if rec := del("/api/files?path=f.txt"); rec.Code != http.StatusOK || s.exists("f.txt") {
 		t.Fatalf("file: %d", rec.Code)
 	}
-	if rec := del("/api/files?path=empty"); rec.Code != http.StatusNoContent || s.exists("empty") {
+	if rec := del("/api/files?path=empty"); rec.Code != http.StatusOK || s.exists("empty") {
 		t.Fatalf("empty folder: %d", rec.Code)
 	}
-	rec := del("/api/files?path=full")
-	if rec.Code != http.StatusConflict || !strings.Contains(apiError(t, rec), "not empty") {
+	if rec := del("/api/files?path=full"); rec.Code != http.StatusOK || s.exists("full") {
 		t.Fatalf("non-empty folder: %d %s", rec.Code, rec.Body)
-	}
-	if !s.exists("full/inner") {
-		t.Fatal("a non-empty folder lost data")
 	}
 	if rec := del("/api/files?path=nope"); rec.Code != http.StatusNotFound {
 		t.Fatalf("missing: %d", rec.Code)
@@ -829,7 +825,7 @@ func TestDelete(t *testing.T) {
 			t.Errorf("%s: got %d, want 400", target, rec.Code)
 		}
 	}
-	if !s.exists("later") || !s.exists("full") {
+	if !s.exists("later") {
 		t.Fatal("something was deleted by a refused request")
 	}
 	if _, err := os.Stat(s.root); err != nil {
@@ -842,7 +838,7 @@ func TestDeleteDoesNotFollowSymlinks(t *testing.T) {
 	if !s.plantSymlinks() {
 		t.Skip("this OS refused to create a symlink")
 	}
-	if rec := s.call("DELETE", "/api/files?path=link.txt", nil, ""); rec.Code != http.StatusNoContent {
+	if rec := s.call("DELETE", "/api/files?path=link.txt", nil, ""); rec.Code != http.StatusOK {
 		t.Fatalf("removing the link itself: %d %s", rec.Code, rec.Body)
 	}
 	if s.exists("link.txt") {
@@ -873,10 +869,11 @@ func (f failingFiles) List(string) ([]system.FileInfo, error) { return nil, f.er
 func (f failingFiles) Open(string) (system.File, system.FileInfo, error) {
 	return nil, system.FileInfo{}, f.err
 }
-func (f failingFiles) Write(string, io.Reader, bool) error { return f.err }
-func (f failingFiles) Rename(string, string) error         { return f.err }
-func (f failingFiles) Remove(string) error                 { return f.err }
-func (f failingFiles) Mkdir(string) error                  { return f.err }
+func (f failingFiles) Write(string, io.Reader, bool) error    { return f.err }
+func (f failingFiles) Rename(string, string) error            { return f.err }
+func (f failingFiles) Remove(string) error                    { return f.err }
+func (f failingFiles) Trash(string) (system.TrashItem, error) { return system.TrashItem{}, f.err }
+func (f failingFiles) Mkdir(string) error                     { return f.err }
 
 func TestUnexpectedFilesystemErrorsAreNotLeaked(t *testing.T) {
 	raw := errors.New("open /srv/sftp/amy/files/secret: permission denied")

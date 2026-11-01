@@ -35,6 +35,10 @@ func (s *Server) filesPage(w http.ResponseWriter, r *http.Request) {
 	s.protectedPage(w, r, "files.html")
 }
 
+func (s *Server) trashPage(w http.ResponseWriter, r *http.Request) {
+	s.protectedPage(w, r, "trash.html")
+}
+
 func (a fileHandlers) listFiles(w http.ResponseWriter, r *http.Request) {
 	dir, ok := queryValue(w, r, "path")
 	if !ok {
@@ -140,11 +144,12 @@ func (a fileHandlers) deleteFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := a.files.Remove(name); err != nil {
+	item, err := a.files.Trash(name)
+	if err != nil {
 		fileError(w, "delete", name, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]string{"id": item.ID, "name": item.Name()})
 }
 
 // A malformed query is refused so a broken escape can never turn into an empty path, which means the root.

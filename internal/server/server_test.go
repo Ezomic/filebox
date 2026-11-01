@@ -29,6 +29,8 @@ type harness struct {
 	usage   *system.FakeUsage
 	root    string
 	outside string
+
+	usersBase string
 }
 
 const testMaxUpload = 1024
@@ -67,9 +69,17 @@ func newHarnessWithFiles(t *testing.T, wrap func(system.Files) system.Files) *ha
 	smart := system.NewFakeSmart()
 	usage := &system.FakeUsage{Bytes: map[string]uint64{"amy": 2048}, Ready: true}
 
-	handler := New(store, Deps{Host: host, Users: users, Files: wrap(files), Logs: logs, Power: power, Smart: smart, Usage: usage, MaxUpload: testMaxUpload})
+	usersBase := filepath.Join(base, "users")
+	for _, user := range []string{"amy", "bob"} {
+		if err := os.MkdirAll(filepath.Join(usersBase, user, "files"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	openUser := func(user string) (system.Files, error) { return system.OpenUserFiles(usersBase, user) }
 
-	return &harness{handler: handler, store: store, host: host, users: users, files: files, logs: logs, power: power, smart: smart, usage: usage, root: root, outside: outside}
+	handler := New(store, Deps{Host: host, Users: users, Files: wrap(files), OpenUserFiles: openUser, Logs: logs, Power: power, Smart: smart, Usage: usage, MaxUpload: testMaxUpload})
+
+	return &harness{handler: handler, store: store, host: host, users: users, files: files, logs: logs, power: power, smart: smart, usage: usage, root: root, outside: outside, usersBase: usersBase}
 }
 
 func (h *harness) do(method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
