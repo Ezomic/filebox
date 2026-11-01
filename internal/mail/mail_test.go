@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -63,24 +64,24 @@ func TestZeroMapsStatusesToErrorsWithoutLeakingSecrets(t *testing.T) {
 }
 
 func TestZeroNeverRetries(t *testing.T) {
-	calls := 0
+	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
+		calls.Add(1)
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
 	_ = NewZero(server.URL, "t").Send(context.Background(), "a@example.com", "s", "t")
-	if calls != 1 {
-		t.Fatalf("got %d calls, a failed send must not be repeated", calls)
+	if calls.Load() != 1 {
+		t.Fatalf("got %d calls, a failed send must not be repeated", calls.Load())
 	}
 }
 
 func TestZeroTimesOut(t *testing.T) {
-	calls := 0
+	var calls atomic.Int32
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		calls++
+		calls.Add(1)
 		<-release
 	}))
 	defer server.Close()
@@ -91,14 +92,14 @@ func TestZeroTimesOut(t *testing.T) {
 	if err := zero.Send(context.Background(), "a@example.com", "s", "t"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("got %v", err)
 	}
-	if calls != 1 {
-		t.Fatalf("got %d calls after a timeout", calls)
+	if calls.Load() != 1 {
+		t.Fatalf("got %d calls after a timeout", calls.Load())
 	}
 }
 
 func TestZeroDoesNotFollowRedirects(t *testing.T) {
-	hits := 0
-	elsewhere := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits++ }))
+	var hits atomic.Int32
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
 	defer elsewhere.Close()
 	server := httptest.NewServer(http.RedirectHandler(elsewhere.URL, http.StatusTemporaryRedirect))
 	defer server.Close()
@@ -106,7 +107,7 @@ func TestZeroDoesNotFollowRedirects(t *testing.T) {
 	if err := NewZero(server.URL, "t").Send(context.Background(), "a@example.com", "s", "t"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("got %v", err)
 	}
-	if hits != 0 {
+	if hits.Load() != 0 {
 		t.Fatal("the redirect was followed")
 	}
 }
