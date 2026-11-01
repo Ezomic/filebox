@@ -20,6 +20,8 @@ type FakeFiles struct {
 	uploads map[string]*memoryUpload
 	trash   map[string]*memoryTrashed
 	thumbs  map[string][]byte
+	// customDates holds the day a user gave a photo, by photo key.
+	customDates map[string]string
 }
 
 func NewFakeFiles() *FakeFiles {

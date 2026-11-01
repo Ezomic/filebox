@@ -120,7 +120,7 @@ func FuzzDirFilesStaysInRoot(f *testing.F) {
 				}
 			}
 		case 10:
-			if page, err := files.ListPhotos(second, 10); err == nil {
+			if page, err := files.ListPhotos(second, 10, ""); err == nil {
 				for _, photo := range page.Photos {
 					if strings.Contains(photo.Path, "secret") || photo.Path == "photo.jpg" || photo.Path == "filelink.jpg" {
 						t.Fatalf("ListPhotos returned %q", photo.Path)

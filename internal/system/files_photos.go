@@ -20,7 +20,10 @@ type thumbIndex struct {
 	Dates map[string]int64 `json:"dates"`
 }
 
-func (d *dirFiles) ListPhotos(after string, limit int) (PhotoPage, error) {
+func (d *dirFiles) ListPhotos(after string, limit int, kind string) (PhotoPage, error) {
+	if !validPhotoKind(kind) {
+		return PhotoPage{}, ErrInvalidPath
+	}
 	if after != "" {
 		if _, _, err := parsePhotoCursor(after); err != nil {
 			return PhotoPage{}, err
@@ -31,8 +34,9 @@ func (d *dirFiles) ListPhotos(after string, limit int) (PhotoPage, error) {
 		return PhotoPage{}, err
 	}
 	d.resolveDates(photos)
+	applyCustomDates(photos, d.loadCustomDates())
 
-	return pagePhotos(photos, after, limit)
+	return pagePhotos(filterKind(photos, kind), after, limit)
 }
 
 func (d *dirFiles) collectPhotos() ([]Photo, error) {
@@ -267,10 +271,8 @@ func (d *dirFiles) SweepThumbs(now time.Time) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	live := make(map[string]bool, len(photos))
-	for _, photo := range photos {
-		live[photo.Key] = true
-	}
+	live := liveKeys(photos)
+	d.pruneStaleCustomDates(live)
 
 	removed := 0
 	var errs []error

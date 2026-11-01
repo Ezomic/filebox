@@ -409,3 +409,28 @@ button.folder::before {
 @media (max-width: 480px) {
   .photo-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
 }
+
+.filters { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.type-filter { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.card .type-filter button.link[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); box-shadow: var(--glow); }
+.jump { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; }
+.jump label { grid-column: 1 / -1; margin: 0; }
+.jump input[type="number"], .jump select { width: 100%; margin-bottom: 0; }
+.jump button { grid-column: 1 / -1; }
+.filters .detail { min-height: 1.2em; margin: 0; }
+.tile.found { outline: 3px solid var(--accent); outline-offset: -3px; }
+.viewer-date { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; background: var(--card); border-bottom: 1px solid var(--border); }
+.viewer-date[hidden], .viewer-date [hidden] { display: none; }
+.viewer-date input[type="date"] { width: auto; flex: 1 1 10rem; margin-bottom: 0; }
+.viewer-date .error { flex: 1 1 100%; margin: 0; min-height: 0; }
+.viewer-date .error:empty { display: none; }
+.viewer-date button.link { background: var(--bg); box-shadow: none; }
+@media (min-width: 700px) {
+  .filters { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+  .type-filter { grid-template-columns: repeat(3, auto); }
+  .jump { display: flex; flex-wrap: wrap; }
+  .jump label { margin: 0 4px 0 0; }
+  .jump input[type="number"] { width: 7rem; }
+  .jump select { width: auto; }
+  .filters .detail { flex: 1 1 100%; }
+}

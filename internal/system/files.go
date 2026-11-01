@@ -86,8 +86,12 @@ type Files interface {
 	SweepTrash(cutoff time.Time) (int, error)
 
 	// ListPhotos returns the images and videos under the root, newest first, in pages. after is the Next cursor of
-	// the previous page. Symlinks, empty files and the hidden folders are left out.
-	ListPhotos(after string, limit int) (PhotoPage, error)
+	// the previous page. kind is empty for everything, or PhotoImage or PhotoVideo. Symlinks, empty files and the hidden folders are left out.
+	ListPhotos(after string, limit int, kind string) (PhotoPage, error)
+	// SetPhotoDate gives one photo a custom day, used instead of its original date. The file itself is not touched.
+	// ResetPhotoDate removes it again. Both refuse anything OpenPhoto refuses.
+	SetPhotoDate(path string, day time.Time) error
+	ResetPhotoDate(path string) error
 	// OpenPhoto opens one image or video for thumbnailing. Unlike Open it refuses symlinks and anything that is not a media file.
 	OpenPhoto(path string) (File, Photo, error)
 	// ReadThumb and WriteThumb keep generated JPEGs in the hidden thumbnail folder under names from Photo.ThumbName and Photo.PreviewName.
