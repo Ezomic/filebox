@@ -50,10 +50,10 @@ func (a fileHandlers) createUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case body.Size == nil || *body.Size < 0:
-		writeError(w, http.StatusBadRequest, "size must be a number of bytes")
+		writeCoded(w, http.StatusBadRequest, codeUploadInvalid, "size must be a number of bytes")
 		return
 	case *body.Size > a.maxUpload:
-		writeError(w, http.StatusRequestEntityTooLarge, "the file is larger than the upload limit")
+		writeCoded(w, http.StatusRequestEntityTooLarge, codeUploadTooLarge, "the file is larger than the upload limit")
 		return
 	}
 	if a.refuseWhenFull(w) {
@@ -84,7 +84,7 @@ func (a fileHandlers) appendChunk(w http.ResponseWriter, r *http.Request) {
 	}
 	start, end, total, ok := parseContentRange(r.Header.Get("Content-Range"))
 	if !ok {
-		writeError(w, http.StatusBadRequest, "invalid Content-Range")
+		writeCoded(w, http.StatusBadRequest, codeUploadInvalid, "invalid Content-Range")
 		return
 	}
 	id := r.PathValue("id")
@@ -97,15 +97,15 @@ func (a fileHandlers) appendChunk(w http.ResponseWriter, r *http.Request) {
 	length := end - start + 1
 	switch {
 	case info.Size > a.maxUpload:
-		writeError(w, http.StatusRequestEntityTooLarge, "the file is larger than the upload limit")
+		writeCoded(w, http.StatusRequestEntityTooLarge, codeUploadTooLarge, "the file is larger than the upload limit")
 	case total != info.Size || end >= total:
-		writeOffsetError(w, http.StatusBadRequest, "the range does not fit the size declared for this upload", info.Offset)
+		writeOffsetError(w, http.StatusBadRequest, codeUploadInvalid, "the range does not fit the size declared for this upload", info.Offset)
 	case start != info.Offset:
-		writeOffsetError(w, http.StatusConflict, "the chunk does not start where the server left off", info.Offset)
+		writeOffsetError(w, http.StatusConflict, codeUploadOutOfSync, "the chunk does not start where the server left off", info.Offset)
 	case length > maxChunkBytes:
-		writeError(w, http.StatusRequestEntityTooLarge, "the chunk is too large")
+		writeCoded(w, http.StatusRequestEntityTooLarge, codeUploadInvalid, "the chunk is too large")
 	case r.ContentLength >= 0 && r.ContentLength != length:
-		writeOffsetError(w, http.StatusBadRequest, "the chunk is not as long as its range", info.Offset)
+		writeOffsetError(w, http.StatusBadRequest, codeUploadInvalid, "the chunk is not as long as its range", info.Offset)
 	default:
 		a.storeChunk(w, r, id, start, length)
 	}
@@ -121,14 +121,14 @@ func (a fileHandlers) storeChunk(w http.ResponseWriter, r *http.Request, id stri
 	case err == nil:
 		writeJSON(w, http.StatusOK, map[string]any{"offset": info.Offset})
 	case errors.Is(err, system.ErrUploadOffset):
-		writeOffsetError(w, http.StatusConflict, "the chunk does not start where the server left off", info.Offset)
+		writeOffsetError(w, http.StatusConflict, codeUploadOutOfSync, "the chunk does not start where the server left off", info.Offset)
 	case errors.Is(err, system.ErrUploadTooLarge):
-		writeOffsetError(w, http.StatusBadRequest, "the chunk is longer than its range", info.Offset)
+		writeOffsetError(w, http.StatusBadRequest, codeUploadInvalid, "the chunk is longer than its range", info.Offset)
 	case errors.Is(err, system.ErrUploadShort):
 		if body.err != nil {
 			log.Printf("upload chunk %s interrupted: %v", id, body.err)
 		}
-		writeOffsetError(w, http.StatusBadRequest, "the chunk ended before its range did", info.Offset)
+		writeOffsetError(w, http.StatusBadRequest, codeUploadInvalid, "the chunk ended before its range did", info.Offset)
 	default:
 		fileError(w, "upload chunk", id, err)
 	}
@@ -139,7 +139,7 @@ func (a fileHandlers) finishUpload(w http.ResponseWriter, r *http.Request) {
 	err := a.files.FinishUpload(id)
 	if errors.Is(err, system.ErrUploadIncomplete) {
 		info, _ := a.files.UploadStatus(id)
-		writeOffsetError(w, http.StatusConflict, "the upload is not complete", info.Offset)
+		writeOffsetError(w, http.StatusConflict, codeUploadOutOfSync, "the upload is not complete", info.Offset)
 		return
 	}
 	if err != nil {
@@ -347,6 +347,6 @@ func parseContentRange(value string) (start, end, total int64, ok bool) {
 	return numbers[0], numbers[1], numbers[2], true
 }
 
-func writeOffsetError(w http.ResponseWriter, status int, message string, offset int64) {
-	writeJSON(w, status, map[string]any{"error": message, "offset": offset})
+func writeOffsetError(w http.ResponseWriter, status int, code, message string, offset int64) {
+	writeJSON(w, status, map[string]any{"error": message, "code": code, "offset": offset})
 }

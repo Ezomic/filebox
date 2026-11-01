@@ -3,18 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Confirm your email address</title>
+  <title data-i18n="confirm.title">Confirm your email address</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
 </head>
 <body>
   <main>
     <form class="card auth" id="confirm-form">
-      <h1>Confirm your email address</h1>
-      <p class="detail">Confirm that this address may be used to reset your Filebox password.</p>
+      <h1 data-i18n="confirm.title">Confirm your email address</h1>
+      <p class="detail" data-i18n="confirm.intro">Confirm that this address may be used to reset your Filebox password.</p>
       <p class="error" id="error" role="alert"></p>
-      <p class="detail" id="done" role="status" hidden>Your address is confirmed.</p>
-      <button type="submit">Confirm address</button>
-      <a class="link" href="/login">Go to sign in</a>
+      <p class="detail" id="done" role="status" data-i18n="confirm.done" hidden>Your address is confirmed.</p>
+      <button type="submit" data-i18n="confirm.submit">Confirm address</button>
+      <a class="link" href="/login" data-i18n="common.toSignIn">Go to sign in</a>
     </form>
   </main>
   <script src="/static/confirm-email.js"></script>

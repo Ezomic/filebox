@@ -170,7 +170,7 @@ func (a fileHandlers) setPhotoDate(w http.ResponseWriter, r *http.Request) {
 	}
 	day, err := system.ParsePhotoDay(body.Date)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "date must be a day like 2024-05-17, from 1900 up to tomorrow")
+		writeCoded(w, http.StatusBadRequest, codeDateInvalid, "date must be a day like 2024-05-17, from 1900 up to tomorrow")
 		return
 	}
 	if err := a.files.SetPhotoDate(body.Path, day); err != nil {
@@ -194,11 +194,11 @@ func (a fileHandlers) resetPhotoDate(w http.ResponseWriter, r *http.Request) {
 
 func photoDateError(w http.ResponseWriter, action, name string, err error) {
 	if errors.Is(err, system.ErrNotMedia) {
-		writeError(w, http.StatusUnsupportedMediaType, "only photos and videos have a date")
+		writeCoded(w, http.StatusUnsupportedMediaType, codeDateNotMedia, "only photos and videos have a date")
 		return
 	}
 	if errors.Is(err, system.ErrTooManyDates) {
-		writeError(w, http.StatusUnprocessableEntity, "too many photos have a custom date, reset some first")
+		writeCoded(w, http.StatusUnprocessableEntity, codeTooManyDates, "too many photos have a custom date, reset some first")
 		return
 	}
 	fileError(w, action, name, err)
@@ -235,7 +235,7 @@ func (a fileHandlers) serveRendered(w http.ResponseWriter, r *http.Request, prev
 		return
 	}
 	if a.thumbs == nil {
-		writeError(w, http.StatusServiceUnavailable, "thumbnails are not available on this server")
+		writeCoded(w, http.StatusServiceUnavailable, codeThumbsUnavailable, "thumbnails are not available on this server")
 		return
 	}
 	source, photo, err := a.files.OpenPhoto(name)
@@ -301,13 +301,13 @@ func renderError(w http.ResponseWriter, r *http.Request, name string, err error)
 	case r.Context().Err() != nil:
 		return
 	case errors.Is(err, context.Canceled):
-		writeError(w, http.StatusServiceUnavailable, "thumbnails are busy, try again")
+		writeCoded(w, http.StatusServiceUnavailable, codeThumbsBusy, "thumbnails are busy, try again")
 	case errors.Is(err, system.ErrToolMissing):
 		log.Printf("thumbnail: %v", logCause(err))
-		writeError(w, http.StatusServiceUnavailable, "thumbnails are not available on this server")
+		writeCoded(w, http.StatusServiceUnavailable, codeThumbsUnavailable, "thumbnails are not available on this server")
 	case errors.Is(err, system.ErrBadMedia):
 		log.Printf("thumbnail: %v", logCause(err))
-		writeError(w, http.StatusUnprocessableEntity, "this file could not be turned into a picture")
+		writeCoded(w, http.StatusUnprocessableEntity, codeThumbFailed, "this file could not be turned into a picture")
 	default:
 		fileError(w, "thumbnail", name, err)
 	}

@@ -10,20 +10,10 @@
     return node;
   };
 
-  const format = (bytes) => {
-    if (bytes < 1024) return `${bytes} B`;
-    const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
-    let value = bytes;
-    let unit = -1;
-    do {
-      value /= 1024;
-      unit += 1;
-    } while (value >= 1024 && unit < units.length - 1);
-    return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
-  };
+  const format = (bytes) => i18n.size(bytes);
 
   const box = el('section', undefined, 'storage');
-  box.setAttribute('aria-label', 'Storage');
+  box.setAttribute('aria-label', t('storage.label'));
   box.hidden = true;
   const text = el('div', undefined, 'storage-text');
   text.id = 'storage-text';
@@ -39,27 +29,27 @@
   box.append(text, meter, banner);
   header.after(box);
 
-  const LABELS = { warning: 'Warning', critical: 'Almost full', full: 'Full' };
+  const LABELS = { warning: 'storage.levelWarning', critical: 'storage.levelCritical', full: 'storage.levelFull' };
 
   function summary(data) {
-    if (data.measure === 'quota') return `${format(data.quotaUsed)} of ${format(data.quota)} used`;
-    return `${format(data.used)} used, ${format(data.free)} free`;
+    if (data.measure === 'quota') return t('storage.quotaSummary', { used: format(data.quotaUsed), quota: format(data.quota) });
+    return t('storage.diskSummary', { used: format(data.used), free: format(data.free) });
   }
 
   function headline(data, percent) {
-    if (data.level === 'full') return 'The disk is full. New uploads are paused until space is freed. You can still download and delete files.';
-    if (data.measure === 'quota') return `You have used ${percent}% of your storage.`;
-    return `The disk is ${percent}% full.`;
+    if (data.level === 'full') return t('storage.full');
+    if (data.measure === 'quota') return t('storage.quotaPercent', { percent });
+    return t('storage.diskPercent', { percent });
   }
 
   function trashLine(data) {
     if (data.trashBytes <= 0) return null;
-    const line = el('span', `Your trash holds ${format(data.trashBytes)}, which still counts as used. `);
+    const line = el('span', `${t('storage.trashHolds', { size: format(data.trashBytes) })} `);
     if (onTrash) {
-      line.append('Empty it below to free space.');
+      line.append(t('storage.emptyBelow'));
       return line;
     }
-    const link = el('a', 'Empty trash to free space', 'link');
+    const link = el('a', t('storage.emptyLink'), 'link');
     link.href = '/trash';
     line.append(link);
     return line;
@@ -71,7 +61,7 @@
       banner.replaceChildren();
       return;
     }
-    const parts = [el('strong', `${LABELS[data.level]}: `), el('span', `${headline(data, Math.floor(data.percent))} `)];
+    const parts = [el('strong', `${t(LABELS[data.level])}: `), el('span', `${headline(data, Math.floor(data.percent))} `)];
     const trash = trashLine(data);
     if (trash) parts.push(trash);
     banner.replaceChildren(...parts);
@@ -80,7 +70,11 @@
     banner.hidden = false;
   }
 
+  let latest = null;
+
   function render(data) {
+    latest = data;
+    box.setAttribute('aria-label', t('storage.label'));
     const percent = Math.floor(data.percent);
     const description = `${summary(data)} (${percent}%)`;
     text.textContent = description;
@@ -103,6 +97,10 @@
       return null;
     }
   }
+
+  i18n.onChange(() => {
+    if (latest) render(latest);
+  });
 
   window.refreshStorage = refresh;
   document.addEventListener('visibilitychange', () => {

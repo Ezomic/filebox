@@ -7,7 +7,7 @@ fetch('/api/forgot')
   .then((response) => (response.ok ? response.json() : null))
   .then((status) => {
     if (status && !status.enabled) {
-      document.getElementById('intro').textContent = 'Reset by email is not set up on this server. Ask the owner to reset your password.';
+      i18n.msg(document.getElementById('intro'), () => t('forgot.disabled'));
       button.disabled = true;
     }
   })
@@ -15,7 +15,7 @@ fetch('/api/forgot')
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  errorBox.textContent = '';
+  i18n.msg(errorBox);
   done.hidden = true;
 
   button.disabled = true;
@@ -27,13 +27,13 @@ form.addEventListener('submit', async (event) => {
     });
     const body = await response.json().catch(() => ({}));
     if (response.ok) {
-      done.textContent = body.message || 'If that account exists and has a confirmed address, we sent an email.';
+      i18n.answer(done, body, 'answer.reset_link_sent');
       done.hidden = false;
       return;
     }
-    errorBox.textContent = body.error || 'Something went wrong.';
+    i18n.report(errorBox, i18n.failure(body, 'error.generic'));
   } catch {
-    errorBox.textContent = 'Could not reach the server.';
+    i18n.msg(errorBox, () => t('error.network'));
   } finally {
     button.disabled = false;
   }

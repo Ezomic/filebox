@@ -59,7 +59,7 @@ func (a fileHandlers) viewFile(w http.ResponseWriter, r *http.Request) {
 		kind, ok = viewTypes[strings.ToLower(ext)]
 	}
 	if !ok {
-		writeError(w, http.StatusUnsupportedMediaType, "this file type can not be previewed")
+		writeCoded(w, http.StatusUnsupportedMediaType, codePreviewUnsupported, "this file type can not be previewed")
 		return
 	}
 

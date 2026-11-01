@@ -3,11 +3,11 @@ const errorBox = document.getElementById('error');
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  errorBox.textContent = '';
+  i18n.msg(errorBox);
 
   const password = document.getElementById('password').value;
   if (document.getElementById('confirm').value !== password) {
-    errorBox.textContent = 'The new passwords do not match.';
+    i18n.msg(errorBox, () => t('password.mismatch'));
     return;
   }
 
@@ -23,14 +23,14 @@ form.addEventListener('submit', async (event) => {
       window.location.href = '/login';
       return;
     }
-    if (response.status === 401 && (await response.clone().json().catch(() => ({}))).error === 'not signed in') {
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 401 && body.code === 'not_signed_in') {
       window.location.href = '/login';
       return;
     }
-    const body = await response.json().catch(() => ({}));
-    errorBox.textContent = body.error || 'Something went wrong.';
+    i18n.report(errorBox, i18n.failure(body, 'error.generic'));
   } catch {
-    errorBox.textContent = 'Could not reach the server.';
+    i18n.msg(errorBox, () => t('error.network'));
   } finally {
     button.disabled = false;
   }
@@ -39,15 +39,15 @@ form.addEventListener('submit', async (event) => {
 const emailForm = document.getElementById('email-form');
 const emailError = document.getElementById('email-error');
 const emailDone = document.getElementById('email-done');
+const emailState = document.getElementById('email-state');
 
 function showEmail(state) {
-  const input = document.getElementById('email');
   if (!state.email) {
-    document.getElementById('email-state').textContent = 'No address saved yet.';
+    i18n.msg(emailState, () => t('email.none'));
     return;
   }
-  input.value = state.email;
-  document.getElementById('email-state').textContent = state.email + (state.confirmed ? ' (confirmed)' : ' (not confirmed yet, check your inbox)');
+  document.getElementById('email').value = state.email;
+  i18n.msg(emailState, () => t(state.confirmed ? 'email.confirmed' : 'email.unconfirmed', { email: state.email }));
 }
 
 fetch('/api/me/email')
@@ -61,7 +61,7 @@ fetch('/api/me/email')
 
 emailForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  emailError.textContent = '';
+  i18n.msg(emailError);
   emailDone.hidden = true;
 
   const button = emailForm.querySelector('button');
@@ -77,16 +77,16 @@ emailForm.addEventListener('submit', async (event) => {
     });
     if (response.ok) {
       document.getElementById('email-current').value = '';
-      emailDone.textContent = 'Check your inbox for the confirmation link.';
+      i18n.msg(emailDone, () => t('email.sent'));
       emailDone.hidden = false;
       const state = await fetch('/api/me/email').then((r) => r.json());
       showEmail(state);
       return;
     }
     const body = await response.json().catch(() => ({}));
-    emailError.textContent = body.error || 'Something went wrong.';
+    i18n.report(emailError, i18n.failure(body, 'error.generic'));
   } catch {
-    emailError.textContent = 'Could not reach the server.';
+    i18n.msg(emailError, () => t('error.network'));
   } finally {
     button.disabled = false;
   }

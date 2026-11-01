@@ -10,7 +10,7 @@ if (token) {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  errorBox.textContent = '';
+  i18n.msg(errorBox);
 
   const button = form.querySelector('button');
   button.disabled = true;
@@ -26,9 +26,9 @@ form.addEventListener('submit', async (event) => {
       return;
     }
     const body = await response.json().catch(() => ({}));
-    errorBox.textContent = body.error || 'Something went wrong.';
+    i18n.report(errorBox, i18n.failure(body, 'error.generic'));
   } catch {
-    errorBox.textContent = 'Could not reach the server.';
+    i18n.msg(errorBox, () => t('error.network'));
   }
   button.disabled = false;
 });

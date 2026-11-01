@@ -3,39 +3,40 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Filebox users</title>
+  <title data-i18n="admin.pageTitle">Filebox users</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
 </head>
 <body>
   <main>
     <header class="bar">
-      <h1>Users</h1>
+      <h1 data-i18n="nav.users">Users</h1>
       <nav class="actions">
-        <a class="link" href="/">Files</a>
-        <a class="link" href="/admin/users" aria-current="page">Users</a>
-        <a class="link" href="/photos">Photos</a>
-        <a class="link" id="tv-link" href="/tv" hidden>TV</a>
-        <a class="link" href="/trash">Trash</a>
-        <a class="link" href="/password">Password</a>
-        <button class="link" id="logout" type="button">Sign out</button>
+        <a class="link" href="/" data-i18n="nav.files">Files</a>
+        <a class="link" href="/admin/users" aria-current="page" data-i18n="nav.users">Users</a>
+        <a class="link" href="/photos" data-i18n="nav.photos">Photos</a>
+        <a class="link" id="tv-link" href="/tv" data-i18n="nav.tv" hidden>TV</a>
+        <a class="link" href="/trash" data-i18n="nav.trash">Trash</a>
+        <a class="link" href="/password" data-i18n="nav.password">Password</a>
+        <button class="link" id="logout" type="button" data-i18n="nav.signout">Sign out</button>
       </nav>
     </header>
     <p class="error" id="status" role="status"></p>
     <section class="card">
-      <div class="label">Accounts</div>
+      <div class="label" data-i18n="admin.accounts">Accounts</div>
       <table id="users">
         <tbody id="user-rows"></tbody>
       </table>
-      <p class="detail" id="empty" hidden>No users yet.</p>
+      <p class="detail" id="empty" data-i18n="admin.empty" hidden>No users yet.</p>
     </section>
     <form class="card stacked" id="add-form" autocomplete="off">
-      <div class="label">Add user</div>
-      <label for="new-name">Username</label>
+      <div class="label" data-i18n="admin.add">Add user</div>
+      <label for="new-name" data-i18n="common.username">Username</label>
       <input type="text" id="new-name" required minlength="3" maxlength="32" pattern="[a-z][a-z0-9_\-]{2,31}" autocapitalize="none" spellcheck="false">
-      <label for="new-password">Password (12 to 128 characters)</label>
+      <label for="new-password" data-i18n="admin.password">Password (12 to 128 characters)</label>
       <input type="password" id="new-password" required minlength="12" maxlength="128" autocomplete="new-password">
       <p class="error" id="add-error" role="alert"></p>
-      <button type="submit">Add user</button>
+      <button type="submit" data-i18n="admin.add">Add user</button>
     </form>
   </main>
   <script src="/static/nav.js"></script>

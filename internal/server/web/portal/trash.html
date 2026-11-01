@@ -3,20 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Your trash</title>
+  <title data-i18n="trash.title">Your trash</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
 </head>
 <body>
   <main class="wide">
     <header class="bar">
-      <h1>Your trash</h1>
+      <h1 data-i18n="trash.title">Your trash</h1>
       <nav class="actions">
-        <a class="link" href="/">Files</a>
-        <a class="link" href="/photos">Photos</a>
-        <a class="link" id="tv-link" href="/tv" hidden>TV</a>
-        <a class="link" href="/trash" aria-current="page">Trash</a>
-        <a class="link" href="/password">Password</a>
-        <button class="link" id="logout" type="button">Sign out</button>
+        <a class="link" href="/" data-i18n="nav.files">Files</a>
+        <a class="link" href="/photos" data-i18n="nav.photos">Photos</a>
+        <a class="link" id="tv-link" href="/tv" data-i18n="nav.tv" hidden>TV</a>
+        <a class="link" href="/trash" aria-current="page" data-i18n="nav.trash">Trash</a>
+        <a class="link" href="/password" data-i18n="nav.password">Password</a>
+        <button class="link" id="logout" type="button" data-i18n="nav.signout">Sign out</button>
       </nav>
     </header>
     <p class="error" id="status" role="status"></p>
@@ -26,9 +27,9 @@
       <table id="files">
         <tbody id="file-rows"></tbody>
       </table>
-      <p class="detail" id="empty" hidden>The trash is empty.</p>
+      <p class="detail" id="empty" data-i18n="trash.empty" hidden>The trash is empty.</p>
       <div class="toolbar">
-        <button type="button" id="empty-trash" class="danger-solid" hidden>Empty trash</button>
+        <button type="button" id="empty-trash" class="danger-solid" data-i18n="trash.emptyAll" hidden>Empty trash</button>
         <span id="empty-confirm" class="toolbar"></span>
       </div>
     </section>
