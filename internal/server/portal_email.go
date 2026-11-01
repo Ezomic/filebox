@@ -145,14 +145,14 @@ func (p *Portal) setMyEmail(w http.ResponseWriter, r *http.Request, user string)
 	if !p.confirmPassword(w, r, user, body.Current, "email change", "your current password is wrong") {
 		return
 	}
-	if !e.userLimit.reserve("confirm:"+user) || !e.totalLimit.reserve("all") {
-		writeError(w, http.StatusTooManyRequests, "too many emails sent, try again later")
-		return
-	}
 
 	existing, found := e.contacts.Get(user)
 	if found && existing.Confirmed && strings.EqualFold(existing.Email, address) {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if !e.userLimit.reserve("confirm:"+user) || !e.userLimit.reserve("to:"+strings.ToLower(address)) || !e.totalLimit.reserve("all") {
+		writeError(w, http.StatusTooManyRequests, "too many emails sent, try again later")
 		return
 	}
 	if !found || existing.Email != address {
@@ -230,7 +230,7 @@ func (p *Portal) forgot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := body.Username
-	if e.enabled() && system.ValidUsername(name) && e.userLimit.reserve(name) {
+	if e.enabled() && system.ValidUsername(name) {
 		e.background(func() { p.sendResetLink(name, ip) })
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": forgotAnswer})
@@ -240,6 +240,9 @@ func (p *Portal) sendResetLink(name, ip string) {
 	e := p.email
 	contact, found := e.contacts.Get(name)
 	if !found || !contact.Confirmed || !p.userExists(name) {
+		return
+	}
+	if !e.userLimit.reserve(name) {
 		return
 	}
 	if !e.totalLimit.reserve("all") {
@@ -345,7 +348,7 @@ func (e *emailFlow) dropIfGone(user string, users system.Users) {
 const localSpecials = ".!#$%&'*+/=?^_`{|}~-"
 
 // An address is one plain ASCII mailbox, which is also what the mail service accepts.
-// It is stored as typed (after trimming) and compared in lower case.
+// It is stored as typed (after trimming) and compared case-insensitively.
 func validEmail(address string) bool {
 	if len(address) > maxEmailLength {
 		return false

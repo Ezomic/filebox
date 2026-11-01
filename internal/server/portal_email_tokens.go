@@ -43,7 +43,8 @@ func newLinkTokens() *linkTokens {
 	return &linkTokens{now: time.Now}
 }
 
-// issue replaces any earlier link of the same kind for the user, so each user has at most one live link per kind.
+// issue replaces an earlier confirmation link of the user. Reset links are kept side by side, so someone
+// asking for resets in a victim's name cannot kill the link already sitting in the victim's inbox; the send limits bound how many exist.
 func (l *linkTokens) issue(kind linkKind, user, email string, generation uint64, ttl time.Duration) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -56,7 +57,7 @@ func (l *linkTokens) issue(kind linkKind, user, email string, generation uint64,
 	now := l.now()
 	kept := l.items[:0]
 	for _, item := range l.items {
-		if now.Before(item.expires) && !(item.kind == kind && item.user == user) {
+		if now.Before(item.expires) && !(kind == kindConfirm && item.kind == kind && item.user == user) {
 			kept = append(kept, item)
 		}
 	}

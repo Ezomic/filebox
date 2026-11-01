@@ -851,3 +851,31 @@ func TestEmailEndpointsRefuseCrossOriginAndWrongMethods(t *testing.T) {
 		t.Fatalf("got %d", plainRec.Code)
 	}
 }
+
+func TestAnotherRequestDoesNotKillALinkAlreadyInTheInbox(t *testing.T) {
+	h := newEmailHarness(t)
+	h.confirmedAddress(t, "bob", "bob@example.com")
+	first := h.requestReset(t, "bob", "192.0.2.140")
+	h.requestReset(t, "bob", "192.0.2.141")
+
+	if rec := h.reset(first, resetToPassword, "192.0.2.142"); rec.Code != http.StatusNoContent {
+		t.Fatalf("an earlier link must keep working, got %d", rec.Code)
+	}
+}
+
+func TestOneRecipientCannotBeMailedWithoutLimitFromManyAccounts(t *testing.T) {
+	h := newEmailHarness(t)
+	for i := range emailUserSends + 2 {
+		name := fmt.Sprintf("user%02d", i)
+		h.spy.Passwords[name] = "x long password"
+		h.verifier.Passwords[name] = "x long password"
+		cookie := h.signedIn(t, name, "x long password")
+		rec := h.setAddress(cookie, "victim@example.com", "x long password")
+		if i < emailUserSends && rec.Code != http.StatusNoContent || i >= emailUserSends && rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("account %d got %d", i, rec.Code)
+		}
+	}
+	if got := len(h.mail.Sent()); got != emailUserSends {
+		t.Fatalf("got %d mails to one recipient, want %d", got, emailUserSends)
+	}
+}
