@@ -16,18 +16,31 @@ import (
 const (
 	amyPassword = "amy's long password"
 	bobPassword = "bob's long password"
+
+	cleoPassword = "cleo's long password"
 )
 
 type portalHarness struct {
 	portal   *Portal
 	verifier *system.FakeVerifier
+	roles    *auth.Store
+	spy      *spyUsers
 }
 
 func newPortalHarness(t *testing.T) *portalHarness {
 	t.Helper()
-	verifier := &system.FakeVerifier{Passwords: map[string]string{"amy": amyPassword, "bob": bobPassword}}
+	verifier := &system.FakeVerifier{Passwords: map[string]string{"amy": amyPassword, "bob": bobPassword, "cleo": cleoPassword}}
+	roles, err := auth.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := roles.Promote("amy"); err != nil {
+		t.Fatal(err)
+	}
+	spy := &spyUsers{FakeUsers: system.NewFakeUsers("amy", "bob", "cleo")}
+	portal := NewPortal(PortalDeps{Verifier: verifier, Users: spy, Roles: roles})
 
-	return &portalHarness{portal: NewPortal(PortalDeps{Verifier: verifier}), verifier: verifier}
+	return &portalHarness{portal: portal, verifier: verifier, roles: roles, spy: spy}
 }
 
 func (h *portalHarness) do(method, path, body, ip string, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -351,7 +364,8 @@ func TestPortalHasNoAdminRoutes(t *testing.T) {
 	cookie := h.signedIn(t, "amy", amyPassword)
 	for _, path := range []string{
 		"/users", "/files", "/logs", "/setup", "/api/users", "/api/metrics", "/api/disks",
-		"/api/logs", "/api/setup", "/api/system/reboot", "/static/auth.js", "/static/dashboard.js", "/static/users.js",
+		"/api/logs", "/api/setup", "/api/system/reboot", "/api/system/shutdown", "/api/system/restart-sshd",
+		"/api/portal", "/api/version", "/api/users/bob/role", "/static/auth.js", "/static/dashboard.js", "/static/users.js",
 	} {
 		for _, method := range []string{"GET", "POST", "PUT", "DELETE"} {
 			rec := h.do(method, path, "", "192.0.2.10", cookie)

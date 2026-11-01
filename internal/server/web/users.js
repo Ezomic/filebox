@@ -71,19 +71,32 @@ function render(users, usageReady) {
 function userRow(user, usageReady) {
   const row = el('tr');
   const actions = el('td', undefined, 'row-actions');
-  row.append(el('td', user.name, 'name'), el('td', usageText(user, usageReady), 'detail'), actions);
-  showActions(actions, user.name);
+  const name = el('td', user.name, 'name');
+  if (user.admin) name.append(el('span', 'Admin', 'badge'));
+  row.append(name, el('td', usageText(user, usageReady), 'detail'), actions);
+  showActions(actions, user.name, user.admin);
   return row;
 }
 
-function showActions(cell, name) {
+async function setRole(name, role) {
+  try {
+    await api('PUT', `/api/users/${encodeURIComponent(name)}/role`, { role });
+    showError('');
+    await load();
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function showActions(cell, name, admin) {
   cell.replaceChildren(
-    button('Change password', () => showPasswordForm(cell, name), 'link'),
-    button('Delete', () => showDeleteConfirm(cell, name), 'link danger'),
+    button('Change password', () => showPasswordForm(cell, name, admin), 'link'),
+    button(admin ? 'Remove admin' : 'Make admin', () => setRole(name, admin ? 'user' : 'admin'), 'link'),
+    button('Delete', () => showDeleteConfirm(cell, name, admin), 'link danger'),
   );
 }
 
-function showPasswordForm(cell, name) {
+function showPasswordForm(cell, name, admin) {
   const input = el('input');
   input.type = 'password';
   input.minLength = 12;
@@ -96,7 +109,7 @@ function showPasswordForm(cell, name) {
   const message = el('span', undefined, 'error');
   const save = el('button', 'Save');
   save.type = 'submit';
-  form.append(input, save, button('Cancel', () => showActions(cell, name), 'link'), message);
+  form.append(input, save, button('Cancel', () => showActions(cell, name, admin), 'link'), message);
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -104,7 +117,7 @@ function showPasswordForm(cell, name) {
     try {
       await api('PUT', `/api/users/${encodeURIComponent(name)}/password`, { password: input.value });
       input.value = '';
-      showActions(cell, name);
+      showActions(cell, name, admin);
       showError('');
     } catch (error) {
       message.textContent = error.message;
@@ -116,7 +129,7 @@ function showPasswordForm(cell, name) {
   input.focus();
 }
 
-function showDeleteConfirm(cell, name) {
+function showDeleteConfirm(cell, name, admin) {
   const message = el('span', undefined, 'error');
   cell.replaceChildren(
     el('span', `This deletes the account ${name}. It cannot be undone.`, 'error'),
@@ -128,7 +141,7 @@ function showDeleteConfirm(cell, name) {
         message.textContent = error.message;
       }
     }, 'danger-solid'),
-    button('Cancel', () => showActions(cell, name), 'link'),
+    button('Cancel', () => showActions(cell, name, admin), 'link'),
     message,
   );
 }

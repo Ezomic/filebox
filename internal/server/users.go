@@ -11,6 +11,11 @@ import (
 type userEntry struct {
 	Name  string  `json:"name"`
 	Bytes *uint64 `json:"bytes"`
+	Admin bool    `json:"admin"`
+}
+
+type roleRequest struct {
+	Role string `json:"role"`
 }
 
 type newUser struct {
@@ -40,7 +45,7 @@ func (s *Server) listUsers(w http.ResponseWriter, _ *http.Request) {
 	sizes, ready := s.usage.Sizes()
 	entries := make([]userEntry, 0, len(names))
 	for _, name := range names {
-		entry := userEntry{Name: name}
+		entry := userEntry{Name: name, Admin: s.store.IsAdmin(name)}
 		if size, ok := sizes[name]; ready && ok {
 			entry.Bytes = &size
 		}
@@ -60,6 +65,11 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	case exists:
 		writeError(w, http.StatusConflict, "a user with that name already exists")
 	default:
+		if err := s.store.Demote(body.Name); err != nil {
+			log.Printf("clear role of %q: %v", body.Name, err)
+			writeError(w, http.StatusInternalServerError, "could not create the user")
+			return
+		}
 		if err := s.users.Create(body.Name, body.Password); err != nil {
 			log.Printf("create user %q: %v", body.Name, err)
 			writeError(w, http.StatusInternalServerError, "could not create the user")
@@ -107,7 +117,41 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not delete the user")
 			return
 		}
+		if err := s.store.Demote(name); err != nil {
+			log.Printf("clear role of %q: %v", name, err)
+		}
 		s.endUserSessions(name)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// The owner can demote the last admin, which is how an account with no admin left gets recovered.
+func (s *Server) setUserRole(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var body roleRequest
+	if !validName(w, name) || !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Role != roleUser && body.Role != roleAdmin {
+		writeError(w, http.StatusUnprocessableEntity, "role must be user or admin")
+		return
+	}
+
+	switch exists, ok := s.userExists(w, name); {
+	case !ok:
+	case !exists:
+		writeError(w, http.StatusNotFound, "no such user")
+	default:
+		action, err := "promote", s.store.Promote(name)
+		if body.Role == roleUser {
+			action, err = "demote", s.store.Demote(name)
+		}
+		if err != nil {
+			log.Printf("%s %q: %v", action, name, err)
+			writeError(w, http.StatusInternalServerError, "could not change the role")
+			return
+		}
+		log.Printf("panel: owner %s target=%s", action, logName(name))
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -119,7 +163,11 @@ func (s *Server) endUserSessions(name string) {
 }
 
 func (s *Server) userExists(w http.ResponseWriter, name string) (exists, ok bool) {
-	names, err := s.users.List()
+	return userExists(w, s.users, name)
+}
+
+func userExists(w http.ResponseWriter, users system.Users, name string) (exists, ok bool) {
+	names, err := users.List()
 	if err != nil {
 		log.Printf("list users: %v", err)
 		writeError(w, http.StatusInternalServerError, "could not list users")

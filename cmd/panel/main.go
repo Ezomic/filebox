@@ -64,6 +64,7 @@ func main() {
 	portal := server.NewPortal(server.PortalDeps{
 		Verifier:  system.NewVerifier(),
 		Users:     users,
+		Roles:     store,
 		OpenFiles: system.UserFilesOpener(*filesDir),
 		MaxUpload: *maxUpload,
 		Thumbs:    thumbs,
