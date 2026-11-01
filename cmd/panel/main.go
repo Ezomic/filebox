@@ -34,6 +34,8 @@ func main() {
 	portalListen := flag.String("portal-listen", "", "address for the public user portal, empty to disable it")
 	portalCert := flag.String("portal-cert", "", "PEM certificate for the portal")
 	portalKey := flag.String("portal-key", "", "PEM private key for the portal")
+	streamboxURL := flag.String("streambox-url", "", "loopback URL of the streambox add-on, empty when it is not installed")
+	streamboxEnv := flag.String("streambox-env", "/etc/streambox/streambox.env", "streambox settings file with its tokens")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -59,12 +61,24 @@ func main() {
 		log.Fatalf("prepare certificate: %v", err)
 	}
 
+	var tv *server.TV
+	if *streamboxURL != "" {
+		// A broken add-on must never take the admin panel down with it.
+		if tv, err = server.NewTV(*streamboxURL, *streamboxEnv); err != nil {
+			log.Printf("streambox add-on disabled: %v", err)
+			tv = nil
+		} else {
+			log.Printf("streambox add-on enabled at %s", *streamboxURL)
+		}
+	}
+
 	users := system.NewUsers()
 	portal := server.NewPortal(server.PortalDeps{
 		Verifier:  system.NewVerifier(),
 		Users:     users,
 		OpenFiles: system.UserFilesOpener(*filesDir),
 		MaxUpload: *maxUpload,
+		TV:        tv,
 	})
 
 	deps := server.Deps{
@@ -81,6 +95,7 @@ func main() {
 
 		OnUserChanged: portal.EndSessions,
 		Version:       version,
+		TV:            tv,
 	}
 	var portalCerts *tlsutil.Reloader
 	if *portalListen != "" {

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TV</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <header class="bar">
+      <h1>TV</h1>
+      <nav class="actions">
+        <a class="link" href="/">Your files</a>
+        <button class="link" id="logout" type="button">Sign out</button>
+      </nav>
+    </header>
+    <p class="error" id="status" role="status"></p>
+    <section class="card stacked">
+      <div class="label">Playlist link</div>
+      <p class="detail">Add this link as an M3U playlist in an IPTV app such as VLC, Kodi or TiviMate. The program guide is included automatically.</p>
+      <div class="toolbar">
+        <input type="text" id="playlist" readonly aria-label="Playlist link" spellcheck="false">
+        <button type="button" id="copy">Copy</button>
+      </div>
+      <p class="detail">Anyone with this link can watch, so do not share it outside the family.</p>
+    </section>
+  </main>
+  <script src="/static/tv.js"></script>
+</body>
+</html>

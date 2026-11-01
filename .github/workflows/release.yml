@@ -24,7 +24,7 @@ jobs:
         run: |
           go build -trimpath -ldflags "-s -w -X main.version=$GITHUB_REF_NAME" -o filebox-panel ./cmd/panel
           sha256sum filebox-panel > filebox-panel.sha256
-          tar -czf deploy.tar.gz deploy
+          tar -czf deploy.tar.gz --exclude=deploy/test deploy
           sha256sum deploy.tar.gz > deploy.tar.gz.sha256
       - name: Publish release
         env:

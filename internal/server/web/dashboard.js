@@ -185,3 +185,14 @@ async function refreshDisks() {
 
 refreshDisks();
 setInterval(refreshDisks, DISK_REFRESH_MS);
+
+async function showTvLink() {
+  try {
+    const response = await fetch('/api/tv');
+    if (response.ok && (await response.json()).enabled) byId('tv-link').hidden = false;
+  } catch {
+    // the link simply stays hidden
+  }
+}
+
+showTvLink();

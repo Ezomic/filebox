@@ -32,6 +32,8 @@ type PortalDeps struct {
 	// OpenFiles returns a Files confined to that user's own folder; it is closed after each request.
 	OpenFiles func(user string) (system.Files, error)
 	MaxUpload int64
+	// TV is the streambox add-on; nil when it is not installed.
+	TV *TV
 }
 
 // Portal is the public, per-user web interface. It is a separate handler from the admin
@@ -48,6 +50,8 @@ type Portal struct {
 	verifyWait time.Duration
 	pages      fs.FS
 	mux        *http.ServeMux
+	tv         *TV
+	tvLimit    *loginLimiter
 }
 
 func NewPortal(deps PortalDeps) *Portal {
@@ -71,6 +75,8 @@ func NewPortal(deps PortalDeps) *Portal {
 		verifying:  make(chan struct{}, portalMaxVerifying),
 		verifyWait: portalVerifyWait,
 		pages:      pages,
+		tv:         deps.TV,
+		tvLimit:    newLoginLimiter(tvIPFails, failWindow),
 	}
 
 	p.mux = http.NewServeMux()
@@ -99,6 +105,13 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.HandleFunc("DELETE /api/trash", p.fileRoute(fileHandlers.emptyTrash))
 	p.mux.HandleFunc("POST /api/trash/{id}/restore", p.fileRoute(fileHandlers.restoreTrash))
 	p.mux.HandleFunc("DELETE /api/trash/{id}", p.fileRoute(fileHandlers.purgeTrash))
+	p.mux.HandleFunc("GET /api/tv", p.requireSession(p.tvInfo))
+	if p.tv != nil {
+		p.mux.HandleFunc("GET /tv", p.tvPage)
+		p.mux.HandleFunc("GET /tv/s/{token}/playlist.m3u", p.tvPlaylist)
+		p.mux.HandleFunc("GET /tv/s/{token}/epg.xml", p.tvGuide)
+		p.mux.HandleFunc("GET /tv/s/{token}/hls/{id}/{file}", p.tvSegment)
+	}
 	p.mux.HandleFunc("POST /api/uploads", p.fileRoute(fileHandlers.createUpload))
 	p.mux.HandleFunc("GET /api/uploads/{id}", p.fileRoute(fileHandlers.uploadStatus))
 	p.mux.HandleFunc("PUT /api/uploads/{id}", p.fileRoute(fileHandlers.appendChunk))
