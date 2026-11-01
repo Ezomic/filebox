@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -113,6 +114,8 @@ type photoJSON struct {
 	Kind string    `json:"kind"`
 	Size int64     `json:"size"`
 	Date time.Time `json:"date"`
+	// Custom tells the page the date was chosen by the user, so it can offer to reset it.
+	Custom bool `json:"custom"`
 }
 
 func (a fileHandlers) listPhotos(w http.ResponseWriter, r *http.Request) {
@@ -124,16 +127,77 @@ func (a fileHandlers) listPhotos(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	page, err := a.files.ListPhotos(after, limit)
+	kind, ok := photoType(w, r)
+	if !ok {
+		return
+	}
+	page, err := a.files.ListPhotos(after, limit, kind)
 	if err != nil {
 		fileError(w, "list photos", after, err)
 		return
 	}
 	photos := make([]photoJSON, 0, len(page.Photos))
 	for _, photo := range page.Photos {
-		photos = append(photos, photoJSON{Path: photo.Path, Kind: photo.Kind, Size: photo.Size, Date: photo.Date.UTC()})
+		photos = append(photos, photoJSON{Path: photo.Path, Kind: photo.Kind, Size: photo.Size, Date: photo.Date.UTC(), Custom: photo.Custom})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"photos": photos, "next": page.Next})
+}
+
+// photoType is filtered by the server so a page holds the requested number of matching photos and the cursor stays exact.
+func photoType(w http.ResponseWriter, r *http.Request) (string, bool) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	values := query["type"]
+	if err != nil || len(values) > 1 || (len(values) == 1 && values[0] != "" && values[0] != system.PhotoImage && values[0] != system.PhotoVideo) {
+		writeError(w, http.StatusBadRequest, "type must be image or video")
+		return "", false
+	}
+	if len(values) == 0 {
+		return "", true
+	}
+
+	return values[0], true
+}
+
+type photoDateBody struct {
+	Path string `json:"path"`
+	Date string `json:"date"`
+}
+
+func (a fileHandlers) setPhotoDate(w http.ResponseWriter, r *http.Request) {
+	var body photoDateBody
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	day, err := system.ParsePhotoDay(body.Date)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "date must be a day like 2024-05-17, from 1900 up to tomorrow")
+		return
+	}
+	if err := a.files.SetPhotoDate(body.Path, day); err != nil {
+		photoDateError(w, "set photo date", body.Path, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a fileHandlers) resetPhotoDate(w http.ResponseWriter, r *http.Request) {
+	name, ok := queryValue(w, r, "path")
+	if !ok {
+		return
+	}
+	if err := a.files.ResetPhotoDate(name); err != nil {
+		photoDateError(w, "reset photo date", name, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func photoDateError(w http.ResponseWriter, action, name string, err error) {
+	if errors.Is(err, system.ErrNotMedia) {
+		writeError(w, http.StatusUnsupportedMediaType, "only photos and videos have a date")
+		return
+	}
+	fileError(w, action, name, err)
 }
 
 func photoLimit(w http.ResponseWriter, r *http.Request) (int, bool) {

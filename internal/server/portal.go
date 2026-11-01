@@ -108,6 +108,8 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.HandleFunc("GET /api/files/view", p.fileRoute(fileHandlers.viewFile))
 	p.mux.HandleFunc("GET /photos", p.photosPage)
 	p.mux.HandleFunc("GET /api/files/photos", p.fileRoute(fileHandlers.listPhotos))
+	p.mux.HandleFunc("PUT /api/files/photo-date", p.fileRoute(fileHandlers.setPhotoDate))
+	p.mux.HandleFunc("DELETE /api/files/photo-date", p.fileRoute(fileHandlers.resetPhotoDate))
 	p.mux.HandleFunc("GET /api/files/thumb", p.fileRoute(fileHandlers.thumbFile))
 	p.mux.HandleFunc("GET /api/files/preview", p.fileRoute(fileHandlers.previewFile))
 	p.mux.HandleFunc("PUT /api/files/content", p.fileRoute(fileHandlers.uploadFile))

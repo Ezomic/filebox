@@ -6,7 +6,10 @@ import (
 	"time"
 )
 
-func (f *FakeFiles) ListPhotos(after string, limit int) (PhotoPage, error) {
+func (f *FakeFiles) ListPhotos(after string, limit int, kind string) (PhotoPage, error) {
+	if !validPhotoKind(kind) {
+		return PhotoPage{}, ErrInvalidPath
+	}
 	if after != "" {
 		if _, _, err := parsePhotoCursor(after); err != nil {
 			return PhotoPage{}, err
@@ -19,9 +22,45 @@ func (f *FakeFiles) ListPhotos(after string, limit int) (PhotoPage, error) {
 			photos = append(photos, photo)
 		}
 	}
+	applyCustomDates(photos, f.customDates)
 	f.mu.Unlock()
 
-	return pagePhotos(photos, after, limit)
+	return pagePhotos(filterKind(photos, kind), after, limit)
+}
+
+func (f *FakeFiles) SetPhotoDate(name string, when time.Time) error {
+	day, err := customDay(when)
+	if err != nil {
+		return err
+	}
+	file, photo, err := f.OpenPhoto(name)
+	if err != nil {
+		return err
+	}
+	_ = file.Close()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.customDates == nil {
+		f.customDates = map[string]string{}
+	}
+	f.customDates[photo.Key] = day.Format(customDayLayout)
+
+	return nil
+}
+
+func (f *FakeFiles) ResetPhotoDate(name string) error {
+	file, photo, err := f.OpenPhoto(name)
+	if err != nil {
+		return err
+	}
+	_ = file.Close()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	delete(f.customDates, photo.Key)
+
+	return nil
 }
 
 func (f *FakeFiles) photoOf(name string, entry *memoryEntry) (Photo, bool) {
@@ -133,6 +172,7 @@ func (f *FakeFiles) SweepThumbs(time.Time) (int, error) {
 			live[photo.Key] = true
 		}
 	}
+	pruneCustomDates(f.customDates, live)
 	removed := 0
 	for name := range f.thumbs {
 		if key, _ := thumbKeyOf(name); !live[key] {

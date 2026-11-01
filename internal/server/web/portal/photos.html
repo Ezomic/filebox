@@ -20,6 +20,34 @@
     </header>
     <p class="error" id="status" role="status"></p>
     <section class="card">
+      <div class="filters">
+        <div class="type-filter" id="type-filter" role="group" aria-label="Show">
+          <button class="link" type="button" data-type="" aria-pressed="true">All</button>
+          <button class="link" type="button" data-type="image" aria-pressed="false">Photos</button>
+          <button class="link" type="button" data-type="video" aria-pressed="false">Videos</button>
+        </div>
+        <form class="jump" id="jump">
+          <label for="jump-year">Jump to</label>
+          <input id="jump-year" type="number" inputmode="numeric" min="1900" max="9999" placeholder="Year" required>
+          <select id="jump-month" aria-label="Month">
+            <option value="">Whole year</option>
+            <option value="01">January</option>
+            <option value="02">February</option>
+            <option value="03">March</option>
+            <option value="04">April</option>
+            <option value="05">May</option>
+            <option value="06">June</option>
+            <option value="07">July</option>
+            <option value="08">August</option>
+            <option value="09">September</option>
+            <option value="10">October</option>
+            <option value="11">November</option>
+            <option value="12">December</option>
+          </select>
+          <button id="jump-go" type="submit">Go</button>
+        </form>
+        <p class="detail" id="jump-note" role="status"></p>
+      </div>
       <p class="detail" id="summary"></p>
       <div id="photo-groups"></div>
       <p class="detail" id="empty" hidden>No photos or videos here yet.</p>

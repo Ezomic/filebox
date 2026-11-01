@@ -105,7 +105,8 @@ type photoListing struct {
 		Path string    `json:"path"`
 		Kind string    `json:"kind"`
 		Size int64     `json:"size"`
-		Date time.Time `json:"date"`
+		Date   time.Time `json:"date"`
+		Custom bool      `json:"custom"`
 	} `json:"photos"`
 	Next string `json:"next"`
 }

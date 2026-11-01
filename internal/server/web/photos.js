@@ -5,6 +5,12 @@ const sentinel = byId('sentinel');
 const summary = byId('summary');
 const emptyNote = byId('empty');
 const userSelect = byId('photos-user');
+const typeButtons = byId('type-filter');
+const jumpForm = byId('jump');
+const jumpYear = byId('jump-year');
+const jumpMonth = byId('jump-month');
+const jumpGo = byId('jump-go');
+const jumpNote = byId('jump-note') || document.createElement('p');
 
 const PAGE_SIZE = 200;
 const LOAD_PARALLEL = 4;
@@ -18,9 +24,23 @@ let loadingPage = false;
 let generation = 0;
 let lastGroup = null;
 let lastMonth = '';
+let inflight = null;
+let typeFilter = '';
 
-async function api(method, path) {
-  const response = await fetch(path, { method });
+try {
+  typeFilter = sessionStorage.getItem('photos.type') || '';
+} catch (error) {
+  typeFilter = '';
+}
+if (!['', 'image', 'video'].includes(typeFilter)) typeFilter = '';
+
+async function api(method, path, payload) {
+  const options = { method };
+  if (payload !== undefined) {
+    options.headers = { 'Content-Type': 'application/json' };
+    options.body = JSON.stringify(payload);
+  }
+  const response = await fetch(path, options);
   if (response.status === 401) {
     window.location.href = '/login';
     throw new Error('signed out');
@@ -69,7 +89,7 @@ function nameOf(path) {
 }
 
 function toItem(photo) {
-  return viewItem(photo.path, nameOf(photo.path), photo.size, userQuery());
+  return { ...viewItem(photo.path, nameOf(photo.path), photo.size, userQuery()), date: photo.date.slice(0, 10), custom: photo.custom };
 }
 
 const undoBar = el('p', undefined, 'notice');
@@ -195,6 +215,7 @@ function addPhotos(batch) {
     if (monthKey(photo) !== lastMonth || lastGroup === null) {
       lastMonth = monthKey(photo);
       const section = el('section', undefined, 'month');
+      section.dataset.month = lastMonth;
       section.append(el('h2', monthLabel(photo)));
       lastGroup = el('div', undefined, 'photo-grid');
       section.append(lastGroup);
@@ -215,16 +236,26 @@ function updateSummary() {
     if (videos > 0) parts.push(`${videos} ${videos === 1 ? 'video' : 'videos'}`);
     summary.textContent = `${parts.join(' and ')}${nextCursor === '' ? '' : ' so far'}, newest first.`;
   }
+  emptyNote.textContent = typeFilter === '' ? 'No photos or videos here yet.' : `No ${typeFilter === 'video' ? 'videos' : 'photos'} here yet.`;
   emptyNote.hidden = total > 0 || nextCursor !== '' || loadingPage;
 }
 
-async function loadPage() {
-  if (loadingPage) return;
+function loadPage() {
+  if (inflight) return inflight;
+  const request = fetchPage().finally(() => {
+    if (inflight === request) inflight = null;
+  });
+  inflight = request;
+  return request;
+}
+
+async function fetchPage() {
   loadingPage = true;
   const mine = generation;
   try {
     const after = nextCursor === '' ? '' : `&after=${encodeURIComponent(nextCursor)}`;
-    const body = await api('GET', `/api/files/photos?limit=${PAGE_SIZE}${after}${userQuery()}`);
+    const type = typeFilter === '' ? '' : `&type=${typeFilter}`;
+    const body = await api('GET', `/api/files/photos?limit=${PAGE_SIZE}${after}${type}${userQuery()}`);
     if (mine !== generation) return;
     showError('');
     nextCursor = body.next;
@@ -268,8 +299,10 @@ function reset() {
   loadingPage = false;
   lastGroup = null;
   lastMonth = '';
+  inflight = null;
   pending.length = 0;
   groups.replaceChildren();
+  jumpNote.textContent = '';
   closeViewer();
 }
 
@@ -279,12 +312,108 @@ async function load() {
 }
 
 function openGallery(photo, opener) {
-  openViewer(photos.map(toItem), photos.indexOf(photo), opener, {
+  const options = {
     onRemove: (item, index) => deletePhoto(photos[index]),
     loadMore: () => {
       if (nextCursor !== '') loadPage();
     },
+  };
+  if (!userSelect) {
+    options.onSetDate = (item, index, day) => changeDate(photos[index], 'PUT', day);
+    options.onResetDate = (item, index) => changeDate(photos[index], 'DELETE');
+  }
+  openViewer(photos.map(toItem), photos.indexOf(photo), opener, options);
+}
+
+async function loadUntil(done) {
+  const mine = generation;
+  if (inflight) await inflight;
+  if (mine !== generation) return false;
+  while (!done() && nextCursor !== '') {
+    await loadPage();
+    if (mine !== generation) return false;
+  }
+  return mine === generation;
+}
+
+function showTile(photo) {
+  const node = photo.tile.node;
+  node.scrollIntoView({ block: 'center' });
+  node.classList.add('found');
+  setTimeout(() => node.classList.remove('found'), 2500);
+}
+
+async function changeDate(photo, method, day) {
+  const path = '/api/files/photo-date';
+  if (method === 'PUT') {
+    await api('PUT', path, { path: photo.path, date: day });
+  } else {
+    await api('DELETE', `${path}?path=${encodeURIComponent(photo.path)}`);
+  }
+  const target = photo.path;
+  await load();
+  const found = await loadUntil(() => seen.has(target));
+  if (!found) return;
+  const moved = photos.find((candidate) => candidate.path === target);
+  if (!moved) return;
+  showTile(moved);
+  jumpNote.textContent = method === 'PUT' ? `Date changed to ${dayLabel(moved)}.` : 'Date reset to the original.';
+}
+
+function dayLabel(photo) {
+  return new Date(photo.date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+function setType(type) {
+  typeFilter = type;
+  try {
+    sessionStorage.setItem('photos.type', type);
+  } catch (error) {
+    // The choice then only lasts until the next filter change.
+  }
+  markType();
+  hideUndo();
+  load();
+}
+
+function markType() {
+  typeButtons.querySelectorAll('button').forEach((node) => {
+    node.setAttribute('aria-pressed', String(node.dataset.type === typeFilter));
   });
+}
+
+function sectionFor(target) {
+  const sections = [...groups.querySelectorAll('.month')];
+  return sections.find((section) => section.dataset.month <= target) || sections[sections.length - 1];
+}
+
+async function jump(year, month) {
+  if (!/^\d{4}$/.test(year) || Number(year) < 1900) {
+    jumpNote.textContent = 'Enter a year from 1900 to 9999.';
+    return;
+  }
+  const target = `${year}-${month === '' ? '12' : month}`;
+  jumpGo.disabled = true;
+  jumpNote.textContent = 'Looking...';
+  const reached = await loadUntil(() => photos.length > 0 && monthKey(photos[photos.length - 1]) <= target);
+  jumpGo.disabled = false;
+  if (!reached) return;
+  const section = sectionFor(target);
+  if (!section) {
+    jumpNote.textContent = 'There is nothing to jump to yet.';
+    return;
+  }
+  const exact = month === '' ? section.dataset.month.startsWith(year) : section.dataset.month === target;
+  const label = month === '' ? year : `${jumpMonth.selectedOptions[0].textContent} ${year}`;
+  const oldest = nextCursor === '' && section === groups.querySelector('.month:last-child') && section.dataset.month > target;
+  if (exact) {
+    jumpNote.textContent = '';
+  } else if (oldest) {
+    jumpNote.textContent = `Nothing from ${label} or earlier, showing the oldest.`;
+  } else {
+    jumpNote.textContent = `Nothing from ${label}, showing the closest earlier month.`;
+  }
+  section.scrollIntoView({ block: 'start' });
 }
 
 function dropPhoto(photo) {
@@ -351,6 +480,18 @@ if (userSelect) {
   });
   loadUsers().catch((error) => {
     if (error.message !== 'signed out') showError(error.message);
+  });
+}
+if (typeButtons && jumpForm) {
+  markType();
+  typeButtons.querySelectorAll('button').forEach((node) => {
+    node.addEventListener('click', () => {
+      if (node.dataset.type !== typeFilter) setType(node.dataset.type);
+    });
+  });
+  jumpForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    jump(jumpYear.value.trim(), jumpMonth.value);
   });
 }
 load();
