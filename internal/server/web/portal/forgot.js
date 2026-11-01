@@ -23,7 +23,7 @@ form.addEventListener('submit', async (event) => {
     const response = await fetch('/api/forgot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: document.getElementById('username').value.trim() }),
+      body: JSON.stringify({ username: document.getElementById('username').value.trim(), lang: i18n.lang() }),
     });
     const body = await response.json().catch(() => ({}));
     if (response.ok) {

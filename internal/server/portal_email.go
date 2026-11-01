@@ -131,6 +131,7 @@ func (p *Portal) myEmail(w http.ResponseWriter, _ *http.Request, user string) {
 type emailChange struct {
 	Email   string `json:"email"`
 	Current string `json:"current"`
+	Lang    any    `json:"lang"`
 }
 
 func (p *Portal) setMyEmail(w http.ResponseWriter, r *http.Request, user string) {
@@ -175,10 +176,8 @@ func (p *Portal) setMyEmail(w http.ResponseWriter, r *http.Request, user string)
 		writeCoded(w, http.StatusInternalServerError, codeConfirmStartFailed, "could not start the confirmation")
 		return
 	}
-	text := "Hello,\n\nYou asked to use this address for password resets of the Filebox account \"" + user +
-		"\". Open this link within one hour to confirm it:\n\n" + e.portalURL + "/confirm-email#" + token +
-		"\n\nThe link works once. If you did not ask for this, ignore this email and nothing changes.\n"
-	if err := p.sendMail(r.Context(), address, "Confirm your email address for Filebox", text); err != nil {
+	message := chosenMailLang(body.Lang).confirmation(user, e.portalURL+"/confirm-email#"+token)
+	if err := p.sendMail(r.Context(), address, message.subject, message.body); err != nil {
 		log.Printf("portal: confirmation email for %s not sent: %v", logName(user), err)
 		writeCoded(w, http.StatusServiceUnavailable, codeEmailSendFailed, "could not send the email right now, try again later")
 		return
@@ -218,6 +217,7 @@ func (p *Portal) confirmEmail(w http.ResponseWriter, r *http.Request) {
 
 type forgotBody struct {
 	Username string `json:"username"`
+	Lang     any    `json:"lang"`
 }
 
 // The answer is the same for every username and is written before any lookup or mail, so it reveals
@@ -236,13 +236,14 @@ func (p *Portal) forgot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := body.Username
+	lang := chosenMailLang(body.Lang)
 	if e.enabled() && system.ValidUsername(name) {
-		e.background(func() { p.sendResetLink(name, ip) })
+		e.background(func() { p.sendResetLink(name, ip, lang) })
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": forgotAnswer, "code": codeResetLinkSent})
 }
 
-func (p *Portal) sendResetLink(name, ip string) {
+func (p *Portal) sendResetLink(name, ip string, lang mailLang) {
 	e := p.email
 	contact, found := e.contacts.Get(name)
 	if !found || !contact.Confirmed || !p.userExists(name) {
@@ -261,12 +262,10 @@ func (p *Portal) sendResetLink(name, ip string) {
 		log.Printf("portal: reset link for %s: %v", logName(name), err)
 		return
 	}
-	text := "Hello,\n\nSomeone asked to reset the password of the Filebox account \"" + name +
-		"\". Open this link within 30 minutes to choose a new password:\n\n" + e.portalURL + "/reset#" + token +
-		"\n\nThe link works once. If you did not ask for this, ignore this email and your password stays as it is.\n"
+	message := lang.reset(name, e.portalURL+"/reset#"+token)
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
-	if err := e.mail.Send(ctx, contact.Email, "Reset your Filebox password", text); err != nil {
+	if err := e.mail.Send(ctx, contact.Email, message.subject, message.body); err != nil {
 		log.Printf("portal: reset email for %s not sent: %v", logName(name), err)
 		return
 	}

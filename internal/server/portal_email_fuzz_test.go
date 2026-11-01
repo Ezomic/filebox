@@ -8,7 +8,7 @@ import (
 
 func FuzzPortalEmailRequests(f *testing.F) {
 	for _, seed := range []string{
-		`{"username":"bob"}`, `{"username":"nobody"}`, `{"username":1}`, `{}`, ``, `[`, `{"username":"bob\nBcc: x@example.com"}`,
+		`{"username":"bob"}`, `{"username":"bob","lang":"nl"}`, `{"email":"bob@example.com","lang":["nl"]}`, `{"username":"bob","lang":"nl\r\nBcc: x@example.com"}`, `{"username":"nobody"}`, `{"username":1}`, `{}`, ``, `[`, `{"username":"bob\nBcc: x@example.com"}`,
 		`{"token":"` + strings.Repeat("A", 43) + `","password":"` + resetToPassword + `"}`,
 		`{"token":"","password":""}`, `{"token":1}`, `{"email":"a@b.co","current":"` + bobPassword + `"}`,
 		`{"email":"a@b.co\r\nBcc: x@example.com","current":"` + bobPassword + `"}`, `{"email":"a@b@c.co","current":"x"}`,
