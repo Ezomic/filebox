@@ -51,6 +51,7 @@ func newFamilyHarness(t *testing.T) *familyHarness {
 		OpenFamily: func() (system.Files, error) { return system.OpenFamilyFiles(base) },
 		MaxUpload:  1 << 20,
 		Disk:       disk,
+		Thumbs:     NewThumbs(system.NewFakeThumbnailer()),
 	})
 	h := &familyHarness{
 		portalFilesHarness: &portalFilesHarness{portalHarness: &portalHarness{portal: portal, verifier: verifier, roles: roles}, base: base, users: users},
