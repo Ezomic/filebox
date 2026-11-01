@@ -14,6 +14,8 @@
         <a class="link" href="/">Dashboard</a>
         <a class="link" href="/users">Users</a>
         <a class="link" href="/files" aria-current="page">Files</a>
+        <a class="link" href="/photos">Photos</a>
+        <a class="link" href="/trash">Trash</a>
         <a class="link" href="/logs">Logs</a>
         <button class="link" id="logout" type="button">Sign out</button>
       </nav>
@@ -29,8 +31,8 @@
     <section class="card stacked">
       <div class="label">Upload to this folder</div>
       <div class="toolbar">
-        <label class="picker">Files <input type="file" id="upload-input" multiple></label>
-        <label class="picker">A folder <input type="file" id="upload-folder" webkitdirectory></label>
+        <label class="picker">Choose files <input type="file" id="upload-input" multiple></label>
+        <label class="picker">Choose folder <input type="file" id="upload-folder" webkitdirectory></label>
       </div>
       <div class="dropzone" id="drop-zone">Or drop files and folders here</div>
       <div class="preview" id="preview" hidden>
@@ -65,6 +67,7 @@
       <p class="error" id="folder-error" role="alert"></p>
     </form>
   </main>
+  <script src="/static/viewer.js"></script>
   <script src="/static/files.js"></script>
 </body>
 </html>

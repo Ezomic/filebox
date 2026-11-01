@@ -34,6 +34,8 @@ type PortalDeps struct {
 	// OpenFiles returns a Files confined to that user's own folder; it is closed after each request.
 	OpenFiles func(user string) (system.Files, error)
 	MaxUpload int64
+	// Thumbs makes photo thumbnails; nil turns the thumbnail routes into a 503.
+	Thumbs *Thumbs
 }
 
 // Portal is the public, per-user web interface. It is a separate handler from the admin
@@ -44,6 +46,7 @@ type Portal struct {
 	roles      Roles
 	openFiles  func(user string) (system.Files, error)
 	maxUpload  int64
+	thumbs     *Thumbs
 	sessions   *userSessions
 	ipLimit    *loginLimiter
 	userLimit  *loginLimiter
@@ -69,6 +72,7 @@ func NewPortal(deps PortalDeps) *Portal {
 		roles:      deps.Roles,
 		openFiles:  deps.OpenFiles,
 		maxUpload:  deps.MaxUpload,
+		thumbs:     deps.Thumbs,
 		sessions:   newUserSessions(portalIdleTTL, portalAbsoluteTTL),
 		ipLimit:    newLoginLimiter(portalIPFails, failWindow),
 		userLimit:  newLoginLimiter(portalUserFails, failWindow),
@@ -80,6 +84,9 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux = http.NewServeMux()
 	p.mux.Handle("GET /static/style.css", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/files.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
+	p.mux.Handle("GET /static/trash.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
+	p.mux.Handle("GET /static/viewer.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
+	p.mux.Handle("GET /static/photos.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(p.pages))))
 	p.mux.HandleFunc("/", p.notFound)
 	p.mux.HandleFunc("GET /{$}", p.homePage)
@@ -99,11 +106,20 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.HandleFunc("DELETE /api/files", p.fileRoute(fileHandlers.deleteFile))
 	p.mux.HandleFunc("GET /api/files/download", p.fileRoute(fileHandlers.downloadFile))
 	p.mux.HandleFunc("GET /api/files/view", p.fileRoute(fileHandlers.viewFile))
+	p.mux.HandleFunc("GET /photos", p.photosPage)
+	p.mux.HandleFunc("GET /api/files/photos", p.fileRoute(fileHandlers.listPhotos))
+	p.mux.HandleFunc("GET /api/files/thumb", p.fileRoute(fileHandlers.thumbFile))
+	p.mux.HandleFunc("GET /api/files/preview", p.fileRoute(fileHandlers.previewFile))
 	p.mux.HandleFunc("PUT /api/files/content", p.fileRoute(fileHandlers.uploadFile))
 	p.mux.HandleFunc("POST /api/files/folder", p.fileRoute(fileHandlers.createFolder))
 	p.mux.HandleFunc("POST /api/files/rename", p.fileRoute(fileHandlers.renameFile))
 	p.mux.HandleFunc("POST /api/files/exists", p.fileRoute(fileHandlers.checkExists))
 	p.mux.HandleFunc("GET /api/files/zip", p.fileRoute(fileHandlers.downloadZip))
+	p.mux.HandleFunc("GET /trash", p.trashPage)
+	p.mux.HandleFunc("GET /api/trash", p.fileRoute(fileHandlers.listTrash))
+	p.mux.HandleFunc("DELETE /api/trash", p.fileRoute(fileHandlers.emptyTrash))
+	p.mux.HandleFunc("POST /api/trash/{id}/restore", p.fileRoute(fileHandlers.restoreTrash))
+	p.mux.HandleFunc("DELETE /api/trash/{id}", p.fileRoute(fileHandlers.purgeTrash))
 	p.mux.HandleFunc("POST /api/uploads", p.fileRoute(fileHandlers.createUpload))
 	p.mux.HandleFunc("GET /api/uploads/{id}", p.fileRoute(fileHandlers.uploadStatus))
 	p.mux.HandleFunc("PUT /api/uploads/{id}", p.fileRoute(fileHandlers.appendChunk))
@@ -146,7 +162,7 @@ func (p *Portal) EndSessions(user string) {
 type sharedAssets struct{ fs.FS }
 
 func (s sharedAssets) Open(name string) (fs.File, error) {
-	if name != "style.css" && name != "files.js" {
+	if name != "style.css" && name != "files.js" && name != "trash.js" && name != "viewer.js" && name != "photos.js" {
 		return nil, fs.ErrNotExist
 	}
 
@@ -171,6 +187,22 @@ func (p *Portal) homePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeFileFS(w, r, p.pages, "index.html")
+}
+
+func (p *Portal) trashPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := p.currentUser(r); !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	http.ServeFileFS(w, r, p.pages, "trash.html")
+}
+
+func (p *Portal) photosPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := p.currentUser(r); !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	http.ServeFileFS(w, r, p.pages, "photos.html")
 }
 
 func (p *Portal) passwordPage(w http.ResponseWriter, r *http.Request) {
@@ -352,7 +384,7 @@ func (p *Portal) fileRoute(call func(fileHandlers, http.ResponseWriter, *http.Re
 		if closer, ok := files.(io.Closer); ok {
 			defer closer.Close()
 		}
-		call(fileHandlers{files: files, maxUpload: p.maxUpload}, w, r)
+		call(fileHandlers{files: files, maxUpload: p.maxUpload, thumbs: p.thumbs}, w, r)
 	})
 }
 

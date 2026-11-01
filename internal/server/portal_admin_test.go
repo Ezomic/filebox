@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -146,6 +147,30 @@ func TestUnknownPortalPathsAnswerJSONUnderAPIAndHTMLElsewhere(t *testing.T) {
 		if rec.Code != http.StatusNotFound || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
 			t.Fatalf("%s: got %d %q", path, rec.Code, rec.Header().Get("Content-Type"))
 		}
+	}
+}
+
+func TestEveryPortalPageWithANavLoadsTheNavScript(t *testing.T) {
+	pages, err := fs.Glob(webFiles, "web/portal/*.html")
+	if err != nil || len(pages) == 0 {
+		t.Fatalf("no portal pages found: %v", err)
+	}
+	withNav := 0
+	for _, page := range pages {
+		content, err := webFiles.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(content), `<nav class="actions">`) {
+			continue
+		}
+		withNav++
+		if !strings.Contains(string(content), `<script src="/static/nav.js"></script>`) {
+			t.Errorf("%s has a nav but does not load nav.js, so the Users link would vanish there", page)
+		}
+	}
+	if withNav < 4 {
+		t.Fatalf("expected the files, photos, trash and users pages to have a nav, found %d", withNav)
 	}
 }
 

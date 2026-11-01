@@ -18,8 +18,10 @@ const portalMaxUpload = 64
 
 type portalFilesHarness struct {
 	*portalHarness
-	base  string
-	users *system.FakeUsers
+	base   string
+	users  *system.FakeUsers
+	tool   *system.FakeThumbnailer
+	thumbs *Thumbs
 }
 
 func newPortalFilesHarness(t *testing.T) *portalFilesHarness {
@@ -37,15 +39,18 @@ func newPortalFilesHarness(t *testing.T) *portalFilesHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
+	tool := system.NewFakeThumbnailer()
+	thumbs := NewThumbs(tool)
 	portal := NewPortal(PortalDeps{
 		Verifier:  verifier,
 		Users:     users,
 		Roles:     roles,
 		OpenFiles: func(user string) (system.Files, error) { return system.OpenUserFiles(base, user) },
 		MaxUpload: portalMaxUpload,
+		Thumbs:    thumbs,
 	})
 
-	return &portalFilesHarness{portalHarness: &portalHarness{portal: portal, verifier: verifier}, base: base, users: users}
+	return &portalFilesHarness{portalHarness: &portalHarness{portal: portal, verifier: verifier}, base: base, users: users, tool: tool, thumbs: thumbs}
 }
 
 func (h *portalFilesHarness) write(t *testing.T, user, name, content string) {
@@ -99,7 +104,7 @@ func TestPortalFileLifecycleStaysInTheUsersOwnFolder(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != "hi there" {
 		t.Fatalf("download got %d: %q", rec.Code, rec.Body)
 	}
-	if rec := h.do("DELETE", "/api/files?path=docs%2Fhi.txt", "", "192.0.2.10", amy); rec.Code != http.StatusNoContent {
+	if rec := h.do("DELETE", "/api/files?path=docs%2Fhi.txt", "", "192.0.2.10", amy); rec.Code != http.StatusOK {
 		t.Fatalf("delete got %d: %s", rec.Code, rec.Body)
 	}
 	if _, err := os.Stat(filepath.Join(h.base, "amy", "files", "docs", "hi.txt")); !os.IsNotExist(err) {
