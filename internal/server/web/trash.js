@@ -96,12 +96,12 @@ function trashRow(item) {
 
 function showActions(cell, item) {
   cell.replaceChildren(
-    button('Restore', () => restore(cell, item), 'link'),
+    button('Restore', () => restore(item), 'link'),
     button('Delete forever', () => confirmPurge(cell, item), 'link danger'),
   );
 }
 
-async function restore(cell, item) {
+async function restore(item) {
   try {
     const { path } = await api('POST', `/api/trash/${item.id}/restore${scope()}`);
     showNotice(path === item.path ? `Restored ${path}.` : `Restored as ${path}.`);

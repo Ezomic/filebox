@@ -3,6 +3,7 @@ package system
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"slices"
@@ -43,6 +44,7 @@ func (d *dirFiles) Trash(name string) (TrashItem, error) {
 	if err != nil {
 		return TrashItem{}, err
 	}
+	defer d.lockTrash(id)()
 
 	meta := trashMeta{Path: name, Deleted: time.Now().UTC(), Size: size, IsDir: info.IsDir()}
 	if err := d.writeTrashMeta(id, meta); err != nil {
@@ -98,7 +100,7 @@ func (d *dirFiles) writeTrashMeta(id string, meta trashMeta) error {
 }
 
 func (d *dirFiles) readTrashMeta(id string) (trashMeta, error) {
-	data, err := d.root.ReadFile(trashMetaPath(id))
+	data, err := d.readCapped(trashMetaPath(id))
 	if err != nil {
 		return trashMeta{}, notFoundOr(err)
 	}
@@ -185,6 +187,7 @@ func (d *dirFiles) RestoreTrash(id string) (string, error) {
 			return "", d.classify(candidate, err)
 		}
 		_ = d.root.Remove(trashMetaPath(id))
+		_ = d.root.RemoveAll(itemPath)
 
 		return candidate, nil
 	}
@@ -216,7 +219,9 @@ func (d *dirFiles) moveWithoutClobbering(from, to string, regular bool) error {
 	if regular {
 		err := d.root.Link(from, to)
 		if err == nil {
-			return d.root.Remove(from)
+			_ = d.root.Remove(from)
+
+			return nil
 		}
 		if errors.Is(err, fs.ErrExist) {
 			return err
@@ -338,4 +343,16 @@ func (d *dirFiles) trashedAt(id string) (time.Time, bool) {
 	}
 
 	return info.ModTime(), true
+}
+
+const maxTrashMetaBytes = 64 << 10
+
+func (d *dirFiles) readCapped(name string) ([]byte, error) {
+	file, err := d.root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return io.ReadAll(io.LimitReader(file, maxTrashMetaBytes))
 }
