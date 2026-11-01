@@ -74,7 +74,8 @@ function userRow(user) {
 }
 
 function showActions(cell, user) {
-  const buttons = [button('Change password', () => showPasswordForm(cell, user), 'link')];
+  const buttons = [];
+  if (!user.admin) buttons.push(button('Change password', () => showPasswordForm(cell, user), 'link'));
   if (user.name !== me) {
     buttons.push(
       button(user.admin ? 'Remove admin' : 'Make admin', () => showRoleForm(cell, user), 'link'),
@@ -118,10 +119,6 @@ function showPasswordForm(cell, user) {
     submit: 'Save',
     run: async () => {
       await api('PUT', target(user, '/password'), { password: password.value, confirm: confirm.value });
-      if (user.name === me) {
-        window.location.href = '/login';
-        return;
-      }
       statusBox.textContent = '';
       await load();
     },

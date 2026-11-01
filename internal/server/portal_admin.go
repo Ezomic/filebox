@@ -114,6 +114,10 @@ func (p *Portal) adminSetPassword(w http.ResponseWriter, r *http.Request, admin 
 	if !p.confirmAdmin(w, r, admin, body.Confirm) || !p.targetExists(w, name) {
 		return
 	}
+	if p.roles.IsAdmin(name) {
+		writeError(w, http.StatusForbidden, "admins cannot reset another admin's password")
+		return
+	}
 
 	if err := p.users.SetPassword(name, body.Password); err != nil {
 		log.Printf("portal: reset password for %s: %v", logName(name), err)

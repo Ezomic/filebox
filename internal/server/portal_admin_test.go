@@ -295,6 +295,54 @@ func TestAdminResetsAPasswordAfterConfirmingTheirOwn(t *testing.T) {
 	}
 }
 
+func TestAdminCannotResetAnAdminsPassword(t *testing.T) {
+	h := newPortalHarness(t)
+	amy, bob, _ := h.sessions(t)
+	_ = h.roles.Promote("bob")
+	body := jsonBody(t, map[string]any{"password": newPassword, "confirm": amyPassword})
+	bobBody := jsonBody(t, map[string]any{"password": newPassword, "confirm": bobPassword})
+
+	for name, c := range map[string]struct {
+		path, body string
+		cookie     *http.Cookie
+	}{
+		"another admin": {"/api/admin/users/bob/password", body, amy},
+		"themselves":    {"/api/admin/users/amy/password", body, amy},
+		"the first":     {"/api/admin/users/amy/password", bobBody, bob},
+	} {
+		rec := h.call("PUT", c.path, c.body, c.cookie)
+		if rec.Code != http.StatusForbidden || errorMessage(t, rec.Body.String()) != "admins cannot reset another admin's password" {
+			t.Errorf("%s: got %d %s", name, rec.Code, rec.Body)
+		}
+	}
+	if h.spy.mutations != 0 {
+		t.Fatal("an admin's password was changed")
+	}
+	for _, cookie := range []*http.Cookie{amy, bob} {
+		if rec := h.call("GET", "/api/me", "", cookie); rec.Code != http.StatusOK {
+			t.Fatalf("a refused reset must not end sessions, got %d", rec.Code)
+		}
+	}
+}
+
+func TestAnAdminDemotedToPlainCanThenBeReset(t *testing.T) {
+	h := newPortalHarness(t)
+	amy, _, _ := h.sessions(t)
+	_ = h.roles.Promote("bob")
+	body := jsonBody(t, map[string]any{"password": newPassword, "confirm": amyPassword})
+	if rec := h.call("PUT", "/api/admin/users/bob/password", body, amy); rec.Code != http.StatusForbidden {
+		t.Fatalf("got %d", rec.Code)
+	}
+
+	demote := jsonBody(t, map[string]any{"role": "user", "confirm": amyPassword})
+	if rec := h.call("PUT", "/api/admin/users/bob/role", demote, amy); rec.Code != http.StatusNoContent {
+		t.Fatalf("got %d", rec.Code)
+	}
+	if rec := h.call("PUT", "/api/admin/users/bob/password", body, amy); rec.Code != http.StatusNoContent || h.spy.Passwords["bob"] != newPassword {
+		t.Fatalf("got %d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestAdminActionsNeedTheActingAdminsOwnPassword(t *testing.T) {
 	h := newPortalHarness(t)
 	amy, _, _ := h.sessions(t)
@@ -556,13 +604,13 @@ func TestAdminActionsAreLoggedWithoutPasswords(t *testing.T) {
 
 	h.call("POST", "/api/admin/users", jsonBody(t, map[string]any{"name": "dora", "password": newPassword}), amy)
 	h.call("PUT", "/api/admin/users/cleo/role", jsonBody(t, map[string]any{"role": "admin", "confirm": amyPassword}), amy)
-	h.call("PUT", "/api/admin/users/cleo/password", jsonBody(t, map[string]any{"password": newPassword, "confirm": amyPassword}), amy)
+	h.call("PUT", "/api/admin/users/bob/password", jsonBody(t, map[string]any{"password": newPassword, "confirm": amyPassword}), amy)
 	h.call("DELETE", "/api/admin/users/dora", `{"confirm":"`+amyPassword+`"}`, amy)
 	h.call("PUT", "/api/admin/users/bob/role", jsonBody(t, map[string]any{"role": "admin", "confirm": "wrong wrong wrong"}), amy)
 
 	for _, want := range []string{
 		`create by="amy" target="dora"`, `promote by="amy" target="cleo"`,
-		`reset-password by="amy" target="cleo"`, `delete by="amy" target="dora"`,
+		`reset-password by="amy" target="bob"`, `delete by="amy" target="dora"`,
 	} {
 		if !strings.Contains(logged.String(), want) {
 			t.Errorf("log lacks %q:\n%s", want, logged)
