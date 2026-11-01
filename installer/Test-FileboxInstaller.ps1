@@ -98,6 +98,16 @@ Check 'wifi settings reach the conf file quoted' {
     $conf.Contains("WIFI_SSID='Mom'\''s Net'") -and $conf.Contains("WIFI_PSK='pass `$word 123'")
 }
 Check 'wired conf has empty wifi values' { (New-ConfText $good).Contains("WIFI_SSID=''") }
+Check 'add-ons reach the conf file, and are empty by default' {
+    $tv = $good.Clone(); $tv.Addons = @('streambox')
+    (New-ConfText $tv).Contains("ADDONS='streambox'") -and (New-ConfText $good).Contains("ADDONS=''")
+}
+foreach ($case in @(@('evil;rm'), @('streambox', "x`ny"), @('STREAMBOX'))) {
+    Check "rejects add-on $($case -join ',')" {
+        $bad = $good.Clone(); $bad.Addons = $case
+        Throws { Assert-InstallSettings $bad }
+    }
+}
 foreach ($case in @(
     @('WifiSsid', "bad`nssid"), @('WifiPsk', 'short'), @('WifiPsk', "has`nnewline-and-long"), @('FirmwarePackages', @('firmware-ok', 'evil;rm'))
 )) {

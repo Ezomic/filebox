@@ -48,6 +48,13 @@ if [ -n "$WIFI_SSID" ]; then
 	fi
 fi
 
+if [ -n "${ADDONS:-}" ]; then
+	install -d -m 0750 /target/etc/filebox
+	echo "$ADDONS" | tr ',' '\n' >/target/etc/filebox/addons
+	chmod 0600 /target/etc/filebox/addons
+	say "add-ons chosen: $ADDONS"
+fi
+
 install -m 0750 /filebox-update /target/usr/local/sbin/filebox-update
 install -m 0644 /filebox-firstboot.service /target/etc/systemd/system/filebox-firstboot.service
 mkdir -p /target/var/lib/filebox-firstboot /target/etc/systemd/system/multi-user.target.wants
