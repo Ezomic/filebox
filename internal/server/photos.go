@@ -235,10 +235,10 @@ func renderError(w http.ResponseWriter, r *http.Request, name string, err error)
 	case errors.Is(err, context.Canceled):
 		writeError(w, http.StatusServiceUnavailable, "thumbnails are busy, try again")
 	case errors.Is(err, system.ErrToolMissing):
-		log.Printf("thumbnail %q: %v", name, err)
+		log.Printf("thumbnail: %v", logCause(err))
 		writeError(w, http.StatusServiceUnavailable, "thumbnails are not available on this server")
 	case errors.Is(err, system.ErrBadMedia):
-		log.Printf("thumbnail %q: %v", name, err)
+		log.Printf("thumbnail: %v", logCause(err))
 		writeError(w, http.StatusUnprocessableEntity, "this file could not be turned into a picture")
 	default:
 		fileError(w, "thumbnail", name, err)

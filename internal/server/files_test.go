@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -795,8 +797,8 @@ func (f failingFiles) Mkdir(string) error                     { return f.err }
 
 func (f failingFiles) Close() error { return f.Files.(io.Closer).Close() }
 
-func TestUnexpectedFilesystemErrorsAreNotLeaked(t *testing.T) {
-	raw := errors.New("open /srv/sftp/amy/files/secret: permission denied")
+func failingFileSession(t *testing.T, raw error) *fileSession {
+	t.Helper()
 	s := newFileSession(t)
 	roles, err := auth.Open(t.TempDir())
 	if err != nil {
@@ -820,6 +822,38 @@ func TestUnexpectedFilesystemErrorsAreNotLeaked(t *testing.T) {
 	s.handler = failing
 	s.portal = failing
 	s.cookie = s.signedIn(t, "amy", amyPassword)
+
+	return s
+}
+
+func TestFileHandlersNeverLogFileNamesOrPaths(t *testing.T) {
+	raw := &fs.PathError{Op: "open", Path: "/srv/sftp/amy/files/private-name.txt", Err: errors.New("permission denied")}
+	s := failingFileSession(t, raw)
+	var logged strings.Builder
+	previous := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(previous)
+
+	s.get("/api/files?path=private-name.txt")
+	s.get("/api/files/download?path=private-name.txt")
+	s.get("/api/files/zip?path=private-name.txt")
+	s.put("/api/files/content?path=private-name.txt", "x")
+	s.call("DELETE", "/api/files?path=private-name.txt", nil, "")
+	s.get("/api/files/thumb?path=private-name.jpg")
+
+	if logged.Len() == 0 {
+		t.Fatal("nothing was logged, the failures were not exercised")
+	}
+	for _, leak := range []string{"private-name", "/srv/sftp"} {
+		if strings.Contains(logged.String(), leak) {
+			t.Errorf("the journal is readable from the admin panel but the log has %q: %s", leak, logged.String())
+		}
+	}
+}
+
+func TestUnexpectedFilesystemErrorsAreNotLeaked(t *testing.T) {
+	raw := errors.New("open /srv/sftp/amy/files/secret: permission denied")
+	s := failingFileSession(t, raw)
 
 	responses := map[string]*httptest.ResponseRecorder{
 		"list":     s.get("/api/files"),

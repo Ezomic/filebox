@@ -3,10 +3,12 @@ package server
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"log"
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/Ezomic/filebox/internal/system"
@@ -99,7 +101,7 @@ func (a fileHandlers) uploadFile(w http.ResponseWriter, r *http.Request) {
 	case errors.As(err, &tooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, "the file is larger than the upload limit")
 	case body.err != nil:
-		log.Printf("upload %q interrupted: %v", name, body.err)
+		log.Printf("upload interrupted: %v", logCause(body.err))
 		writeError(w, http.StatusBadRequest, "the upload was interrupted")
 	case errors.Is(err, system.ErrIsDir):
 		writeError(w, http.StatusConflict, "a folder with that name already exists")
@@ -172,7 +174,21 @@ func overwriteFlag(w http.ResponseWriter, r *http.Request) (overwrite, ok bool) 
 	return false, false
 }
 
-func fileError(w http.ResponseWriter, action, name string, err error) {
+// The panel and the portal share one journal, so a log line must not carry a user's file names or paths.
+func logCause(err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) {
+		return linkErr.Err
+	}
+
+	return err
+}
+
+func fileError(w http.ResponseWriter, action, _ string, err error) {
 	switch {
 	case errors.Is(err, system.ErrInvalidPath):
 		writeError(w, http.StatusBadRequest, "invalid path")
@@ -191,7 +207,7 @@ func fileError(w http.ResponseWriter, action, name string, err error) {
 	case errors.Is(err, system.ErrIntoSelf):
 		writeError(w, http.StatusUnprocessableEntity, "a folder cannot be moved into itself")
 	default:
-		log.Printf("%s %q: %v", action, name, err)
+		log.Printf("%s: %v", action, logCause(err))
 		writeError(w, http.StatusInternalServerError, "the file operation failed")
 	}
 }
