@@ -84,6 +84,17 @@ type Files interface {
 	EmptyTrash() (int, error)
 	// SweepTrash deletes items that were trashed before cutoff and reports how many.
 	SweepTrash(cutoff time.Time) (int, error)
+
+	// ListPhotos returns the images and videos under the root, newest first, in pages. after is the Next cursor of
+	// the previous page. Symlinks, empty files and the hidden folders are left out.
+	ListPhotos(after string, limit int) (PhotoPage, error)
+	// OpenPhoto opens one image or video for thumbnailing. Unlike Open it refuses symlinks and anything that is not a media file.
+	OpenPhoto(path string) (File, Photo, error)
+	// ReadThumb and WriteThumb keep generated JPEGs in the hidden thumbnail folder under names from Photo.ThumbName and Photo.PreviewName.
+	ReadThumb(name string) (File, error)
+	WriteThumb(name string, data []byte) error
+	// SweepThumbs deletes thumbnails whose source is gone, and temp files older than an hour.
+	SweepThumbs(now time.Time) (int, error)
 }
 
 // CleanPath is a cheap first filter. The real confinement is os.Root, so this only
@@ -107,7 +118,7 @@ func CleanPath(path string) (string, error) {
 // Names ending in a dot or space are refused because Windows silently strips them,
 // which would make two different names address the same file.
 func validSegment(segment string) bool {
-	if segment == "" || segment == "." || segment == ".." || len(segment) > maxSegmentBytes || strings.EqualFold(segment, UploadsDir) || strings.EqualFold(segment, TrashDir) {
+	if segment == "" || segment == "." || segment == ".." || len(segment) > maxSegmentBytes || hiddenName(segment) {
 		return false
 	}
 	if last := segment[len(segment)-1]; last == '.' || last == ' ' {

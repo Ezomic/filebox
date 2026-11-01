@@ -17,8 +17,10 @@ const portalMaxUpload = 64
 
 type portalFilesHarness struct {
 	*portalHarness
-	base  string
-	users *system.FakeUsers
+	base   string
+	users  *system.FakeUsers
+	tool   *system.FakeThumbnailer
+	thumbs *Thumbs
 }
 
 func newPortalFilesHarness(t *testing.T) *portalFilesHarness {
@@ -32,14 +34,17 @@ func newPortalFilesHarness(t *testing.T) *portalFilesHarness {
 	}
 	verifier := &system.FakeVerifier{Passwords: map[string]string{"amy": amyPassword, "bob": bobPassword}}
 	users := system.NewFakeUsers("amy", "bob")
+	tool := system.NewFakeThumbnailer()
+	thumbs := NewThumbs(tool)
 	portal := NewPortal(PortalDeps{
 		Verifier:  verifier,
 		Users:     users,
 		OpenFiles: func(user string) (system.Files, error) { return system.OpenUserFiles(base, user) },
 		MaxUpload: portalMaxUpload,
+		Thumbs:    thumbs,
 	})
 
-	return &portalFilesHarness{portalHarness: &portalHarness{portal: portal, verifier: verifier}, base: base, users: users}
+	return &portalFilesHarness{portalHarness: &portalHarness{portal: portal, verifier: verifier}, base: base, users: users, tool: tool, thumbs: thumbs}
 }
 
 func (h *portalFilesHarness) write(t *testing.T, user, name, content string) {

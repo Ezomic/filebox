@@ -60,7 +60,7 @@ func (d *dirFiles) List(dir string) ([]FileInfo, error) {
 
 	listing := make([]FileInfo, 0, len(entries))
 	for _, entry := range entries {
-		if strings.EqualFold(entry.Name(), UploadsDir) || strings.EqualFold(entry.Name(), TrashDir) {
+		if hiddenName(entry.Name()) {
 			continue
 		}
 		entryInfo, err := entry.Info()
