@@ -32,6 +32,9 @@ func (d *dirFiles) SetPhotoDate(name string, when time.Time) error {
 		if photos, err := d.collectPhotos(); err == nil {
 			pruneCustomDates(dates, liveKeys(photos))
 		}
+		if len(dates) > maxCustomDates {
+			return ErrTooManyDates
+		}
 	}
 
 	return d.storeCustomDates(dates)

@@ -18,7 +18,10 @@ const (
 	customDayLayout = "2006-01-02"
 )
 
-var ErrInvalidDate = errors.New("invalid date")
+var (
+	ErrInvalidDate  = errors.New("invalid date")
+	ErrTooManyDates = errors.New("too many custom dates")
+)
 
 var customDayPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
 

@@ -102,9 +102,9 @@ func eachPhotoSurface(t *testing.T, run func(t *testing.T, s photoSurface)) {
 
 type photoListing struct {
 	Photos []struct {
-		Path string    `json:"path"`
-		Kind string    `json:"kind"`
-		Size int64     `json:"size"`
+		Path   string    `json:"path"`
+		Kind   string    `json:"kind"`
+		Size   int64     `json:"size"`
 		Date   time.Time `json:"date"`
 		Custom bool      `json:"custom"`
 	} `json:"photos"`

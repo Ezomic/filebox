@@ -2,6 +2,7 @@ package system
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -385,5 +386,63 @@ func TestCustomDatesOfOneRootNeverReachAnother(t *testing.T) {
 func closeFiles(files Files) {
 	if closer, ok := files.(io.Closer); ok {
 		_ = closer.Close()
+	}
+}
+
+func TestTooManyCustomDatesAreRefusedInsteadOfGrowingPastTheReadLimit(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i <= maxCustomDates; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("p%05d.jpg", i)), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := NewDirFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFiles(files)
+
+	full := map[string]string{}
+	for _, photo := range listAll(t, files, MaxPhotoPage) {
+		full[photo.Key] = "2020-01-01"
+	}
+	data, _ := encodeCustomDates(full)
+	if len(data) >= maxCustomDatesFile {
+		t.Fatalf("a full file must stay readable: %d bytes", len(data))
+	}
+	if err := os.WriteFile(filepath.Join(dir, ThumbsDir, customDatesName), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := files.SetPhotoDate("p00000.jpg", day(2024, 1, 1)); !errors.Is(err, ErrTooManyDates) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSettingADateForgetsDatesOfPhotosThatAreGoneOnceTheFileIsBig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.jpg"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, err := NewDirFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFiles(files)
+	stale := map[string]string{}
+	for i := range maxCustomDates {
+		stale[fmt.Sprintf("%032x", i)] = "2020-01-01"
+	}
+	data, _ := encodeCustomDates(stale)
+	if err := os.MkdirAll(filepath.Join(dir, ThumbsDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ThumbsDir, customDatesName), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := files.SetPhotoDate("a.jpg", day(2024, 1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, ThumbsDir, customDatesName)); strings.Count(string(got), "2020-01-01") != 0 {
+		t.Fatalf("stale dates must be pruned: %d bytes", len(got))
 	}
 }

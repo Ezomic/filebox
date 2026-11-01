@@ -197,6 +197,10 @@ func photoDateError(w http.ResponseWriter, action, name string, err error) {
 		writeError(w, http.StatusUnsupportedMediaType, "only photos and videos have a date")
 		return
 	}
+	if errors.Is(err, system.ErrTooManyDates) {
+		writeError(w, http.StatusUnprocessableEntity, "too many photos have a custom date, reset some first")
+		return
+	}
 	fileError(w, action, name, err)
 }
 
