@@ -65,16 +65,20 @@ func (p *Portal) adminList(w http.ResponseWriter, _ *http.Request, _ string) {
 		return
 	}
 
+	quotas, quotasOn := loadQuotas(p.users)
 	entries := make([]roleEntry, 0, len(names))
 	for _, name := range names {
-		entries = append(entries, roleEntry{Name: name, Admin: p.roles.IsAdmin(name)})
+		entry := roleEntry{Name: name, Admin: p.roles.IsAdmin(name)}
+		entry.fill(quotas, name)
+		entries = append(entries, entry)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"users": entries})
+	writeJSON(w, http.StatusOK, map[string]any{"users": entries, "quotas": quotasOn})
 }
 
 type roleEntry struct {
 	Name  string `json:"name"`
 	Admin bool   `json:"admin"`
+	quotaView
 }
 
 func (p *Portal) adminCreate(w http.ResponseWriter, r *http.Request, admin string) {

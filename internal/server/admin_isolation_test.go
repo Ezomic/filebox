@@ -106,7 +106,7 @@ func TestAdminPagesNavigateToAdministrationOnly(t *testing.T) {
 	}
 }
 
-func TestUserListCarriesOnlyNameRoleAndByteUsage(t *testing.T) {
+func TestUserListCarriesOnlyNameRoleAndUsageAndQuota(t *testing.T) {
 	h := newHarness(t)
 	cookie := h.signedIn(t)
 
@@ -126,7 +126,7 @@ func TestUserListCarriesOnlyNameRoleAndByteUsage(t *testing.T) {
 			keys = append(keys, key)
 		}
 		slices.Sort(keys)
-		if !slices.Equal(keys, []string{"admin", "bytes", "name"}) {
+		if !slices.Equal(keys, []string{"admin", "bytes", "name", "quota", "quotaReady"}) {
 			t.Errorf("user entry has fields %v", keys)
 		}
 	}

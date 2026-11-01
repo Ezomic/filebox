@@ -49,6 +49,7 @@
     <a href="#windows">Replacing Windows</a>
     <a href="#install">Install</a>
     <a href="#portal">Web portal</a>
+    <a href="#quotas">Quotas</a>
     <a href="#tv">TV add-on</a>
     <a href="#update">Update</a>
     <a href="#problems">Problems</a>
@@ -173,6 +174,29 @@ sudo btrfs filesystem df /srv/sftp</code></pre>
 <pre><code>sudo mount -o degraded /dev/sdY /srv/sftp
 sudo btrfs replace start &lt;devid&gt; /dev/sdX /srv/sftp</code></pre>
 
+  <h2 id="quotas">Storage quotas (btrfs)</h2>
+  <p>You and the portal admins can give each person a maximum amount of storage on the Users pages. It is a hard limit enforced by btrfs, so SFTP and the web portal both stop at it. It needs the data partition on btrfs, as in the RAID1 section above. "No limit" removes it, and new accounts start with no limit.</p>
+  <h3>Turn it on</h3>
+  <p>Enable btrfs quotas once for the data partition. New accounts are then created with their files folder as a btrfs subvolume.</p>
+<pre><code>sudo btrfs quota enable /srv/sftp
+sudo btrfs quota rescan -w /srv/sftp</code></pre>
+  <div class="warn"><strong>Quotas slow an old disk down.</strong> btrfs has to keep usage numbers for every subvolume, and deleting or snapshotting many files costs extra work. On a spinning disk you may notice it when someone deletes a large folder. If the box becomes sluggish, turn it off again with <code>sudo btrfs quota disable /srv/sftp</code>; limits stop being enforced and the Users pages go back to the folder scan.</div>
+  <h3>Existing accounts</h3>
+  <p>Accounts made before this feature have a plain files folder. A plain folder cannot carry a limit, so convert it once. <strong>Make a backup first.</strong> The command rewrites the layout of live data, and it refuses to run while the person is signed in over SFTP or while the panel is running (the portal writes into the same folder).</p>
+<pre><code>sudo systemctl stop filebox-panel
+sudo filebox-user --dry-run convert &lt;name&gt;
+sudo filebox-user convert &lt;name&gt;
+sudo systemctl start filebox-panel</code></pre>
+  <p>The old folder is kept next to the new one as <code>/srv/sftp/&lt;name&gt;/files.pre-quota</code>, readable only by root, and it shares its data blocks with the new folder, so at first it takes almost no extra space. Files the person deletes afterwards stay held by the old copy, so their space only comes back after <code>convert-finish</code>. Check that the files are all there (sign in as that person, or look in <code>/srv/sftp/&lt;name&gt;/files</code>). Only then remove the old copy:</p>
+<pre><code>sudo filebox-user convert-finish &lt;name&gt;</code></pre>
+  <h3>What counts</h3>
+  <ul>
+    <li>Everything in the person's files folder counts: files, unfinished web uploads and the web Trash. Emptying the Trash (or waiting for it to empty itself) frees the space.</li>
+    <li>Lowering a limit below what a person already uses deletes nothing. It only blocks new writes until they delete enough. btrfs can also refuse deletes and renames while a user is exactly at the limit, so if someone is stuck, raise their limit a little first, then ask them to clean up.</li>
+    <li>The size on the Users pages comes from btrfs, so it matches what the limit counts. Accounts that are not converted yet show their folder scan size and no limit field.</li>
+    <li>Over the limit, the web portal says <em>you are over your storage quota</em>. An SFTP app shows its own failure message, usually "Failure" or "Disk quota exceeded", because the SFTP protocol has no special code for it.</li>
+  </ul>
+
   <h2 id="update">Update</h2>
   <p>One command on the box:</p>
 <pre><code>sudo filebox-update</code></pre>
@@ -193,6 +217,7 @@ sudo btrfs replace start &lt;devid&gt; /dev/sdX /srv/sftp</code></pre>
     <tr><td>A family member is "locked out"</td><td>After a few wrong passwords an address is blocked for a while. Wait 15 minutes, or unban it: <code>sudo fail2ban-client set filebox-portal unbanip &lt;ip&gt;</code> (SFTP uses the jail <code>sshd</code>).</td></tr>
     <tr><td>Web portal does not load</td><td>Run <code>sudo filebox-portal-cert issue you@example.com</code> if you have not yet, check the router forwards 443, and look at <code>sudo journalctl -u filebox-panel -n 50</code>.</td></tr>
     <tr><td>Domain points to the wrong IP</td><td><code>sudo systemctl start filebox-dns.service</code> and check <code>sudo journalctl -u filebox-dns -n 20</code>.</td></tr>
+    <tr><td>A family member cannot upload</td><td>They may be over their storage quota. Check the Users page, and raise the limit or ask them to delete files and empty the Trash.</td></tr>
     <tr><td>An update broke something</td><td><code>sudo filebox-update rollback</code></td></tr>
     <tr><td>Disk getting full or failing</td><td>The admin dashboard shows disk usage and drive health.</td></tr>
   </table>

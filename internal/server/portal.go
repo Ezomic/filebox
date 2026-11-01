@@ -115,6 +115,8 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.HandleFunc("POST /api/admin/users", p.requireAdmin(p.adminCreate))
 	p.mux.HandleFunc("PUT /api/admin/users/{name}/password", p.requireAdmin(p.adminSetPassword))
 	p.mux.HandleFunc("PUT /api/admin/users/{name}/role", p.requireAdmin(p.adminSetRole))
+	p.mux.HandleFunc("PUT /api/admin/users/{name}/quota", p.requireAdmin(p.adminSetQuota))
+	p.mux.HandleFunc("DELETE /api/admin/users/{name}/quota", p.requireAdmin(p.adminClearQuota))
 	p.mux.HandleFunc("DELETE /api/admin/users/{name}", p.requireAdmin(p.adminDelete))
 	p.mux.HandleFunc("GET /api/files", p.fileRoute(fileHandlers.listFiles))
 	p.mux.HandleFunc("DELETE /api/files", p.fileRoute(fileHandlers.deleteFile))

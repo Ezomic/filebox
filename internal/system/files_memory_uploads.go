@@ -127,6 +127,9 @@ func (f *FakeFiles) AppendUpload(id string, offset, length int64, content io.Rea
 	if int64(len(data)) > length {
 		return upload.current(), ErrUploadTooLarge
 	}
+	if !f.fitsLocked(int64(len(data))) {
+		return upload.current(), ErrOverQuota
+	}
 	upload.data = append(upload.data, data...)
 	upload.touched = time.Now()
 	switch {

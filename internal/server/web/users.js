@@ -38,9 +38,9 @@ function showError(message) {
 
 async function load() {
   try {
-    const { users, usageReady } = await api('GET', '/api/users');
+    const { users, usageReady, quotas } = await api('GET', '/api/users');
     showError('');
-    render(users, usageReady);
+    render(users, usageReady, quotas);
     if (!usageReady) setTimeout(load, 5000);
   } catch (error) {
     showError(error.message === 'signed out' ? '' : 'Could not load the users.');
@@ -59,22 +59,24 @@ function formatBytes(bytes) {
 }
 
 function usageText(user, usageReady) {
-  if (user.bytes !== null) return formatBytes(user.bytes);
-  return usageReady ? '-' : 'calculating...';
+  if (user.bytes === null) return usageReady ? '-' : 'calculating...';
+  if (user.quota !== null) return `${formatBytes(user.bytes)} of ${formatBytes(user.quota)}`;
+  return user.quotaReady ? `${formatBytes(user.bytes)}, no limit` : formatBytes(user.bytes);
 }
 
-function render(users, usageReady) {
-  rows.replaceChildren(...users.map((user) => userRow(user, usageReady)));
+function render(users, usageReady, quotas) {
+  rows.replaceChildren(...users.map((user) => userRow(user, usageReady, quotas)));
   byId('empty').hidden = users.length > 0;
 }
 
-function userRow(user, usageReady) {
+function userRow(user, usageReady, quotas) {
   const row = el('tr');
   const actions = el('td', undefined, 'row-actions');
   const name = el('td', user.name, 'name');
   if (user.admin) name.append(el('span', 'Admin', 'badge'));
-  row.append(name, el('td', usageText(user, usageReady), 'detail'), actions);
-  showActions(actions, user.name, user.admin);
+  const over = user.quota !== null && user.bytes !== null && user.bytes >= user.quota;
+  row.append(name, el('td', usageText(user, usageReady), over ? 'error' : 'detail'), actions);
+  showActions(actions, user, quotas);
   return row;
 }
 
@@ -88,15 +90,82 @@ async function setRole(name, role) {
   }
 }
 
-function showActions(cell, name, admin) {
-  cell.replaceChildren(
-    button('Change password', () => showPasswordForm(cell, name, admin), 'link'),
+function showActions(cell, user, quotas) {
+  const { name, admin } = user;
+  const buttons = [button('Change password', () => showPasswordForm(cell, user, quotas), 'link')];
+  if (quotas && user.quotaReady) buttons.push(button('Quota', () => showQuotaForm(cell, user, quotas), 'link'));
+  buttons.push(
     button(admin ? 'Remove admin' : 'Make admin', () => setRole(name, admin ? 'user' : 'admin'), 'link'),
-    button('Delete', () => showDeleteConfirm(cell, name, admin), 'link danger'),
+    button('Delete', () => showDeleteConfirm(cell, user, quotas), 'link danger'),
   );
+  cell.replaceChildren(...buttons);
 }
 
-function showPasswordForm(cell, name, admin) {
+const QUOTA_UNITS = { MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
+const QUOTA_MIN = 1024 ** 2;
+const QUOTA_MAX = 1024 ** 5;
+
+function quotaBytes(amount, unit) {
+  const bytes = Math.round(Number(amount) * QUOTA_UNITS[unit]);
+  return Number.isSafeInteger(bytes) && bytes >= QUOTA_MIN && bytes <= QUOTA_MAX ? bytes : null;
+}
+
+function showQuotaForm(cell, user, quotas) {
+  const amount = el('input');
+  amount.type = 'number';
+  amount.min = '0';
+  amount.step = 'any';
+  amount.required = true;
+  amount.inputMode = 'decimal';
+  amount.setAttribute('aria-label', `Storage limit for ${user.name}`);
+  const unit = el('select');
+  unit.setAttribute('aria-label', 'Unit');
+  for (const name of Object.keys(QUOTA_UNITS)) unit.append(new Option(`${name[0]}iB`, name));
+  unit.value = 'GB';
+  if (user.quota !== null) {
+    const best = Object.keys(QUOTA_UNITS).reverse().find((name) => user.quota >= QUOTA_UNITS[name]) || 'MB';
+    unit.value = best;
+    amount.value = String(Math.round((user.quota / QUOTA_UNITS[best]) * 100) / 100);
+  }
+
+  const form = el('form', undefined, 'inline');
+  const message = el('span', undefined, 'error');
+  const save = el('button', 'Save');
+  save.type = 'submit';
+  const extra = user.quota !== null ? [button('No limit', () => changeQuota('DELETE'), 'link')] : [];
+  form.append(
+    el('span', 'Takes effect at once. Lowering it below current use deletes nothing; it only blocks new files.', 'detail'),
+    amount, unit, save, ...extra, button('Cancel', () => showActions(cell, user, quotas), 'link'), message,
+  );
+
+  async function changeQuota(method, payload) {
+    save.disabled = true;
+    try {
+      await api(method, `/api/users/${encodeURIComponent(user.name)}/quota`, payload);
+      showError('');
+      await load();
+    } catch (error) {
+      message.textContent = error.message;
+      save.disabled = false;
+    }
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const bytes = quotaBytes(amount.value, unit.value);
+    if (bytes === null) {
+      message.textContent = 'Enter a limit between 1 MiB and 1 PiB.';
+      return;
+    }
+    changeQuota('PUT', { bytes });
+  });
+
+  cell.replaceChildren(form);
+  amount.focus();
+}
+
+function showPasswordForm(cell, user, quotas) {
+  const { name } = user;
   const input = el('input');
   input.type = 'password';
   input.minLength = 12;
@@ -109,7 +178,7 @@ function showPasswordForm(cell, name, admin) {
   const message = el('span', undefined, 'error');
   const save = el('button', 'Save');
   save.type = 'submit';
-  form.append(input, save, button('Cancel', () => showActions(cell, name, admin), 'link'), message);
+  form.append(input, save, button('Cancel', () => showActions(cell, user, quotas), 'link'), message);
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -117,7 +186,7 @@ function showPasswordForm(cell, name, admin) {
     try {
       await api('PUT', `/api/users/${encodeURIComponent(name)}/password`, { password: input.value });
       input.value = '';
-      showActions(cell, name, admin);
+      showActions(cell, user, quotas);
       showError('');
     } catch (error) {
       message.textContent = error.message;
@@ -129,7 +198,8 @@ function showPasswordForm(cell, name, admin) {
   input.focus();
 }
 
-function showDeleteConfirm(cell, name, admin) {
+function showDeleteConfirm(cell, user, quotas) {
+  const { name } = user;
   const message = el('span', undefined, 'error');
   cell.replaceChildren(
     el('span', `This deletes the account ${name}. It cannot be undone.`, 'error'),
@@ -141,7 +211,7 @@ function showDeleteConfirm(cell, name, admin) {
         message.textContent = error.message;
       }
     }, 'danger-solid'),
-    button('Cancel', () => showActions(cell, name, admin), 'link'),
+    button('Cancel', () => showActions(cell, user, quotas), 'link'),
     message,
   );
 }

@@ -5,7 +5,15 @@
 #   filebox-user delete <name>
 #   filebox-user passwd <name>   new password on stdin
 #   filebox-user list
-# Exit 0 on success; non-zero with a short reason on stderr otherwise.
+#   filebox-user quota-list                list "name used limit" for every user ("name - -" if not converted)
+#   filebox-user quota-set <name> <bytes>  hard limit on the user's files, whole bytes, 1 MiB to 1 PiB
+#   filebox-user quota-clear <name>
+# Run by hand by the owner, never by the panel:
+#   filebox-user [--dry-run] convert <name>         turn the files folder into a btrfs subvolume, keeping the old one
+#   filebox-user [--dry-run] convert-finish <name>  delete the old folder once the conversion is checked
+# --dry-run is accepted by quota-set, quota-clear, convert and convert-finish and only prints what it would run.
+# Exit 0 on success; non-zero with a short reason on stderr otherwise. Exit 4 means the box cannot do quotas
+# (not btrfs, quotas not enabled, or the user is not converted yet).
 set -euo pipefail
 
 export LC_ALL=C
@@ -17,18 +25,48 @@ readonly BASE=/srv/sftp
 readonly NAME_RE='^[a-z][a-z0-9_-]{2,31}$'
 readonly MIN_PASSWORD=12
 readonly MAX_PASSWORD=128
+readonly MIN_QUOTA=1048576
+readonly MAX_QUOTA=1125899906842624
+readonly UNAVAILABLE_EXIT=4
+readonly OLD_FILES=files.pre-quota
 readonly RESERVED=" root admin administrator filebox sftp sftpusers sshd ssh daemon bin sys sync games man lp mail news uucp proxy backup list irc www-data nobody tailscale fail2ban systemd-network systemd-resolve messagebus "
+
+DRY_RUN=0
 
 die() {
 	echo "filebox-user: $*" >&2
 	exit 1
 }
 
-[ "$(id -u)" -eq 0 ] || die "must run as root"
+unavailable() {
+	echo "filebox-user: $*" >&2
+	exit "$UNAVAILABLE_EXIT"
+}
+
+require_root() {
+	[ "$(id -u)" -eq 0 ] || die "must run as root"
+}
+
+# Every command that changes the disk for quotas goes through here, so --dry-run can show it instead.
+run() {
+	if [ "$DRY_RUN" -eq 1 ]; then
+		printf 'dry-run:'
+		printf ' %q' "$@"
+		printf '\n'
+	else
+		"$@"
+	fi
+}
 
 valid_name() {
 	[[ $1 =~ $NAME_RE ]] || die "invalid name: use 3-32 chars of a-z, 0-9, _ or -, starting with a letter"
 	[[ $RESERVED != *" $1 "* ]] || die "name is reserved"
+}
+
+# Digits only, no sign, no leading zero, at most 16 digits, so the value is a plain number well inside 2^63.
+valid_bytes() {
+	[[ $1 =~ ^[1-9][0-9]{0,15}$ ]] || die "invalid amount: use a whole number of bytes, digits only"
+	((10#$1 >= MIN_QUOTA && 10#$1 <= MAX_QUOTA)) || die "amount must be between $MIN_QUOTA and $MAX_QUOTA bytes"
 }
 
 group_gid() {
@@ -52,6 +90,33 @@ require_sftp_user() {
 	is_sftp_user "$1" || die "not an SFTP user"
 }
 
+on_btrfs() {
+	[ "$(stat -f -c %T -- "$1" 2>/dev/null)" = btrfs ]
+}
+
+# A btrfs subvolume root always has inode number 256.
+is_subvolume() {
+	[ -d "$1" ] && [ ! -L "$1" ] && on_btrfs "$1" && [ "$(stat -c %i -- "$1")" = 256 ]
+}
+
+require_btrfs() {
+	[ -d "$BASE" ] || unavailable "$BASE does not exist"
+	on_btrfs "$BASE" || unavailable "$BASE is not on a btrfs filesystem"
+	command -v btrfs >/dev/null || unavailable "btrfs-progs is not installed"
+}
+
+require_quotas_enabled() {
+	btrfs qgroup show "$BASE" >/dev/null 2>&1 ||
+		unavailable "btrfs quotas are not enabled on $BASE (run: btrfs quota enable $BASE)"
+}
+
+require_quota_ready() {
+	require_btrfs
+	require_quotas_enabled
+	is_subvolume "$BASE/$1/files" ||
+		unavailable "the files folder of $1 is not a btrfs subvolume yet (run: filebox-user convert $1)"
+}
+
 read_password() {
 	local extra=""
 	PASSWORD=""
@@ -68,6 +133,18 @@ set_password() {
 	printf '%s:%s\n' "$1" "$PASSWORD" | chpasswd
 }
 
+# On btrfs the files folder is its own subvolume from the start, so it can carry a quota. Elsewhere it is a plain folder.
+make_files_dir() {
+	local name=$1 files=$2
+	if on_btrfs "$BASE" && command -v btrfs >/dev/null; then
+		btrfs subvolume create "$files" >/dev/null || die "could not create the files subvolume"
+		chown -- "$name:$GROUP" "$files"
+		chmod 2770 -- "$files"
+	else
+		install -d -o "$name" -g "$GROUP" -m 2770 -- "$files"
+	fi
+}
+
 cmd_create() {
 	local name=$1
 	valid_name "$name"
@@ -80,6 +157,9 @@ cmd_create() {
 	cleanup() {
 		if [ "$created" -eq 1 ]; then
 			userdel -- "$name" >/dev/null 2>&1 || true
+			if is_subvolume "$home/files"; then
+				btrfs subvolume delete "$home/files" >/dev/null 2>&1 || true
+			fi
 			rm -rf --one-file-system -- "$home"
 		fi
 	}
@@ -93,7 +173,7 @@ cmd_create() {
 	install -d -o root -g root -m 0755 -- "$home"
 	# setgid group-rwx so the panel (member of $GROUP) can reach the files; other SFTP
 	# users share the group but are chrooted to their own home and have no shell.
-	install -d -o "$name" -g "$GROUP" -m 2770 -- "$home/files"
+	make_files_dir "$name" "$home/files"
 	set_password "$name" || die "could not set password"
 	created=0
 	trap - EXIT
@@ -135,19 +215,130 @@ cmd_list() {
 	done < <(getent passwd) | sort
 }
 
+# Prints "<referenced bytes> <limit in bytes or none>" for a subvolume, as the qgroup reports it.
+# Fails quietly on anything unexpected so one odd user cannot hide everyone else's quota.
+subvolume_quota() {
+	local out
+	out=$(btrfs qgroup show -rf --raw "$1" 2>/dev/null |
+		awk '$1 ~ /^0\// { print $2, $4; n++ } END { exit n != 1 }') || return 1
+	[[ $out =~ ^[0-9]+\ ([0-9]+|none)$ ]] || return 1
+	echo "$out"
+}
+
+cmd_quota_list() {
+	local name usage
+	group_gid >/dev/null
+	require_btrfs
+	require_quotas_enabled
+	while IFS= read -r name; do
+		if is_subvolume "$BASE/$name/files"; then
+			if usage=$(subvolume_quota "$BASE/$name/files"); then
+				echo "$name $usage"
+			else
+				echo "$name - -"
+			fi
+		else
+			echo "$name - -"
+		fi
+	done < <(cmd_list)
+}
+
+cmd_quota_set() {
+	require_sftp_user "$1"
+	require_quota_ready "$1"
+	run btrfs qgroup limit "$2" "$BASE/$1/files"
+}
+
+cmd_quota_clear() {
+	require_sftp_user "$1"
+	require_quota_ready "$1"
+	run btrfs qgroup limit none "$BASE/$1/files"
+}
+
+restore_old() {
+	run mv -T -- "$1" "$2"
+	run chown "$3" -- "$2"
+	run chmod "$4" -- "$2"
+}
+
+cmd_convert() {
+	local name=$1 files=$BASE/$1/files old=$BASE/$1/$OLD_FILES uid owner mode
+	require_sftp_user "$name"
+	require_btrfs
+	require_quotas_enabled
+	[ -d "$files" ] && [ ! -L "$files" ] || die "the files folder is missing or not a plain folder"
+	! is_subvolume "$files" || die "the files folder is already a subvolume, nothing to convert"
+	[ ! -e "$old" ] && [ ! -L "$old" ] ||
+		die "$old exists: check the earlier conversion, then run: filebox-user convert-finish $name"
+	uid=$(id -u -- "$name")
+	! pgrep -u "$uid" >/dev/null 2>&1 || die "$name has a running session, wait until it ends"
+	! systemctl is-active --quiet filebox-panel.service 2>/dev/null ||
+		die "stop the panel first (systemctl stop filebox-panel), because the portal writes into the same folder"
+
+	owner=$(stat -c %u:%g -- "$files")
+	mode=$(stat -c %a -- "$files")
+	run mv -T -- "$files" "$old" || die "could not move the files folder aside"
+	# Locked at once so nobody can add to the kept copy while the new folder is filled.
+	run chown root:root -- "$old"
+	run chmod 0700 -- "$old"
+	if ! run btrfs subvolume create "$files"; then
+		restore_old "$old" "$files" "$owner" "$mode"
+		die "could not create the subvolume, nothing was changed"
+	fi
+	# Reflinks share the data blocks, so the copy is quick and takes almost no extra space.
+	if ! run cp -a --reflink=always -- "$old/." "$files/"; then
+		run btrfs subvolume delete "$files"
+		restore_old "$old" "$files" "$owner" "$mode"
+		die "could not copy the files, nothing was changed"
+	fi
+	if ! run chown "$owner" -- "$files" || ! run chmod "$mode" -- "$files"; then
+		run btrfs subvolume delete "$files"
+		restore_old "$old" "$files" "$owner" "$mode"
+		die "could not set the owner of the new folder, nothing was changed"
+	fi
+	[ "$DRY_RUN" -eq 0 ] || return 0
+	echo "converted $name. The previous folder is kept at $old; once you have checked the files, run: filebox-user convert-finish $name"
+}
+
+cmd_convert_finish() {
+	local name=$1 files=$BASE/$1/files old=$BASE/$1/$OLD_FILES
+	require_sftp_user "$name"
+	require_btrfs
+	is_subvolume "$files" || die "the files folder is not a subvolume, so it was not converted"
+	[ -d "$old" ] && [ ! -L "$old" ] || die "there is no $old to remove"
+	[ "$(stat -c '%u %a' -- "$old")" = "0 700" ] || die "$old is not locked, so the conversion did not finish; do not remove it"
+	run rm -rf --one-file-system -- "$old"
+}
+
+# Arguments are checked before anything else, so a bad call never gets as far as the filesystem.
 main() {
+	if [ "${1:-}" = --dry-run ]; then
+		DRY_RUN=1
+		shift
+	fi
 	local cmd=${1:-}
 	case $cmd in
-	list)
-		[ $# -eq 1 ] || die "usage: filebox-user list"
-		cmd_list
+	list | quota-list)
+		[ $# -eq 1 ] && [ "$DRY_RUN" -eq 0 ] || die "usage: filebox-user $cmd"
 		;;
 	create | delete | passwd)
-		[ $# -eq 2 ] || die "usage: filebox-user $cmd <name>"
-		"cmd_$cmd" "$2"
+		[ $# -eq 2 ] && [ "$DRY_RUN" -eq 0 ] || die "usage: filebox-user $cmd <name>"
+		valid_name "$2"
 		;;
-	*) die "usage: filebox-user create|delete|passwd <name> | list" ;;
+	quota-clear | convert | convert-finish)
+		[ $# -eq 2 ] || die "usage: filebox-user [--dry-run] $cmd <name>"
+		valid_name "$2"
+		;;
+	quota-set)
+		[ $# -eq 3 ] || die "usage: filebox-user [--dry-run] quota-set <name> <bytes>"
+		valid_name "$2"
+		valid_bytes "$3"
+		;;
+	*) die "usage: filebox-user create|delete|passwd <name> | list | quota-list | quota-set <name> <bytes> | quota-clear <name> | [--dry-run] convert|convert-finish <name>" ;;
 	esac
+
+	require_root
+	"cmd_${cmd//-/_}" "${@:2}"
 }
 
 main "$@"

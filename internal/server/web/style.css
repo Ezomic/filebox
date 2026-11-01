@@ -203,6 +203,8 @@ td.row-actions .error { min-height: 0; }
 
 form.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0; width: 100%; }
 form.inline input { width: 100%; margin-bottom: 0; }
+form.inline input[type="number"] { width: auto; flex: 1 1 6rem; min-width: 0; }
+form.inline select { width: auto; margin-bottom: 0; }
 form.inline > .error,
 form.inline > .detail { flex: 1 1 100%; min-height: 0; margin: 0; }
 form.inline > .error:empty { display: none; }

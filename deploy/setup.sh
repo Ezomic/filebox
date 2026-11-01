@@ -267,6 +267,9 @@ filebox ALL=(root) NOPASSWD: /usr/local/sbin/filebox-user list, \
 	/usr/local/sbin/filebox-user create *, \
 	/usr/local/sbin/filebox-user delete *, \
 	/usr/local/sbin/filebox-user passwd *, \
+	/usr/local/sbin/filebox-user quota-list, \
+	/usr/local/sbin/filebox-user quota-set *, \
+	/usr/local/sbin/filebox-user quota-clear *, \
 	/usr/local/sbin/filebox-verify *, \
 	/usr/bin/systemctl restart ssh, \
 	/usr/bin/systemctl poweroff, \

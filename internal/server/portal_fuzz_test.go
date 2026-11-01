@@ -142,6 +142,7 @@ func FuzzPortalAdminRequests(f *testing.F) {
 	for _, seed := range []string{
 		`{"role":"admin","confirm":"` + amyPassword + `"}`, `{"confirm":"` + amyPassword + `"}`, `{"role":"user"}`, `{}`, ``, `[`,
 		`{"password":"` + newPassword + `","confirm":"` + bobPassword + `"}`, `{"role":1,"confirm":5}`,
+		`{"bytes":10485760,"confirm":"` + amyPassword + `"}`, `{"bytes":1e9}`, `{"bytes":"10GB","confirm":"x"}`,
 	} {
 		f.Add(seed, "cleo", uint8(0))
 	}
@@ -149,11 +150,15 @@ func FuzzPortalAdminRequests(f *testing.F) {
 		h := newPortalHarness(t)
 		amy := h.signedIn(t, "amy", amyPassword)
 		method, suffix := "PUT", "/role"
-		switch op % 3 {
+		switch op % 5 {
 		case 1:
 			suffix = "/password"
 		case 2:
 			method, suffix = "DELETE", ""
+		case 3:
+			suffix = "/quota"
+		case 4:
+			method, suffix = "DELETE", "/quota"
 		}
 		rec := h.do(method, "/api/admin/users/"+url.PathEscape(name)+suffix, body, "192.0.2.10", amy)
 		if rec.Code >= 500 {

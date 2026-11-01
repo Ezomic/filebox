@@ -53,6 +53,7 @@ func TestDisksRequireSession(t *testing.T) {
 
 func TestUsersIncludeDiskUsage(t *testing.T) {
 	s := newAdminSession(t)
+	s.users.QuotasOff = true
 	var body struct {
 		Ready bool `json:"usageReady"`
 		Users []struct {
