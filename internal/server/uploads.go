@@ -35,8 +35,20 @@ type existsBody struct {
 }
 
 type existingPath struct {
-	Path  string `json:"path"`
-	IsDir bool   `json:"isDir"`
+	Path     string     `json:"path"`
+	IsDir    bool       `json:"isDir"`
+	Size     *int64     `json:"size,omitempty"`
+	Modified *time.Time `json:"modified,omitempty"`
+}
+
+func existingEntry(path string, info system.FileInfo) existingPath {
+	entry := existingPath{Path: path, IsDir: info.IsDir}
+	if !info.IsDir {
+		entry.Size = &info.Size
+		entry.Modified = &info.Modified
+	}
+
+	return entry
 }
 
 func uploadJSON(info system.UploadInfo) map[string]any {
@@ -169,7 +181,7 @@ func (a fileHandlers) checkExists(w http.ResponseWriter, r *http.Request) {
 		info, err := a.files.Stat(path)
 		switch {
 		case err == nil:
-			existing = append(existing, existingPath{Path: path, IsDir: info.IsDir})
+			existing = append(existing, existingEntry(path, info))
 		case errors.Is(err, system.ErrNotFound), errors.Is(err, system.ErrNotDir):
 		default:
 			fileError(w, "exists check", path, err)
