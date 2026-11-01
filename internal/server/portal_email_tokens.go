@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"slices"
 	"sync"
 	"time"
 )
@@ -14,6 +15,7 @@ type linkKind uint8
 const (
 	kindReset linkKind = iota + 1
 	kindConfirm
+	kindSignIn
 )
 
 const (
@@ -111,6 +113,19 @@ func (l *linkTokens) purgeUser(user string) {
 	kept := l.items[:0]
 	for _, item := range l.items {
 		if item.user != user {
+			kept = append(kept, item)
+		}
+	}
+	l.items = kept
+}
+
+// purgeKinds drops the user's links of the given kinds and leaves the rest, such as a pending confirmation.
+func (l *linkTokens) purgeKinds(user string, kinds ...linkKind) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	kept := l.items[:0]
+	for _, item := range l.items {
+		if item.user != user || !slices.Contains(kinds, item.kind) {
 			kept = append(kept, item)
 		}
 	}

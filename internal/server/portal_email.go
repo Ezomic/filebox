@@ -36,6 +36,7 @@ type Contacts interface {
 	Get(user string) (auth.Contact, bool)
 	Set(user, email string) error
 	Confirm(user, email string) (bool, error)
+	Lookup(email string) (string, bool)
 	Forget(user string) error
 }
 
@@ -51,6 +52,9 @@ type emailFlow struct {
 	userLimit  *loginLimiter
 	totalLimit *loginLimiter
 	tryLimit   *loginLimiter
+	// addressLimit counts failed sign-ins by an address that is no account's, apart from userLimit so
+	// throwaway addresses cannot push real accounts out of that map.
+	addressLimit *loginLimiter
 
 	background func(work func())
 }
@@ -59,14 +63,15 @@ func newEmailFlow(deps PortalDeps) *emailFlow {
 	slots := make(chan struct{}, maxSendsInFlight)
 
 	return &emailFlow{
-		contacts:   deps.Contacts,
-		mail:       deps.Mail,
-		portalURL:  strings.TrimRight(deps.PortalURL, "/"),
-		tokens:     newLinkTokens(),
-		ipLimit:    newLoginLimiter(emailIPRequests, failWindow),
-		userLimit:  newLoginLimiter(emailUserSends, emailMailWindow),
-		totalLimit: newLoginLimiter(emailTotalSends, emailMailWindow),
-		tryLimit:   newLoginLimiter(emailTryRequests, failWindow),
+		contacts:     deps.Contacts,
+		mail:         deps.Mail,
+		portalURL:    strings.TrimRight(deps.PortalURL, "/"),
+		tokens:       newLinkTokens(),
+		ipLimit:      newLoginLimiter(emailIPRequests, failWindow),
+		userLimit:    newLoginLimiter(emailUserSends, emailMailWindow),
+		totalLimit:   newLoginLimiter(emailTotalSends, emailMailWindow),
+		tryLimit:     newLoginLimiter(emailTryRequests, failWindow),
+		addressLimit: newLoginLimiter(portalUserFails, failWindow),
 		background: func(work func()) {
 			select {
 			case slots <- struct{}{}:
@@ -95,6 +100,7 @@ func (p *Portal) emailRoutes() {
 	p.mux.HandleFunc("POST /api/email/confirm", p.confirmEmail)
 	p.mux.HandleFunc("GET /api/me/email", p.requireSession(p.myEmail))
 	p.mux.HandleFunc("PUT /api/me/email", p.requireSession(p.setMyEmail))
+	p.signInRoutes()
 }
 
 func (p *Portal) staticPage(name string) http.HandlerFunc {

@@ -81,7 +81,8 @@ func (c *Contacts) Set(user, email string) error {
 	return c.save(next)
 }
 
-// Confirm succeeds only while the stored address is still the one the link was sent to.
+// Confirm succeeds only while the stored address is still the one the link was sent to and no other
+// account has confirmed it, so a confirmed address always identifies one account.
 func (c *Contacts) Confirm(user, email string) (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -93,6 +94,9 @@ func (c *Contacts) Confirm(user, email string) (bool, error) {
 	if contact.Confirmed {
 		return true, nil
 	}
+	if c.confirmedBy(email, user) {
+		return false, nil
+	}
 	next := maps.Clone(c.byUser)
 	contact.Confirmed = true
 	next[user] = contact
@@ -101,6 +105,34 @@ func (c *Contacts) Confirm(user, email string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// Lookup finds the account whose confirmed address this is. An address that old data lists as confirmed
+// on more than one account resolves to nobody.
+func (c *Contacts) Lookup(email string) (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	owner, count := "", 0
+	for user, contact := range c.byUser {
+		if contact.Confirmed && strings.EqualFold(contact.Email, email) {
+			owner = user
+			count++
+		}
+	}
+
+	return owner, count == 1
+}
+
+// confirmedBy reports whether an account other than skip has confirmed the address. Callers hold the lock.
+func (c *Contacts) confirmedBy(email, skip string) bool {
+	for user, contact := range c.byUser {
+		if user != skip && contact.Confirmed && strings.EqualFold(contact.Email, email) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (c *Contacts) Forget(user string) error {
