@@ -42,8 +42,42 @@ fi
 mkdir -p "$T/etc/systemd-system"
 
 stub() { printf '#!/bin/sh\necho "%s $*" >>"%s/calls.log"\n%s\n' "$1" "$T" "${2:-exit 0}" >"$T/stubs/$1"; chmod +x "$T/stubs/$1"; }
-for c in apt-get systemctl groupadd useradd usermod; do stub "$c"; done
-stub getent 'exit 2'
+for c in apt-get systemctl usermod; do stub "$c"; done
+mkdir -p "$T/state"
+# getent, groupadd and useradd remember what exists and refuse what the real tools refuse, so a
+# wrong flag combination fails here the way it does on a real box.
+cat >"$T/stubs/getent" <<GETENT
+#!/bin/sh
+[ -e "$T/state/\$1-\$2" ] && exit 0
+exit 2
+GETENT
+cat >"$T/stubs/groupadd" <<GROUPADD
+#!/bin/sh
+echo "groupadd \$*" >>"$T/calls.log"
+for last; do :; done
+if [ -e "$T/state/group-\$last" ]; then echo "groupadd: group '\$last' already exists" >&2; exit 9; fi
+touch "$T/state/group-\$last"
+GROUPADD
+cat >"$T/stubs/useradd" <<USERADD
+#!/bin/bash
+echo "useradd \$*" >>"$T/calls.log"
+user=\${!#}; ugroup=no; gid=""
+args=("\$@")
+for ((i = 0; i < \${#args[@]}; i++)); do
+	case \${args[i]} in
+	--user-group | -U) ugroup=yes ;;
+	--gid | -g) gid=\${args[i + 1]} ;;
+	esac
+done
+if [ -e "$T/state/passwd-\$user" ]; then echo "useradd: user '\$user' already exists" >&2; exit 9; fi
+if [ "\$ugroup" = yes ] && [ -e "$T/state/group-\$user" ]; then
+	echo "useradd: group \$user exists - if you want to add this user to that group, use -g." >&2; exit 9
+fi
+if [ -n "\$gid" ] && [ ! -e "$T/state/group-\$gid" ]; then echo "useradd: group '\$gid' does not exist" >&2; exit 6; fi
+[ "\$ugroup" = yes ] && touch "$T/state/group-\$user"
+echo "\${gid:-\$user}" >"$T/state/passwd-\$user"
+USERADD
+chmod +x "$T/stubs/getent" "$T/stubs/groupadd" "$T/stubs/useradd"
 # install without ownership flags (the sandbox has no streambox group)
 cat >"$T/stubs/install" <<EOF
 #!/bin/bash
@@ -86,6 +120,7 @@ check "env file exists, mode 0640" '[ -f "$env_file" ] && [ "$(stat -c %a "$env_
 admin=$(sed -n 's/^STREAMBOX_ADMIN_TOKEN=//p' "$env_file"); view=$(sed -n 's/^STREAMBOX_VIEW_TOKEN=//p' "$env_file")
 check "tokens are 48 hex chars and differ" '[[ $admin =~ ^[0-9a-f]{48}$ && $view =~ ^[0-9a-f]{48}$ && $admin != "$view" ]]'
 check "loopback listen, proxy trust, media dir" 'grep -q "^STREAMBOX_LISTEN=127.0.0.1:8090$" "$env_file" && grep -q "^STREAMBOX_TRUST_PROXY=1$" "$env_file" && grep -q "^STREAMBOX_MEDIA=$T/srv/streambox/media$" "$env_file"'
+check "the streambox user exists and belongs to the streambox group" '[ "$(cat "$T/state/passwd-streambox")" = streambox ] && [ -e "$T/state/group-streambox" ]'
 check "media dir created" '[ -d "$T/srv/streambox/media" ]'
 check "unit installed" '[ -f "$T/etc/systemd-system/streambox.service" ]'
 check "panel restarted and service enabled" 'grep -q "restart --no-block filebox-panel.service" "$T/calls.log" && grep -q "enable streambox.service" "$T/calls.log"'
