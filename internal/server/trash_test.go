@@ -100,22 +100,10 @@ func trashRequest(method, target, body string, cookie *http.Cookie) *http.Reques
 
 func trashSurfaces(t *testing.T) []trashSurface {
 	t.Helper()
-	panel := newFileSession(t)
 	portal := newPortalFilesHarness(t)
 	amy := portal.signedIn(t, "amy", amyPassword)
 
 	return []trashSurface{
-		{
-			name: "panel",
-			call: func(method, target, body string) *httptest.ResponseRecorder {
-				rec := httptest.NewRecorder()
-				panel.handler.ServeHTTP(rec, trashRequest(method, target, body, panel.cookie))
-
-				return rec
-			},
-			seed: func(t *testing.T, path, content string) { t.Helper(); panel.seed(path, content) },
-			root: panel.root,
-		},
 		{
 			name: "portal",
 			call: func(method, target, body string) *httptest.ResponseRecorder {
@@ -398,29 +386,6 @@ func TestDeletedSymlinkIsMovedNotFollowed(t *testing.T) {
 	s.assertOutsideUntouched()
 }
 
-func TestTrashRoutesNeedASessionAndOnlyAcceptTheirOwnMethods(t *testing.T) {
-	h := newHarness(t)
-	cookie := h.signedIn(t)
-	id := strings.Repeat("a", 32)
-	for _, route := range []struct{ method, target string }{
-		{"GET", "/api/trash"}, {"DELETE", "/api/trash"}, {"POST", "/api/trash/" + id + "/restore"}, {"DELETE", "/api/trash/" + id},
-		{"GET", "/api/trash?user=amy"}, {"GET", "/trash"},
-	} {
-		rec := h.do(route.method, route.target, "", nil)
-		if rec.Code != http.StatusUnauthorized && rec.Code != http.StatusSeeOther {
-			t.Errorf("%s %s without a session: %d", route.method, route.target, rec.Code)
-		}
-	}
-	s := &fileSession{harness: h, t: t, cookie: cookie}
-	for _, route := range []struct{ method, target string }{
-		{"POST", "/api/trash"}, {"PUT", "/api/trash"}, {"GET", "/api/trash/" + id + "/restore"}, {"PUT", "/api/trash/" + id},
-	} {
-		if rec := s.call(route.method, route.target, nil, ""); rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("%s %s: got %d", route.method, route.target, rec.Code)
-		}
-	}
-}
-
 func TestPortalTrashRoutesNeedASessionAndSameOrigin(t *testing.T) {
 	h := newPortalFilesHarness(t)
 	opened := 0
@@ -549,64 +514,6 @@ func TestEmptyingOneUsersTrashLeavesTheOthersAlone(t *testing.T) {
 	}
 	if items, _ := listPortalTrash(t, h, amy); len(items) != 0 {
 		t.Fatalf("amy's trash was not emptied: %+v", items)
-	}
-}
-
-func TestPanelTrashCanReachAUsersTrash(t *testing.T) {
-	s := newFileSession(t)
-	userFiles, err := system.OpenUserFiles(s.usersBase, "amy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer userFiles.(interface{ Close() error }).Close()
-	if err := userFiles.Write("mine.txt", strings.NewReader("12345"), false); err != nil {
-		t.Fatal(err)
-	}
-	item, err := userFiles.Trash("mine.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	own := s.get("/api/trash")
-	if own.Code != http.StatusOK || strings.Contains(own.Body.String(), item.ID) {
-		t.Fatalf("the panel's own trash must not show a user's items: %s", own.Body)
-	}
-	rec := s.get("/api/trash?user=amy")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), item.ID) || !strings.Contains(rec.Body.String(), `"totalSize":5`) {
-		t.Fatalf("got %d: %s", rec.Code, rec.Body)
-	}
-	if rec := s.get("/api/trash?user=bob"); strings.Contains(rec.Body.String(), item.ID) {
-		t.Fatalf("bob's trash shows amy's item: %s", rec.Body)
-	}
-	for _, user := range []string{"..", "../amy", "AMY ", "a/b", "nobody-here", "%00", "-x"} {
-		rec := s.get("/api/trash?user=" + url.QueryEscape(user))
-		if rec.Code != http.StatusBadRequest && rec.Code != http.StatusNotFound {
-			t.Errorf("user %q got %d: %s", user, rec.Code, rec.Body)
-		}
-	}
-	if rec := s.call("DELETE", "/api/trash/"+item.ID+"?user=amy", nil, ""); rec.Code != http.StatusNoContent {
-		t.Fatalf("purge got %d: %s", rec.Code, rec.Body)
-	}
-	if rec := s.call("DELETE", "/api/trash?user=amy", nil, ""); rec.Code != http.StatusOK {
-		t.Fatalf("empty got %d: %s", rec.Code, rec.Body)
-	}
-}
-
-func TestPanelDeleteInsideAUsersFolderLandsInThePanelTrashAndRestoresThere(t *testing.T) {
-	s := newFileSession(t)
-	s.seed("amy/files/pic.jpg", "123")
-	rec := s.call("DELETE", "/api/files?path=amy%2Ffiles%2Fpic.jpg", nil, "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("got %d: %s", rec.Code, rec.Body)
-	}
-	var item struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &item); err != nil {
-		t.Fatal(err)
-	}
-	if rec := s.call("POST", "/api/trash/"+item.ID+"/restore", nil, ""); rec.Code != http.StatusOK || !s.exists("amy/files/pic.jpg") {
-		t.Fatalf("restore got %d: %s", rec.Code, rec.Body)
 	}
 }
 

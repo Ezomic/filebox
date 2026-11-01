@@ -50,10 +50,6 @@ func main() {
 	if !store.Configured() {
 		log.Printf("no admin yet: the setup token is in %s", filepath.Join(*dataDir, "setup-token"))
 	}
-	files, err := system.NewFiles(*filesDir)
-	if err != nil {
-		log.Fatalf("open file root %s: %v", *filesDir, err)
-	}
 	cert, err := tlsutil.LoadOrCreate(*dataDir, strings.Split(*sans, ","))
 	if err != nil {
 		log.Fatalf("prepare certificate: %v", err)
@@ -71,17 +67,13 @@ func main() {
 	})
 
 	deps := server.Deps{
-		Host:          system.NewHost(*disk),
-		Users:         users,
-		Files:         files,
-		OpenUserFiles: system.UserFilesOpener(*filesDir),
-		Logs:          system.NewLogs(),
-		Power:         system.NewPower(),
-		Usage:         system.NewUsage(*filesDir),
-		Smart:         system.NewSmart(),
-		PowerDelay:    time.Second,
-		MaxUpload:     *maxUpload,
-		Thumbs:        thumbs,
+		Host:       system.NewHost(*disk),
+		Users:      users,
+		Logs:       system.NewLogs(),
+		Power:      system.NewPower(),
+		Usage:      system.NewUsage(*filesDir),
+		Smart:      system.NewSmart(),
+		PowerDelay: time.Second,
 
 		OnUserChanged: portal.EndSessions,
 		Version:       version,

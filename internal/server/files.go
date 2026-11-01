@@ -16,7 +16,7 @@ import (
 // between two chunks, so a big file can take hours while a stalled client is still dropped.
 const transferIdle = 2 * time.Minute
 
-// fileHandlers serves the file API for one Files root, so the admin panel and the user portal share one implementation.
+// fileHandlers serves the file API for one user's Files root on the portal.
 type fileHandlers struct {
 	files     system.Files
 	maxUpload int64
@@ -30,14 +30,6 @@ type pathBody struct {
 type renameBody struct {
 	From string `json:"from"`
 	To   string `json:"to"`
-}
-
-func (s *Server) filesPage(w http.ResponseWriter, r *http.Request) {
-	s.protectedPage(w, r, "files.html")
-}
-
-func (s *Server) trashPage(w http.ResponseWriter, r *http.Request) {
-	s.protectedPage(w, r, "trash.html")
 }
 
 func (a fileHandlers) listFiles(w http.ResponseWriter, r *http.Request) {

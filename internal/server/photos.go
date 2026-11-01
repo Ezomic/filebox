@@ -244,7 +244,3 @@ func renderError(w http.ResponseWriter, r *http.Request, name string, err error)
 		fileError(w, "thumbnail", name, err)
 	}
 }
-
-func (s *Server) photosPage(w http.ResponseWriter, r *http.Request) {
-	s.protectedPage(w, r, "photos.html")
-}

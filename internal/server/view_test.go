@@ -26,7 +26,6 @@ func viewURL(path string) string {
 
 func viewSurfaces(t *testing.T) []viewSurface {
 	t.Helper()
-	panel := newFileSession(t)
 	portal := newPortalFilesHarness(t)
 	amy := portal.signedIn(t, "amy", amyPassword)
 
@@ -42,30 +41,8 @@ func viewSurfaces(t *testing.T) []viewSurface {
 
 		return rec
 	}
-	panelCall := func(method, target string, headers map[string]string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, target, nil)
-		req.RemoteAddr = "192.0.2.10:5555"
-		req.AddCookie(panel.cookie)
-		for name, value := range headers {
-			req.Header.Set(name, value)
-		}
-		rec := httptest.NewRecorder()
-		panel.handler.ServeHTTP(rec, req)
-
-		return rec
-	}
 
 	return []viewSurface{
-		{
-			name: "panel",
-			get:  func(target string) *httptest.ResponseRecorder { return panelCall("GET", target, nil) },
-			head: func(target string) *httptest.ResponseRecorder { return panelCall("HEAD", target, nil) },
-			header: func(target string, h map[string]string) *httptest.ResponseRecorder {
-				return panelCall("GET", target, h)
-			},
-			seed: func(t *testing.T, path, content string) { t.Helper(); panel.seed(path, content) },
-			root: panel.root,
-		},
 		{
 			name: "portal",
 			get:  func(target string) *httptest.ResponseRecorder { return portalCall("GET", target, nil) },
@@ -363,13 +340,6 @@ func TestPortalViewIsPrivateToTheUser(t *testing.T) {
 }
 
 func TestViewRoutesRequireASession(t *testing.T) {
-	panel := newHarness(t)
-	panel.signedIn(t)
-	for _, cookie := range []*http.Cookie{nil, {Name: cookieName, Value: "not-a-real-session"}} {
-		if rec := panel.do("GET", "/api/files/view?path=a.png", "", cookie); rec.Code != http.StatusUnauthorized {
-			t.Errorf("panel: %d", rec.Code)
-		}
-	}
 	portal := newPortalFilesHarness(t)
 	portal.write(t, "amy", "a.png", "x")
 	for _, cookie := range []*http.Cookie{nil, {Name: portalCookieName, Value: "not-a-real-session"}} {
