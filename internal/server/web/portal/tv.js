@@ -9,12 +9,12 @@ async function load() {
     }
     const info = await response.json();
     if (!info.enabled) {
-      byId('status').textContent = 'TV is not set up on this server.';
+      i18n.msg(byId('status'), () => t('tv.disabled'));
       return;
     }
     byId('playlist').value = info.playlistUrl;
   } catch {
-    byId('status').textContent = 'Could not load the link.';
+    i18n.msg(byId('status'), () => t('tv.loadFailed'));
   }
 }
 
@@ -23,9 +23,9 @@ byId('copy').addEventListener('click', async () => {
   input.select();
   try {
     await navigator.clipboard.writeText(input.value);
-    byId('status').textContent = '';
+    i18n.msg(byId('status'));
   } catch {
-    byId('status').textContent = 'Copy it by hand: the text is selected.';
+    i18n.msg(byId('status'), () => t('tv.copyByHand'));
   }
 });
 

@@ -57,7 +57,7 @@ func (v *quotaView) fill(quotas map[string]system.Quota, name string) {
 
 func validQuota(w http.ResponseWriter, bytes *int64) bool {
 	if bytes == nil || !system.ValidQuotaBytes(*bytes) {
-		writeError(w, http.StatusUnprocessableEntity, "the quota must be a whole number of bytes between 1 MB and 1 PB")
+		writeCoded(w, http.StatusUnprocessableEntity, codeQuotaInvalid, "the quota must be a whole number of bytes between 1 MB and 1 PB")
 		return false
 	}
 
@@ -67,11 +67,11 @@ func validQuota(w http.ResponseWriter, bytes *int64) bool {
 // quotaFailed reports a failed helper call without its detail, which stays in the log.
 func quotaFailed(w http.ResponseWriter, action, name string, err error) {
 	if errors.Is(err, system.ErrQuotasUnavailable) {
-		writeError(w, http.StatusConflict, quotasUnavailableMessage)
+		writeCoded(w, http.StatusConflict, codeQuotasUnavailable, quotasUnavailableMessage)
 		return
 	}
 	log.Printf("%s %s: %v", action, logName(name), err)
-	writeError(w, http.StatusInternalServerError, "could not change the quota")
+	writeCoded(w, http.StatusInternalServerError, codeQuotaChangeFailed, "could not change the quota")
 }
 
 func (s *Server) setUserQuota(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +108,7 @@ func (s *Server) existingUser(w http.ResponseWriter, name string) bool {
 func existingUser(w http.ResponseWriter, users system.Users, name string) bool {
 	exists, ok := userExists(w, users, name)
 	if ok && !exists {
-		writeError(w, http.StatusNotFound, "no such user")
+		writeCoded(w, http.StatusNotFound, codeUserNotFound, "no such user")
 	}
 
 	return ok && exists
@@ -150,7 +150,7 @@ func (p *Portal) checkQuotaTarget(w http.ResponseWriter, r *http.Request, admin,
 		return false
 	}
 	if p.roles.IsAdmin(name) {
-		writeError(w, http.StatusForbidden, "admins cannot set a quota on an admin")
+		writeCoded(w, http.StatusForbidden, codeQuotaAdminTarget, "admins cannot set a quota on an admin")
 		return false
 	}
 

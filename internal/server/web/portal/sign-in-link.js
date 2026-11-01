@@ -7,7 +7,7 @@ fetch('/api/forgot')
   .then((response) => (response.ok ? response.json() : null))
   .then((status) => {
     if (status && !status.enabled) {
-      document.getElementById('intro').textContent = 'Sign-in links are not set up on this server. Sign in with your password.';
+      i18n.msg(document.getElementById('intro'), () => t('link.disabled'));
       button.disabled = true;
     }
   })
@@ -15,7 +15,7 @@ fetch('/api/forgot')
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  errorBox.textContent = '';
+  i18n.msg(errorBox);
   done.hidden = true;
 
   button.disabled = true;
@@ -27,13 +27,13 @@ form.addEventListener('submit', async (event) => {
     });
     const body = await response.json().catch(() => ({}));
     if (response.ok) {
-      done.textContent = body.message || 'If that address belongs to an account, we sent a link.';
+      i18n.answer(done, body, 'answer.sign_in_link_sent');
       done.hidden = false;
       return;
     }
-    errorBox.textContent = body.error || 'Something went wrong.';
+    i18n.report(errorBox, i18n.failure(body, 'error.generic'));
   } catch {
-    errorBox.textContent = 'Could not reach the server.';
+    i18n.msg(errorBox, () => t('error.network'));
   } finally {
     button.disabled = false;
   }

@@ -140,15 +140,15 @@ func (p *Portal) setMyEmail(w http.ResponseWriter, r *http.Request, user string)
 	}
 	e := p.email
 	if !e.enabled() {
-		writeError(w, http.StatusServiceUnavailable, "email is not set up on this server, ask the owner")
+		writeCoded(w, http.StatusServiceUnavailable, codeEmailUnavailable, "email is not set up on this server, ask the owner")
 		return
 	}
 	address := strings.TrimSpace(body.Email)
 	if !validEmail(address) {
-		writeError(w, http.StatusUnprocessableEntity, "enter one plain email address such as name@example.com")
+		writeCoded(w, http.StatusUnprocessableEntity, codeEmailInvalid, "enter one plain email address such as name@example.com")
 		return
 	}
-	if !p.confirmPassword(w, r, user, body.Current, "email change", "your current password is wrong") {
+	if !p.confirmPassword(w, r, user, body.Current, "email change", codeWrongCurrentPassword, "your current password is wrong") {
 		return
 	}
 
@@ -158,13 +158,13 @@ func (p *Portal) setMyEmail(w http.ResponseWriter, r *http.Request, user string)
 		return
 	}
 	if !e.userLimit.reserve("confirm:"+user) || !e.userLimit.reserve("to:"+strings.ToLower(address)) || !e.totalLimit.reserve("all") {
-		writeError(w, http.StatusTooManyRequests, "too many emails sent, try again later")
+		writeCoded(w, http.StatusTooManyRequests, codeRateLimited, "too many emails sent, try again later")
 		return
 	}
 	if !found || existing.Email != address {
 		if err := e.contacts.Set(user, address); err != nil {
 			log.Printf("portal: save email for %s: %v", logName(user), err)
-			writeError(w, http.StatusInternalServerError, "could not save the address")
+			writeCoded(w, http.StatusInternalServerError, codeEmailSaveFailed, "could not save the address")
 			return
 		}
 	}
@@ -172,7 +172,7 @@ func (p *Portal) setMyEmail(w http.ResponseWriter, r *http.Request, user string)
 
 	token, err := e.tokens.issue(kindConfirm, user, address, 0, confirmLinkTTL)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not start the confirmation")
+		writeCoded(w, http.StatusInternalServerError, codeConfirmStartFailed, "could not start the confirmation")
 		return
 	}
 	text := "Hello,\n\nYou asked to use this address for password resets of the Filebox account \"" + user +
@@ -180,7 +180,7 @@ func (p *Portal) setMyEmail(w http.ResponseWriter, r *http.Request, user string)
 		"\n\nThe link works once. If you did not ask for this, ignore this email and nothing changes.\n"
 	if err := p.sendMail(r.Context(), address, "Confirm your email address for Filebox", text); err != nil {
 		log.Printf("portal: confirmation email for %s not sent: %v", logName(user), err)
-		writeError(w, http.StatusServiceUnavailable, "could not send the email right now, try again later")
+		writeCoded(w, http.StatusServiceUnavailable, codeEmailSendFailed, "could not send the email right now, try again later")
 		return
 	}
 	log.Printf("portal: confirmation email sent user=%s ip=%s", logName(user), ipKey(r))
@@ -199,17 +199,17 @@ func (p *Portal) confirmEmail(w http.ResponseWriter, r *http.Request) {
 
 	link, ok := p.email.tokens.take(kindConfirm, body.Token)
 	if !ok || !p.email.enabled() {
-		writeError(w, http.StatusBadRequest, linkInvalid)
+		writeCoded(w, http.StatusBadRequest, codeLinkInvalid, linkInvalid)
 		return
 	}
 	confirmed, err := p.email.contacts.Confirm(link.user, link.email)
 	switch {
 	case err != nil:
 		log.Printf("portal: confirm email for %s: %v", logName(link.user), err)
-		writeError(w, http.StatusInternalServerError, "could not confirm the address")
+		writeCoded(w, http.StatusInternalServerError, codeConfirmFailed, "could not confirm the address")
 		return
 	case !confirmed:
-		writeError(w, http.StatusBadRequest, linkInvalid)
+		writeCoded(w, http.StatusBadRequest, codeLinkInvalid, linkInvalid)
 		return
 	}
 	log.Printf("portal: email confirmed user=%s ip=%s", logName(link.user), ipKey(r))
@@ -231,7 +231,7 @@ func (p *Portal) forgot(w http.ResponseWriter, r *http.Request) {
 	ip := ipKey(r)
 	if !e.ipLimit.reserve(ip) {
 		log.Printf("portal: forgot password blocked ip=%s", ip)
-		writeError(w, http.StatusTooManyRequests, "too many requests, try again later")
+		writeCoded(w, http.StatusTooManyRequests, codeRateLimited, "too many requests, try again later")
 		return
 	}
 
@@ -239,7 +239,7 @@ func (p *Portal) forgot(w http.ResponseWriter, r *http.Request) {
 	if e.enabled() && system.ValidUsername(name) {
 		e.background(func() { p.sendResetLink(name, ip) })
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"message": forgotAnswer})
+	writeJSON(w, http.StatusOK, map[string]string{"message": forgotAnswer, "code": codeResetLinkSent})
 }
 
 func (p *Portal) sendResetLink(name, ip string) {
@@ -299,22 +299,22 @@ func (p *Portal) resetPassword(w http.ResponseWriter, r *http.Request) {
 
 	link, ok := p.email.tokens.take(kindReset, body.Token)
 	if !ok || !p.email.enabled() || link.generation != p.sessions.generation(link.user) {
-		writeError(w, http.StatusBadRequest, linkInvalid)
+		writeCoded(w, http.StatusBadRequest, codeLinkInvalid, linkInvalid)
 		return
 	}
 	contact, found := p.email.contacts.Get(link.user)
 	if !found || !contact.Confirmed || !strings.EqualFold(contact.Email, link.email) {
-		writeError(w, http.StatusBadRequest, linkInvalid)
+		writeCoded(w, http.StatusBadRequest, codeLinkInvalid, linkInvalid)
 		return
 	}
 
 	switch err := p.users.SetPassword(link.user, body.Password); {
 	case errors.Is(err, system.ErrUserNotFound):
-		writeError(w, http.StatusBadRequest, linkInvalid)
+		writeCoded(w, http.StatusBadRequest, codeLinkInvalid, linkInvalid)
 		return
 	case err != nil:
 		log.Printf("portal: reset password for %s: %v", logName(link.user), err)
-		writeError(w, http.StatusInternalServerError, "could not change the password")
+		writeCoded(w, http.StatusInternalServerError, codePasswordChangeFailed, "could not change the password")
 		return
 	}
 	p.sessions.destroyUser(link.user)
@@ -327,7 +327,7 @@ func (p *Portal) allowTry(w http.ResponseWriter, r *http.Request) bool {
 	if p.email.tryLimit.reserve(ipKey(r)) {
 		return true
 	}
-	writeError(w, http.StatusTooManyRequests, "too many attempts, try again later")
+	writeCoded(w, http.StatusTooManyRequests, codeRateLimited, "too many attempts, try again later")
 
 	return false
 }

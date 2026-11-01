@@ -125,7 +125,7 @@ func (p *Portal) storage(w http.ResponseWriter, _ *http.Request, user string) {
 	disk, err := p.space.usage()
 	if err != nil {
 		log.Printf("portal: read disk usage: %v", err)
-		writeError(w, http.StatusServiceUnavailable, "storage information is not available")
+		writeCoded(w, http.StatusServiceUnavailable, codeStorageUnavailable, "storage information is not available")
 		return
 	}
 	files, closeFiles, ok := p.openUserFiles(w, user)
@@ -166,7 +166,7 @@ func (s *Server) storage(w http.ResponseWriter, _ *http.Request) {
 	disk, err := s.space.usage()
 	if err != nil {
 		log.Printf("read disk usage: %v", err)
-		writeError(w, http.StatusServiceUnavailable, "storage information is not available")
+		writeCoded(w, http.StatusServiceUnavailable, codeStorageUnavailable, "storage information is not available")
 		return
 	}
 	writeJSON(w, http.StatusOK, diskView{Used: disk.Used, Total: disk.Total, Free: disk.Free, Percent: percentOf(disk.Used, disk.Total), Level: disk.Level()})
@@ -184,7 +184,7 @@ func (a fileHandlers) refuseWhenFull(w http.ResponseWriter) bool {
 	if !disk.Full() {
 		return false
 	}
-	writeJSON(w, http.StatusInsufficientStorage, map[string]any{"error": diskFullMessage, "diskFull": true})
+	writeJSON(w, http.StatusInsufficientStorage, map[string]any{"error": diskFullMessage, "code": codeDiskFull, "diskFull": true})
 
 	return true
 }

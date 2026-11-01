@@ -70,7 +70,7 @@ func (p *Portal) requestSignInLink(w http.ResponseWriter, r *http.Request) {
 	ip := ipKey(r)
 	if !e.ipLimit.reserve("link:" + ip) {
 		log.Printf("portal: sign-in link blocked ip=%s", ip)
-		writeError(w, http.StatusTooManyRequests, "too many requests, try again later")
+		writeCoded(w, http.StatusTooManyRequests, codeRateLimited, "too many requests, try again later")
 		return
 	}
 
@@ -78,7 +78,7 @@ func (p *Portal) requestSignInLink(w http.ResponseWriter, r *http.Request) {
 	if e.enabled() && validEmail(address) {
 		e.background(func() { p.sendSignInLink(address, ip) })
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"message": signInAnswer})
+	writeJSON(w, http.StatusOK, map[string]string{"message": signInAnswer, "code": codeSignInLinkSent})
 }
 
 func (p *Portal) sendSignInLink(address, ip string) {
@@ -128,7 +128,7 @@ func (p *Portal) signInWithLink(w http.ResponseWriter, r *http.Request) {
 	e := p.email
 	link, ok := e.tokens.take(kindSignIn, body.Token)
 	if !ok || !e.enabled() || !p.signInLinkUsable(link) {
-		writeError(w, http.StatusBadRequest, linkInvalid)
+		writeCoded(w, http.StatusBadRequest, codeLinkInvalid, linkInvalid)
 		return
 	}
 	if !p.startSession(w, link.user, link.generation) {

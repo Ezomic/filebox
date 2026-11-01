@@ -46,7 +46,7 @@ async function api(method, path, payload) {
     throw new Error('signed out');
   }
   const body = response.status === 204 ? {} : await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || 'Something went wrong.');
+  if (!response.ok) throw i18n.failure(body, 'error.generic');
   return body;
 }
 
@@ -64,8 +64,9 @@ function button(label, onClick, className) {
   return node;
 }
 
-function showError(message) {
-  statusBox.textContent = message;
+function showError(error) {
+  if (error) i18n.report(statusBox, error);
+  else i18n.msg(statusBox);
 }
 
 function userQuery() {
@@ -77,7 +78,7 @@ function monthKey(photo) {
 }
 
 function monthLabel(photo) {
-  return new Date(photo.date).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  return i18n.monthYear(photo.date);
 }
 
 function thumbUrl(photo) {
@@ -95,6 +96,8 @@ function toItem(photo) {
 const undoBar = el('p', undefined, 'notice');
 const undoText = el('span');
 let undoTimer = null;
+let undoId;
+const undoButton = i18n.label(button('', () => undoDelete(undoId), 'link'), 'common.undo');
 undoBar.hidden = true;
 statusBox.after(undoBar);
 
@@ -103,11 +106,12 @@ function hideUndo() {
   undoBar.hidden = true;
 }
 
-function showUndo(message, id) {
+function showUndo(producer, id) {
   clearTimeout(undoTimer);
-  undoText.textContent = message;
+  i18n.msg(undoText, producer);
+  undoId = id;
   undoBar.replaceChildren(undoText);
-  if (id !== undefined) undoBar.append(button('Undo', () => undoDelete(id), 'link'));
+  if (id !== undefined) undoBar.append(undoButton);
   undoBar.hidden = false;
   undoTimer = setTimeout(hideUndo, UNDO_VISIBLE_MS);
 }
@@ -162,7 +166,7 @@ function makeTile(photo) {
   const open = el('button', undefined, 'tile-open');
   open.type = 'button';
   open.title = name;
-  open.setAttribute('aria-label', photo.kind === 'video' ? `Play ${name}` : `Open ${name}`);
+  open.setAttribute('aria-label', t(photo.kind === 'video' ? 'photos.play' : 'photos.open', { name }));
   const image = document.createElement('img');
   image.alt = '';
   image.decoding = 'async';
@@ -174,8 +178,8 @@ function makeTile(photo) {
     }
     openGallery(photo, open);
   });
-  const remove = button('Delete', () => deletePhoto(photo), 'tile-delete');
-  remove.setAttribute('aria-label', `Delete ${name}`);
+  const remove = button(t('common.delete'), () => deletePhoto(photo), 'tile-delete');
+  remove.setAttribute('aria-label', t('photos.delete', { name }));
   node.append(open, remove);
   armOnLongPress(node, open);
 
@@ -230,13 +234,17 @@ function updateSummary() {
   const videos = photos.filter((photo) => photo.kind === 'video').length;
   const total = photos.length;
   if (total === 0) {
-    summary.textContent = '';
+    i18n.msg(summary);
   } else {
-    const parts = [`${total - videos} ${total - videos === 1 ? 'photo' : 'photos'}`];
-    if (videos > 0) parts.push(`${videos} ${videos === 1 ? 'video' : 'videos'}`);
-    summary.textContent = `${parts.join(' and ')}${nextCursor === '' ? '' : ' so far'}, newest first.`;
+    const more = nextCursor !== '';
+    i18n.msg(summary, () => {
+      const photoText = t('photos.countPhotos', { count: total - videos });
+      const items = videos > 0 ? t('photos.both', { photos: photoText, videos: t('photos.countVideos', { count: videos }) }) : photoText;
+      return t(more ? 'photos.summarySoFar' : 'photos.summary', { items });
+    });
   }
-  emptyNote.textContent = typeFilter === '' ? 'No photos or videos here yet.' : `No ${typeFilter === 'video' ? 'videos' : 'photos'} here yet.`;
+  const emptyKey = { '': 'photos.empty', video: 'photos.emptyVideos', image: 'photos.emptyPhotos' }[typeFilter];
+  i18n.msg(emptyNote, () => t(emptyKey));
   emptyNote.hidden = total > 0 || nextCursor !== '' || loadingPage;
 }
 
@@ -257,14 +265,14 @@ async function fetchPage() {
     const type = typeFilter === '' ? '' : `&type=${typeFilter}`;
     const body = await api('GET', `/api/files/photos?limit=${PAGE_SIZE}${after}${type}${userQuery()}`);
     if (mine !== generation) return;
-    showError('');
+    showError(null);
     nextCursor = body.next;
     loadingPage = false;
     addPhotos(body.photos);
     extendViewerItems(photos.map(toItem));
   } catch (error) {
     if (mine !== generation) return;
-    if (error.message !== 'signed out') showError(error.message);
+    if (error.message !== 'signed out') showError(error);
     nextCursor = '';
   } finally {
     if (mine === generation) {
@@ -302,7 +310,7 @@ function reset() {
   inflight = null;
   pending.length = 0;
   groups.replaceChildren();
-  jumpNote.textContent = '';
+  i18n.msg(jumpNote);
   closeViewer();
 }
 
@@ -357,11 +365,7 @@ async function changeDate(photo, method, day) {
   const moved = photos.find((candidate) => candidate.path === target);
   if (!moved) return;
   showTile(moved);
-  jumpNote.textContent = method === 'PUT' ? `Date changed to ${dayLabel(moved)}.` : 'Date reset to the original.';
-}
-
-function dayLabel(photo) {
-  return new Date(photo.date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  i18n.msg(jumpNote, () => (method === 'PUT' ? t('photos.dateChanged', { date: i18n.longDay(moved.date) }) : t('photos.dateReset')));
 }
 
 function setType(type) {
@@ -389,29 +393,29 @@ function sectionFor(target) {
 
 async function jump(year, month) {
   if (!/^\d{4}$/.test(year) || Number(year) < 1900) {
-    jumpNote.textContent = 'Enter a year from 1900 to 9999.';
+    i18n.msg(jumpNote, () => t('photos.yearRange'));
     return;
   }
   const target = `${year}-${month === '' ? '12' : month}`;
   jumpGo.disabled = true;
-  jumpNote.textContent = 'Looking...';
+  i18n.msg(jumpNote, () => t('photos.looking'));
   const reached = await loadUntil(() => photos.length > 0 && monthKey(photos[photos.length - 1]) <= target);
   jumpGo.disabled = false;
   if (!reached) return;
   const section = sectionFor(target);
   if (!section) {
-    jumpNote.textContent = 'There is nothing to jump to yet.';
+    i18n.msg(jumpNote, () => t('photos.nothingToJump'));
     return;
   }
   const exact = month === '' ? section.dataset.month.startsWith(year) : section.dataset.month === target;
-  const label = month === '' ? year : `${jumpMonth.selectedOptions[0].textContent} ${year}`;
+  const label = () => (month === '' ? year : i18n.monthYear(`${year}-${month}-01`));
   const oldest = nextCursor === '' && section === groups.querySelector('.month:last-child') && section.dataset.month > target;
   if (exact) {
-    jumpNote.textContent = '';
+    i18n.msg(jumpNote);
   } else if (oldest) {
-    jumpNote.textContent = `Nothing from ${label} or earlier, showing the oldest.`;
+    i18n.msg(jumpNote, () => t('photos.nothingOldest', { label: label() }));
   } else {
-    jumpNote.textContent = `Nothing from ${label}, showing the closest earlier month.`;
+    i18n.msg(jumpNote, () => t('photos.nothingClosest', { label: label() }));
   }
   section.scrollIntoView({ block: 'start' });
 }
@@ -437,14 +441,14 @@ function dropPhoto(photo) {
 async function deletePhoto(photo) {
   try {
     const { id } = await api('DELETE', `/api/files?path=${encodeURIComponent(photo.path)}${userQuery()}`);
-    showError('');
+    showError(null);
     const index = dropPhoto(photo);
     updateViewerItems(photos.map(toItem), index);
     updateSummary();
-    showUndo('Deleted.', id);
+    showUndo(() => t('files.deleted'), id);
     window.refreshStorage?.();
   } catch (error) {
-    if (error.message !== 'signed out') showError(error.message);
+    if (error.message !== 'signed out') showError(error);
   }
 }
 
@@ -452,19 +456,19 @@ async function undoDelete(id) {
   try {
     const query = userSelect && userSelect.value !== '' ? `?user=${encodeURIComponent(userSelect.value)}` : '';
     const { path } = await api('POST', `/api/trash/${id}/restore${query}`);
-    showError('');
-    showUndo(`Restored ${path}.`);
+    showError(null);
+    showUndo(() => t('files.restored', { path }));
     await load();
     window.refreshStorage?.();
   } catch (error) {
-    if (error.message !== 'signed out') showError(error.message);
+    if (error.message !== 'signed out') showError(error);
   }
 }
 
 async function loadUsers() {
   const { users } = await api('GET', '/api/users');
   users.forEach((user) => {
-    const option = el('option', `${user.name}'s files`);
+    const option = el('option', t('photos.userFiles', { name: user.name }));
     option.value = user.name;
     userSelect.append(option);
   });
@@ -481,9 +485,33 @@ if (userSelect) {
     load();
   });
   loadUsers().catch((error) => {
-    if (error.message !== 'signed out') showError(error.message);
+    if (error.message !== 'signed out') showError(error);
   });
 }
+
+function fillMonths() {
+  [...(jumpMonth ? jumpMonth.options : [])].forEach((option) => {
+    if (option.value !== '') option.textContent = i18n.monthName(Number(option.value) - 1);
+  });
+}
+
+function relabel() {
+  fillMonths();
+  groups.querySelectorAll('.month').forEach((section) => {
+    section.querySelector('h2').textContent = i18n.monthYear(`${section.dataset.month}-01`);
+  });
+  photos.forEach((photo) => {
+    const name = nameOf(photo.path);
+    photo.tile.node.querySelector('.tile-open').setAttribute('aria-label', t(photo.kind === 'video' ? 'photos.play' : 'photos.open', { name }));
+    const remove = photo.tile.node.querySelector('.tile-delete');
+    remove.textContent = t('common.delete');
+    remove.setAttribute('aria-label', t('photos.delete', { name }));
+  });
+  updateSummary();
+}
+
+i18n.onChange(relabel);
+fillMonths();
 if (typeButtons && jumpForm) {
   markType();
   typeButtons.querySelectorAll('button').forEach((node) => {

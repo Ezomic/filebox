@@ -16,7 +16,7 @@ async function api(method, path, payload) {
     throw new Error('signed out');
   }
   const body = response.status === 204 ? {} : await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || 'Something went wrong.');
+  if (!response.ok) throw i18n.failure(body, 'error.generic');
   return body;
 }
 
@@ -34,8 +34,9 @@ function button(label, onClick, className) {
   return node;
 }
 
-function showError(message) {
-  statusBox.textContent = message;
+function showError(error) {
+  if (error) i18n.report(statusBox, error);
+  else i18n.msg(statusBox);
 }
 
 function join(parent, name) {
@@ -47,17 +48,7 @@ function parentOf(path) {
   return index < 0 ? '' : path.slice(0, index);
 }
 
-function formatSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let unit = -1;
-  do {
-    value /= 1024;
-    unit += 1;
-  } while (value >= 1024 && unit < units.length - 1);
-  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
-}
+const formatSize = (bytes) => i18n.size(bytes);
 
 function pathFromHash() {
   try {
@@ -81,12 +72,12 @@ async function load() {
   currentPath = pathFromHash();
   try {
     const { entries } = await api('GET', `/api/files?path=${encodeURIComponent(currentPath)}`);
-    showError('');
+    showError(null);
     renderCrumbs();
     render(entries);
   } catch (error) {
     if (error.message === 'signed out') return;
-    showError(error.message);
+    showError(error);
     renderCrumbs();
     rows.replaceChildren();
     byId('empty').hidden = true;
@@ -96,7 +87,7 @@ async function load() {
 function renderCrumbs() {
   const crumbs = byId('crumbs');
   const parts = currentPath === '' ? [] : currentPath.split('/');
-  const nodes = [button('Files', () => go(''), 'link')];
+  const nodes = [button(t('nav.files'), () => go(''), 'link')];
   parts.forEach((part, index) => {
     nodes.push(el('span', '/', 'sep'));
     nodes.push(button(part, () => go(parts.slice(0, index + 1).join('/')), 'link'));
@@ -105,9 +96,11 @@ function renderCrumbs() {
 }
 
 let previewable = [];
+let shown = null;
 
 function render(entries) {
   closeViewer();
+  shown = entries;
   previewable = entries.filter((entry) => !entry.isDir && viewKind(entry.name) !== null);
   rows.replaceChildren(...entries.map(fileRow));
   byId('empty').hidden = entries.length > 0;
@@ -133,7 +126,7 @@ function fileRow(entry) {
   row.append(
     nameCell,
     el('td', entry.isDir ? '' : formatSize(entry.size), 'meta'),
-    el('td', new Date(entry.modified).toLocaleString(), 'meta'),
+    el('td', i18n.dateTime(entry.modified), 'meta'),
     actions,
   );
   showActions(actions, entry, path);
@@ -143,19 +136,19 @@ function fileRow(entry) {
 function showActions(cell, entry, path) {
   const nodes = [];
   if (entry.isDir) {
-    const zipLink = el('a', 'Download zip', 'link');
+    const zipLink = el('a', t('files.downloadZip'), 'link');
     zipLink.href = `/api/files/zip?path=${encodeURIComponent(path)}`;
     zipLink.download = `${entry.name}.zip`;
     nodes.push(zipLink);
   } else {
-    const link = el('a', 'Download', 'link');
+    const link = el('a', t('common.download'), 'link');
     link.href = `/api/files/download?path=${encodeURIComponent(path)}`;
     link.download = entry.name;
     nodes.push(link);
   }
   nodes.push(
-    button('Rename', () => showRenameForm(cell, entry, path), 'link'),
-    button('Delete', () => deleteEntry(path), 'link danger'),
+    button(t('files.rename'), () => showRenameForm(cell, entry, path), 'link'),
+    button(t('common.delete'), () => deleteEntry(path), 'link danger'),
   );
   cell.replaceChildren(...nodes);
 }
@@ -167,13 +160,13 @@ function showRenameForm(cell, entry, path) {
   input.maxLength = 255;
   input.required = true;
   input.spellcheck = false;
-  input.setAttribute('aria-label', `New name for ${entry.name}`);
+  input.setAttribute('aria-label', t('files.newNameFor', { name: entry.name }));
 
   const form = el('form', undefined, 'inline');
   const message = el('span', undefined, 'error');
-  const save = el('button', 'Save');
+  const save = el('button', t('common.save'));
   save.type = 'submit';
-  form.append(input, save, button('Cancel', () => showActions(cell, entry, path), 'link'), message);
+  form.append(input, save, button(t('common.cancel'), () => showActions(cell, entry, path), 'link'), message);
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -182,7 +175,7 @@ function showRenameForm(cell, entry, path) {
       await api('POST', '/api/files/rename', { from: path, to: join(currentPath, input.value) });
       await load();
     } catch (error) {
-      message.textContent = error.message;
+      i18n.report(message, error);
       save.disabled = false;
     }
   });
@@ -196,6 +189,8 @@ const UNDO_VISIBLE_MS = 30000;
 const undoBar = el('p', undefined, 'notice');
 const undoText = el('span');
 let undoTimer = null;
+let undoId;
+const undoButton = i18n.label(button('', () => undoDelete(undoId), 'link'), 'common.undo');
 undoBar.hidden = true;
 statusBox.after(undoBar);
 
@@ -204,11 +199,12 @@ function hideUndo() {
   undoBar.hidden = true;
 }
 
-function showUndo(message, id) {
+function showUndo(producer, id) {
   clearTimeout(undoTimer);
-  undoText.textContent = message;
+  i18n.msg(undoText, producer);
+  undoId = id;
   undoBar.replaceChildren(undoText);
-  if (id !== undefined) undoBar.append(button('Undo', () => undoDelete(id), 'link'));
+  if (id !== undefined) undoBar.append(undoButton);
   undoBar.hidden = false;
   undoTimer = setTimeout(hideUndo, UNDO_VISIBLE_MS);
 }
@@ -216,24 +212,24 @@ function showUndo(message, id) {
 async function deleteEntry(path) {
   try {
     const { id } = await api('DELETE', `/api/files?path=${encodeURIComponent(path)}`);
-    showError('');
-    showUndo('Deleted.', id);
+    showError(null);
+    showUndo(() => t('files.deleted'), id);
     await load();
     window.refreshStorage?.();
   } catch (error) {
-    if (error.message !== 'signed out') showError(error.message);
+    if (error.message !== 'signed out') showError(error);
   }
 }
 
 async function undoDelete(id) {
   try {
     const { path } = await api('POST', `/api/trash/${id}/restore`);
-    showError('');
-    showUndo(`Restored ${path}.`);
+    showError(null);
+    showUndo(() => t('files.restored', { path }));
     await load();
     window.refreshStorage?.();
   } catch (error) {
-    if (error.message !== 'signed out') showError(error.message);
+    if (error.message !== 'signed out') showError(error);
   }
 }
 
@@ -242,14 +238,14 @@ byId('folder-form').addEventListener('submit', async (event) => {
   const errorBox = byId('folder-error');
   const input = byId('folder-name');
   const submit = event.target.querySelector('button[type="submit"]');
-  errorBox.textContent = '';
+  i18n.msg(errorBox);
   submit.disabled = true;
   try {
     await api('POST', '/api/files/folder', { path: join(currentPath, input.value) });
     input.value = '';
     await load();
   } catch (error) {
-    errorBox.textContent = error.message;
+    i18n.report(errorBox, error);
   } finally {
     submit.disabled = false;
   }
@@ -273,12 +269,19 @@ const conflictList = byId('conflict-list');
 
 let uploading = false;
 
-class NetworkError extends Error {}
+class NetworkError extends Error {
+  constructor() {
+    super(t('upload.connectionLost'));
+    this.i18n = { key: 'upload.connectionLost' };
+  }
+}
 
 class DiskFullError extends Error {}
 
-function uploadFailure(body, fallback) {
-  return body.diskFull ? new DiskFullError(body.error) : new Error(body.error || fallback);
+function uploadFailure(body, fallbackKey) {
+  const failure = i18n.failure(body, fallbackKey);
+  if (!body.diskFull) return failure;
+  return Object.assign(new DiskFullError(failure.message), { i18n: failure.i18n, code: failure.code });
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -293,7 +296,7 @@ async function call(method, path, payload) {
   try {
     response = await fetch(path, options);
   } catch {
-    throw new NetworkError('The connection was lost.');
+    throw new NetworkError();
   }
   if (response.status === 401) {
     window.location.href = '/login';
@@ -326,8 +329,8 @@ function sendBlob(url, blob, headers, onProgress) {
       }
       resolve({ status: request.status, body });
     });
-    request.addEventListener('error', () => reject(new NetworkError('The connection was lost.')));
-    request.addEventListener('abort', () => reject(new NetworkError('The connection was lost.')));
+    request.addEventListener('error', () => reject(new NetworkError()));
+    request.addEventListener('abort', () => reject(new NetworkError()));
     request.send(blob);
   });
 }
@@ -338,7 +341,7 @@ async function withRetry(task) {
       return await task();
     } catch (error) {
       if (!(error instanceof NetworkError) || attempt >= MAX_RETRIES) throw error;
-      uploadDetail.textContent = `Connection lost, trying again (${attempt + 1} of ${MAX_RETRIES})...`;
+      i18n.msg(uploadDetail, () => t('upload.retrying', { attempt: attempt + 1, max: MAX_RETRIES }));
       await sleep(Math.min(1000 * 2 ** attempt, 15000));
     }
   }
@@ -427,7 +430,7 @@ async function findConflicts(items) {
   for (let start = 0; start < items.length; start += EXISTS_BATCH) {
     const paths = items.slice(start, start + EXISTS_BATCH).map((item) => item.target);
     const { status, body } = await withRetry(() => call('POST', '/api/files/exists', { paths }));
-    if (status !== 200) throw new Error(body.error || 'Could not check for existing files.');
+    if (status !== 200) throw i18n.failure(body, 'upload.checkFailed');
     body.existing.forEach((entry) => existing.set(entry.path, entry));
   }
   return items.filter((item) => existing.has(item.target)).map((item) => ({ item, isDir: existing.get(item.target).isDir }));
@@ -446,13 +449,13 @@ function conflictRow(item, isDir, choices) {
     radio.disabled = isDir && value === 'replace';
     radio.addEventListener('change', () => choices.set(item.target, value));
     radios[value] = radio;
-    label.append(radio, value === 'skip' ? ' Skip' : ' Replace');
+    label.append(radio, ' ', i18n.label(el('span'), value === 'skip' ? 'conflict.skip' : 'conflict.replace'));
     group.append(label);
   });
   choices.set(item.target, 'skip');
   const row = el('li');
   row.append(el('span', item.target, 'conflict-name'), group);
-  if (isDir) row.append(el('span', 'A folder with this name exists.', 'detail'));
+  if (isDir) row.append(i18n.label(el('span', undefined, 'detail'), 'conflict.folderExists'));
   row.radios = radios;
   return row;
 }
@@ -467,7 +470,7 @@ function askAboutConflicts(conflicts) {
       row.radios[value].dispatchEvent(new Event('change'));
     });
 
-    byId('conflict-title').textContent = `${conflicts.length} ${conflicts.length === 1 ? 'file already exists' : 'files already exist'}`;
+    i18n.msg(byId('conflict-title'), () => t('conflict.title', { count: conflicts.length }));
     byId('conflict-skip-all').onclick = () => setAll('skip');
     byId('conflict-replace-all').onclick = () => setAll('replace');
     byId('conflict-continue').onclick = () => {
@@ -484,7 +487,7 @@ function askAboutConflicts(conflicts) {
 async function makeFolders(paths) {
   for (const path of paths) {
     const { status, body } = await withRetry(() => call('POST', '/api/files/folder', { path }));
-    if (status !== 201 && status !== 409) throw new Error(body.error || `Could not create the folder ${path}.`);
+    if (status !== 201 && status !== 409) throw i18n.failure(body, 'upload.folderFailed', { path });
   }
 }
 
@@ -492,7 +495,7 @@ async function sendSmallFile(item, report) {
   const overwrite = item.overwrite ? '&overwrite=1' : '';
   const url = `/api/files/content?path=${encodeURIComponent(item.target)}${overwrite}`;
   const { status, body } = await withRetry(() => sendBlob(url, item.file, {}, report));
-  if (status !== 204) throw uploadFailure(body, 'The upload failed.');
+  if (status !== 204) throw uploadFailure(body, 'upload.failed');
 }
 
 async function resumeSession(item, key) {
@@ -509,7 +512,7 @@ async function resumeSession(item, key) {
 async function createSession(item, key) {
   const payload = { path: item.target, size: item.file.size, overwrite: item.overwrite };
   const { status, body } = await withRetry(() => call('POST', '/api/uploads', payload));
-  if (status !== 201) throw uploadFailure(body, 'The upload could not be started.');
+  if (status !== 201) throw uploadFailure(body, 'upload.startFailed');
   saveSession(key, { id: body.id, overwrite: item.overwrite });
   return { id: body.id, offset: 0, resumed: false };
 }
@@ -528,7 +531,7 @@ async function sendLargeFile(item, report) {
   let restarted = false;
   let stalls = 0;
   let offset = session.offset;
-  if (session.resumed) uploadDetail.textContent = `Resuming at ${formatSize(offset)}...`;
+  if (session.resumed) i18n.msg(uploadDetail, () => t('upload.resuming', { size: formatSize(offset) }));
 
   for (let finishTries = 0; finishTries < 3; finishTries += 1) {
     while (offset < size) {
@@ -539,7 +542,7 @@ async function sendLargeFile(item, report) {
         stalls = 0;
       } else if ((status === 409 || status === 400) && typeof body.offset === 'number') {
         stalls = body.offset === from ? stalls + 1 : 0;
-        if (stalls >= 3) throw new Error(body.error || 'The upload failed.');
+        if (stalls >= 3) throw i18n.failure(body, 'upload.failed');
         offset = body.offset;
       } else if (status === 404 && !restarted) {
         restarted = true;
@@ -547,7 +550,7 @@ async function sendLargeFile(item, report) {
         session = await createSession(item, key);
         offset = 0;
       } else {
-        throw new Error(body.error || 'The upload failed.');
+        throw i18n.failure(body, 'upload.failed');
       }
       report(offset);
     }
@@ -557,10 +560,10 @@ async function sendLargeFile(item, report) {
       forgetSession(key);
       return;
     }
-    if (status !== 409 || typeof body.offset !== 'number') throw new Error(body.error || 'The upload could not be completed.');
+    if (status !== 409 || typeof body.offset !== 'number') throw i18n.failure(body, 'upload.incomplete');
     offset = body.offset;
   }
-  throw new Error('The upload could not be completed.');
+  throw i18n.problem('upload.incomplete');
 }
 
 async function alreadyThere(item) {
@@ -573,7 +576,15 @@ function setProgress(item, position, count, fileBytes, doneBytes, totalBytes) {
   uploadProgress.value = fileBytes;
   uploadTotal.max = Math.max(totalBytes, 1);
   uploadTotal.value = doneBytes + fileBytes;
-  uploadDetail.textContent = `${item.target} (${position} of ${count}): ${formatSize(fileBytes)} of ${formatSize(item.file.size)}. Overall ${formatSize(doneBytes + fileBytes)} of ${formatSize(totalBytes)}.`;
+  i18n.msg(uploadDetail, () => t('upload.progress', {
+    name: item.target,
+    position,
+    total: count,
+    sent: formatSize(fileBytes),
+    size: formatSize(item.file.size),
+    overallSent: formatSize(doneBytes + fileBytes),
+    overallSize: formatSize(totalBytes),
+  }));
 }
 
 function setBusy(busy) {
@@ -590,18 +601,25 @@ function showProgress(visible) {
 }
 
 function summarize(done, skipped, failed, stopped) {
-  const parts = [`Uploaded ${done} ${done === 1 ? 'file' : 'files'}.`];
-  if (skipped > 0) parts.push(`Skipped ${skipped}.`);
-  if (stopped) parts.push(stopped);
-  uploadSummary.textContent = parts.join(' ');
-  uploadDetail.textContent = '';
-  byId('upload-failures').replaceChildren(...failed.map(({ item, message }) => el('li', `${item.target}: ${message}`, 'error')));
+  i18n.msg(uploadSummary, () => {
+    const parts = [t('upload.done', { count: done })];
+    if (skipped > 0) parts.push(t('upload.skipped', { count: skipped }));
+    if (stopped) parts.push(stopped());
+    return parts.join(' ');
+  });
+  i18n.msg(uploadDetail);
+  const lines = failed.map(({ item, error }) => {
+    const line = el('li', undefined, 'error');
+    i18n.msg(line, () => `${item.target}: ${i18n.describe(error)}`);
+    return line;
+  });
+  byId('upload-failures').replaceChildren(...lines);
 }
 
 async function decideConflicts(items) {
   const conflicts = await findConflicts(items);
   if (conflicts.length === 0) return;
-  uploadSummary.textContent = 'Some files already exist. Choose what to do with each.';
+  i18n.msg(uploadSummary, () => t('conflict.intro'));
   const choices = await askAboutConflicts(conflicts);
   conflicts.forEach(({ item }) => {
     item.overwrite = choices.get(item.target) === 'replace';
@@ -613,18 +631,18 @@ async function runUploads(found, base) {
   const items = found.files.map(({ file, rel }) => ({ file, target: join(base, rel), overwrite: false, skip: false }));
   if (items.length === 0 && found.dirs.length === 0) return;
   setBusy(true);
-  uploadSummary.textContent = 'Checking for files that already exist...';
+  i18n.msg(uploadSummary, () => t('upload.checking'));
   byId('upload-failures').replaceChildren();
   const failed = [];
   let skipped = 0;
   let done = 0;
-  let stopped = '';
+  let stopped = null;
   try {
     await decideConflicts(items);
     const queue = items.filter((item) => !item.skip);
     skipped = items.length - queue.length;
     await makeFolders(folderPaths(base, found));
-    uploadSummary.textContent = 'Uploading...';
+    i18n.msg(uploadSummary, () => t('upload.uploading'));
     showProgress(true);
     const totalBytes = queue.reduce((sum, item) => sum + item.file.size, 0);
     let doneBytes = 0;
@@ -638,21 +656,20 @@ async function runUploads(found, base) {
         doneBytes += item.file.size;
       } catch (error) {
         if (error.message === 'signed out') return;
+        failed.push({ item, error });
         if (error instanceof DiskFullError) {
-          failed.push({ item, message: error.message });
-          stopped = 'The remaining files were not uploaded.';
+          stopped = () => t('upload.stoppedDisk');
           break;
         }
-        failed.push({ item, message: error.message });
         if (error instanceof NetworkError) {
-          stopped = 'Stopped because the connection was lost. Choose the same files again to continue where they stopped.';
+          stopped = () => t('upload.stoppedResume');
           break;
         }
       }
     }
   } catch (error) {
     if (error.message === 'signed out') return;
-    stopped = error instanceof NetworkError ? 'Stopped because the connection was lost.' : error.message;
+    stopped = error instanceof NetworkError ? () => t('upload.stoppedNetwork') : () => i18n.describe(error);
   } finally {
     setBusy(false);
     conflictBox.hidden = true;
@@ -669,7 +686,7 @@ async function startUpload(collect) {
   try {
     found = await collect();
   } catch {
-    uploadSummary.textContent = 'Could not read what you selected.';
+    i18n.msg(uploadSummary, () => t('upload.readFailed'));
     return;
   }
   if (uploading) return;
@@ -694,7 +711,7 @@ function canThumbnail(file) {
 
 function badge(name) {
   const label = extensionOf(name).slice(0, 4).toUpperCase();
-  return el('span', label || 'FILE', 'thumb');
+  return el('span', label || t('preview.badge'), 'thumb');
 }
 
 async function drawThumbnail(file) {
@@ -732,10 +749,19 @@ function updatePreviewTotals() {
   const { found, base } = pending;
   const count = found.files.length;
   const bytes = found.files.reduce((sum, { file }) => sum + file.size, 0);
-  const where = base === '' ? 'the top folder' : base;
+  const where = base === '' ? t('preview.topFolder') : base;
   previewTitle.textContent = count === 0
-    ? `${found.dirs.length} empty ${found.dirs.length === 1 ? 'folder' : 'folders'} to create in ${where}`
-    : `${count} ${count === 1 ? 'file' : 'files'}, ${formatSize(bytes)}, to upload to ${where}`;
+    ? t('preview.emptyFolders', { count: found.dirs.length, where })
+    : t('preview.files', { count, size: formatSize(bytes), where });
+}
+
+function relabelPreview() {
+  updatePreviewTotals();
+  for (const row of previewList.children) {
+    row.sizeLabel.textContent = formatSize(row.entry.file.size);
+    row.removeButton.textContent = t('preview.remove');
+    row.removeButton.setAttribute('aria-label', t('preview.removeFile', { name: row.entry.rel }));
+  }
 }
 
 function closePreview() {
@@ -748,7 +774,7 @@ function previewRow(session, entry, withThumb) {
   const holder = el('span', undefined, 'thumb-holder');
   holder.append(badge(entry.file.name));
   const row = el('li');
-  const remove = button('Remove', () => {
+  const remove = button(t('preview.remove'), () => {
     session.found.files = session.found.files.filter((candidate) => candidate !== entry);
     row.remove();
     if (session.found.files.length === 0 && session.found.dirs.length === 0) {
@@ -758,16 +784,18 @@ function previewRow(session, entry, withThumb) {
     updatePreviewTotals();
     previewUpload.focus();
   }, 'link');
-  remove.setAttribute('aria-label', `Remove ${entry.rel}`);
-  row.append(holder, el('span', entry.rel, 'preview-name'), el('span', formatSize(entry.file.size), 'detail'), remove);
+  remove.setAttribute('aria-label', t('preview.removeFile', { name: entry.rel }));
+  const sizeLabel = el('span', formatSize(entry.file.size), 'detail');
+  row.append(holder, el('span', entry.rel, 'preview-name'), sizeLabel, remove);
+  Object.assign(row, { entry, sizeLabel, removeButton: remove });
   return { row, job: withThumb && canThumbnail(entry.file) ? { file: entry.file, holder } : null };
 }
 
 function showPreview(found, base) {
   if (found.files.length === 0 && found.dirs.length === 0) return;
   closePreview();
-  uploadSummary.textContent = '';
-  uploadDetail.textContent = '';
+  i18n.msg(uploadSummary);
+  i18n.msg(uploadDetail);
   byId('upload-failures').replaceChildren();
   const session = { found, base };
   pending = session;
@@ -823,6 +851,12 @@ window.addEventListener('beforeunload', (event) => {
 byId('logout').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
   window.location.href = '/login';
+});
+
+i18n.onChange(() => {
+  renderCrumbs();
+  if (shown && !document.querySelector('#file-rows form')) render(shown);
+  if (pending) relabelPreview();
 });
 
 window.addEventListener('hashchange', load);

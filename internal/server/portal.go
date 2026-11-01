@@ -106,6 +106,9 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.Handle("GET /static/viewer.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/photos.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/storage.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
+	p.mux.Handle("GET /static/i18n.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
+	p.mux.Handle("GET /static/nl.json", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
+	p.mux.Handle("GET /static/en.json", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(p.pages))))
 	p.mux.HandleFunc("/", p.notFound)
 	p.mux.HandleFunc("GET /{$}", p.homePage)
@@ -194,11 +197,12 @@ func (p *Portal) EndSessions(user string) {
 type sharedAssets struct{ fs.FS }
 
 func (s sharedAssets) Open(name string) (fs.File, error) {
-	if name != "style.css" && name != "files.js" && name != "trash.js" && name != "viewer.js" && name != "photos.js" && name != "storage.js" {
-		return nil, fs.ErrNotExist
+	switch name {
+	case "style.css", "files.js", "trash.js", "viewer.js", "photos.js", "storage.js", "i18n.js", "nl.json", "en.json":
+		return s.FS.Open(name)
 	}
 
-	return s.FS.Open(name)
+	return nil, fs.ErrNotExist
 }
 
 // Pages that must not reveal themselves answer with this too, so they look like any other unknown path.
@@ -267,7 +271,7 @@ func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
 	ip := ipKey(r)
 	if !p.ipLimit.begin(ip) {
 		log.Printf("portal: login blocked ip=%s", ip)
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		writeCoded(w, http.StatusTooManyRequests, codeRateLimited, "too many failed attempts, try again later")
 		return
 	}
 	defer p.ipLimit.end(ip)
@@ -275,12 +279,12 @@ func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
 	if !valid {
 		p.ipLimit.fail(ip)
 		log.Printf("portal: login failed user=%s ip=%s", logName(body.Username), ip)
-		writeError(w, http.StatusUnauthorized, "wrong username or password")
+		writeCoded(w, http.StatusUnauthorized, codeInvalidCredentials, "wrong username or password")
 		return
 	}
 	if !target.limit.begin(target.limitKey) {
 		log.Printf("portal: login blocked user=%s ip=%s", logName(body.Username), ip)
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		writeCoded(w, http.StatusTooManyRequests, codeRateLimited, "too many failed attempts, try again later")
 		return
 	}
 	defer target.limit.end(target.limitKey)
@@ -289,17 +293,17 @@ func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
 	ok, err := p.verify(target.account, body.Password)
 	switch {
 	case errors.Is(err, errPortalBusy):
-		writeError(w, http.StatusServiceUnavailable, "busy, try again in a moment")
+		writeCoded(w, http.StatusServiceUnavailable, codeBusy, "busy, try again in a moment")
 		return
 	case err != nil:
 		log.Printf("portal: password check failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "could not check the password right now")
+		writeCoded(w, http.StatusInternalServerError, codePasswordCheckFailed, "could not check the password right now")
 		return
 	case !ok || !target.real:
 		p.ipLimit.fail(ip)
 		target.limit.fail(target.limitKey)
 		log.Printf("portal: login failed user=%s ip=%s", logName(body.Username), ip)
-		writeError(w, http.StatusUnauthorized, "wrong username or password")
+		writeCoded(w, http.StatusUnauthorized, codeInvalidCredentials, "wrong username or password")
 		return
 	}
 
@@ -314,10 +318,10 @@ func (p *Portal) startSession(w http.ResponseWriter, user string, generation uin
 	token, err := p.sessions.create(user, generation)
 	switch {
 	case errors.Is(err, errStaleLogin):
-		writeError(w, http.StatusConflict, "your account just changed, try again")
+		writeCoded(w, http.StatusConflict, codeAccountChanged, "your account just changed, try again")
 		return false
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, "could not start session")
+		writeCoded(w, http.StatusInternalServerError, codeSessionFailed, "could not start session")
 		return false
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -406,7 +410,7 @@ func (p *Portal) requireSession(next func(http.ResponseWriter, *http.Request, st
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := p.currentUser(r)
 		if !ok {
-			writeError(w, http.StatusUnauthorized, "not signed in")
+			writeCoded(w, http.StatusUnauthorized, codeNotSignedIn, "not signed in")
 			return
 		}
 		next(w, r, user)
@@ -432,7 +436,7 @@ func (p *Portal) openUserFiles(w http.ResponseWriter, user string) (files system
 	files, err := p.openFiles(user)
 	if err != nil {
 		log.Printf("portal: open files for %q: %v", user, err)
-		writeError(w, http.StatusInternalServerError, "could not open your files")
+		writeCoded(w, http.StatusInternalServerError, codeFilesUnavailable, "could not open your files")
 		return nil, nil, false
 	}
 	if closer, isCloser := files.(io.Closer); isCloser {
@@ -452,13 +456,13 @@ func (p *Portal) changePassword(w http.ResponseWriter, r *http.Request, user str
 	if !decodeJSON(w, r, &body) || !validPassword(w, body.Password) {
 		return
 	}
-	if !p.confirmPassword(w, r, user, body.Current, "password change", "your current password is wrong") {
+	if !p.confirmPassword(w, r, user, body.Current, "password change", codeWrongCurrentPassword, "your current password is wrong") {
 		return
 	}
 
 	if err := p.users.SetPassword(user, body.Password); err != nil {
 		log.Printf("portal: change password for %s: %v", logName(user), err)
-		writeError(w, http.StatusInternalServerError, "could not change the password")
+		writeCoded(w, http.StatusInternalServerError, codePasswordChangeFailed, "could not change the password")
 		return
 	}
 	log.Printf("portal: password changed user=%s ip=%s", user, ipKey(r))
@@ -468,17 +472,17 @@ func (p *Portal) changePassword(w http.ResponseWriter, r *http.Request, user str
 
 // confirmPassword checks the signed-in user's own password through the same limits as login and
 // writes the error response itself when the check does not pass.
-func (p *Portal) confirmPassword(w http.ResponseWriter, r *http.Request, user, password, action, wrongMessage string) bool {
+func (p *Portal) confirmPassword(w http.ResponseWriter, r *http.Request, user, password, action, wrongCode, wrongMessage string) bool {
 	ip := ipKey(r)
 	if !p.ipLimit.begin(ip) {
 		log.Printf("portal: %s blocked user=%s ip=%s", action, logName(user), ip)
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		writeCoded(w, http.StatusTooManyRequests, codeRateLimited, "too many failed attempts, try again later")
 		return false
 	}
 	defer p.ipLimit.end(ip)
 	if !p.userLimit.begin(user) {
 		log.Printf("portal: %s blocked user=%s ip=%s", action, logName(user), ip)
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		writeCoded(w, http.StatusTooManyRequests, codeRateLimited, "too many failed attempts, try again later")
 		return false
 	}
 	defer p.userLimit.end(user)
@@ -486,17 +490,17 @@ func (p *Portal) confirmPassword(w http.ResponseWriter, r *http.Request, user, p
 	ok, err := p.verify(user, password)
 	switch {
 	case errors.Is(err, errPortalBusy):
-		writeError(w, http.StatusServiceUnavailable, "busy, try again in a moment")
+		writeCoded(w, http.StatusServiceUnavailable, codeBusy, "busy, try again in a moment")
 		return false
 	case err != nil:
 		log.Printf("portal: password check failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "could not check the password right now")
+		writeCoded(w, http.StatusInternalServerError, codePasswordCheckFailed, "could not check the password right now")
 		return false
 	case !ok:
 		p.ipLimit.fail(ip)
 		p.userLimit.fail(user)
 		log.Printf("portal: %s failed user=%s ip=%s", action, logName(user), ip)
-		writeError(w, http.StatusUnauthorized, wrongMessage)
+		writeCoded(w, http.StatusUnauthorized, wrongCode, wrongMessage)
 		return false
 	}
 

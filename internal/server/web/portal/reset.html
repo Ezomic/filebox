@@ -3,21 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Choose a new password</title>
+  <title data-i18n="reset.title">Choose a new password</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
 </head>
 <body>
   <main>
     <form class="card auth" id="reset-form">
-      <h1>Choose a new password</h1>
-      <p class="detail">This is also your SFTP password. You will be signed out everywhere afterwards.</p>
-      <label for="password">New password (at least 12 characters)</label>
+      <h1 data-i18n="reset.title">Choose a new password</h1>
+      <p class="detail" data-i18n="password.intro">This is also your SFTP password. You will be signed out everywhere afterwards.</p>
+      <label for="password" data-i18n="password.new">New password (at least 12 characters)</label>
       <input id="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required autofocus>
-      <label for="confirm">New password again</label>
+      <label for="confirm" data-i18n="password.again">New password again</label>
       <input id="confirm" type="password" autocomplete="new-password" minlength="12" maxlength="128" required>
       <p class="error" id="error" role="alert"></p>
-      <button type="submit">Set new password</button>
-      <a class="link" href="/forgot">Ask for a new link</a>
+      <button type="submit" data-i18n="reset.submit">Set new password</button>
+      <a class="link" href="/forgot" data-i18n="common.newLink">Ask for a new link</a>
     </form>
   </main>
   <script src="/static/reset.js"></script>

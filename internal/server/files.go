@@ -86,7 +86,7 @@ func (a fileHandlers) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.ContentLength > a.maxUpload {
-		writeError(w, http.StatusRequestEntityTooLarge, "the file is larger than the upload limit")
+		writeCoded(w, http.StatusRequestEntityTooLarge, codeUploadTooLarge, "the file is larger than the upload limit")
 		return
 	}
 	if a.refuseWhenFull(w) {
@@ -103,12 +103,12 @@ func (a fileHandlers) uploadFile(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
 	case errors.As(err, &tooLarge):
-		writeError(w, http.StatusRequestEntityTooLarge, "the file is larger than the upload limit")
+		writeCoded(w, http.StatusRequestEntityTooLarge, codeUploadTooLarge, "the file is larger than the upload limit")
 	case body.err != nil:
 		log.Printf("upload interrupted: %v", logCause(body.err))
-		writeError(w, http.StatusBadRequest, "the upload was interrupted")
+		writeCoded(w, http.StatusBadRequest, codeUploadInterrupted, "the upload was interrupted")
 	case errors.Is(err, system.ErrIsDir):
-		writeError(w, http.StatusConflict, "a folder with that name already exists")
+		writeCoded(w, http.StatusConflict, codeFolderExists, "a folder with that name already exists")
 	default:
 		fileError(w, "upload", name, err)
 	}
@@ -195,26 +195,26 @@ func logCause(err error) error {
 func fileError(w http.ResponseWriter, action, _ string, err error) {
 	switch {
 	case errors.Is(err, system.ErrInvalidPath):
-		writeError(w, http.StatusBadRequest, "invalid path")
+		writeCoded(w, http.StatusBadRequest, codePathInvalid, "invalid path")
 	case errors.Is(err, system.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not found")
+		writeCoded(w, http.StatusNotFound, codeNotFound, "not found")
 	case errors.Is(err, system.ErrNotEmpty):
-		writeError(w, http.StatusConflict, "the folder is not empty, delete what is inside first")
+		writeCoded(w, http.StatusConflict, codeFolderNotEmpty, "the folder is not empty, delete what is inside first")
 	case errors.Is(err, system.ErrExists):
-		writeError(w, http.StatusConflict, "something with that name already exists")
+		writeCoded(w, http.StatusConflict, codeAlreadyExists, "something with that name already exists")
 	case errors.Is(err, system.ErrNotDir):
-		writeError(w, http.StatusUnprocessableEntity, "part of that path is not a folder")
+		writeCoded(w, http.StatusUnprocessableEntity, codeNotAFolder, "part of that path is not a folder")
 	case errors.Is(err, system.ErrIsDir):
-		writeError(w, http.StatusUnprocessableEntity, "that path is a folder")
+		writeCoded(w, http.StatusUnprocessableEntity, codeIsAFolder, "that path is a folder")
 	case errors.Is(err, system.ErrNotMedia):
-		writeError(w, http.StatusUnsupportedMediaType, "this file type has no thumbnail")
+		writeCoded(w, http.StatusUnsupportedMediaType, codeNoThumbnail, "this file type has no thumbnail")
 	case errors.Is(err, system.ErrOverQuota):
-		writeError(w, http.StatusInsufficientStorage, overQuotaMessage)
+		writeCoded(w, http.StatusInsufficientStorage, codeQuotaExceeded, overQuotaMessage)
 	case errors.Is(err, system.ErrIntoSelf):
-		writeError(w, http.StatusUnprocessableEntity, "a folder cannot be moved into itself")
+		writeCoded(w, http.StatusUnprocessableEntity, codeIntoSelf, "a folder cannot be moved into itself")
 	default:
 		log.Printf("%s: %v", action, logCause(err))
-		writeError(w, http.StatusInternalServerError, "the file operation failed")
+		writeCoded(w, http.StatusInternalServerError, codeFileOperationFailed, "the file operation failed")
 	}
 }
 

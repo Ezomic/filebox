@@ -3,21 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Email me a sign-in link</title>
+  <title data-i18n="login.emailLink">Email me a sign-in link</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
 </head>
 <body>
   <main>
     <form class="card auth" id="link-form">
-      <h1>Email me a sign-in link</h1>
-      <p class="detail" id="intro">Enter the email address you confirmed on your account and we will email a link. The link works once and expires after 15 minutes.</p>
-      <p class="detail">Admins sign in with their password.</p>
-      <label for="email">Email address</label>
+      <h1 data-i18n="login.emailLink">Email me a sign-in link</h1>
+      <p class="detail" id="intro" data-i18n="link.intro">Enter the email address you confirmed on your account and we will email a link. The link works once and expires after 15 minutes.</p>
+      <p class="detail" data-i18n="link.adminNote">Admins sign in with their password.</p>
+      <label for="email" data-i18n="email.title">Email address</label>
       <input id="email" type="email" autocomplete="email" autocapitalize="none" spellcheck="false" required autofocus>
       <p class="error" id="error" role="alert"></p>
       <p class="detail" id="done" role="status" hidden></p>
-      <button type="submit">Email me a link</button>
-      <a class="link" href="/login">Back to sign in</a>
+      <button type="submit" data-i18n="common.emailLink">Email me a link</button>
+      <a class="link" href="/login" data-i18n="common.backToSignIn">Back to sign in</a>
     </form>
   </main>
   <script src="/static/sign-in-link.js"></script>

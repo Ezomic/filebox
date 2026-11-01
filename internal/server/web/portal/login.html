@@ -3,21 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign in to your files</title>
+  <title data-i18n="login.title">Sign in to your files</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
 </head>
 <body>
   <main>
     <form class="card auth" id="login-form">
-      <h1>Sign in to your files</h1>
-      <label for="username">Username or email address</label>
+      <h1 data-i18n="login.title">Sign in to your files</h1>
+      <label for="username" data-i18n="login.username">Username or email address</label>
       <input id="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
-      <label for="password">Password</label>
+      <label for="password" data-i18n="common.password">Password</label>
       <input id="password" type="password" autocomplete="current-password" required>
       <p class="error" id="error" role="alert"></p>
-      <button type="submit">Sign in</button>
-      <a class="link" id="link-option" href="/sign-in-link" hidden>Email me a sign-in link</a>
-      <a class="link" href="/forgot">Forgot your password?</a>
+      <button type="submit" data-i18n="login.submit">Sign in</button>
+      <a class="link" id="link-option" href="/sign-in-link" data-i18n="login.emailLink" hidden>Email me a sign-in link</a>
+      <a class="link" href="/forgot" data-i18n="login.forgot">Forgot your password?</a>
     </form>
   </main>
   <script src="/static/login.js"></script>

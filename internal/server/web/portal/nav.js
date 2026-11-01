@@ -12,7 +12,8 @@ function setLink(admin) {
   const link = document.createElement('a');
   link.className = 'link';
   link.href = '/admin/users';
-  link.textContent = 'Users';
+  link.textContent = t('nav.users');
+  link.setAttribute('data-i18n', 'nav.users');
   nav.querySelector('a[href="/"]').after(link);
 }
 

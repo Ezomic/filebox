@@ -38,7 +38,7 @@ type adminRoleChange struct {
 func (p *Portal) requireAdmin(next func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
 	return p.requireSession(func(w http.ResponseWriter, r *http.Request, user string) {
 		if !p.roles.IsAdmin(user) {
-			writeError(w, http.StatusForbidden, "admins only")
+			writeCoded(w, http.StatusForbidden, codeAdminsOnly, "admins only")
 			return
 		}
 		next(w, r, user)
@@ -61,7 +61,7 @@ func (p *Portal) adminList(w http.ResponseWriter, _ *http.Request, _ string) {
 	names, err := p.users.List()
 	if err != nil {
 		log.Printf("portal: list users: %v", err)
-		writeError(w, http.StatusInternalServerError, "could not list users")
+		writeCoded(w, http.StatusInternalServerError, codeUserListFailed, "could not list users")
 		return
 	}
 
@@ -92,17 +92,17 @@ func (p *Portal) adminCreate(w http.ResponseWriter, r *http.Request, admin strin
 	case !ok:
 		return
 	case exists:
-		writeError(w, http.StatusConflict, "a user with that name already exists")
+		writeCoded(w, http.StatusConflict, codeUserExists, "a user with that name already exists")
 		return
 	}
 	if err := p.roles.Demote(body.Name); err != nil {
 		log.Printf("portal: clear role of %s: %v", logName(body.Name), err)
-		writeError(w, http.StatusInternalServerError, "could not create the user")
+		writeCoded(w, http.StatusInternalServerError, codeUserCreateFailed, "could not create the user")
 		return
 	}
 	if err := p.users.Create(body.Name, body.Password); err != nil {
 		log.Printf("portal: create user %s: %v", logName(body.Name), err)
-		writeError(w, http.StatusInternalServerError, "could not create the user")
+		writeCoded(w, http.StatusInternalServerError, codeUserCreateFailed, "could not create the user")
 		return
 	}
 	p.audit(r, "create", admin, body.Name)
@@ -119,13 +119,13 @@ func (p *Portal) adminSetPassword(w http.ResponseWriter, r *http.Request, admin 
 		return
 	}
 	if p.roles.IsAdmin(name) {
-		writeError(w, http.StatusForbidden, "admins cannot reset another admin's password")
+		writeCoded(w, http.StatusForbidden, codeAdminProtected, "admins cannot reset another admin's password")
 		return
 	}
 
 	if err := p.users.SetPassword(name, body.Password); err != nil {
 		log.Printf("portal: reset password for %s: %v", logName(name), err)
-		writeError(w, http.StatusInternalServerError, "could not change the password")
+		writeCoded(w, http.StatusInternalServerError, codePasswordChangeFailed, "could not change the password")
 		return
 	}
 	p.sessions.destroyUser(name)
@@ -140,11 +140,11 @@ func (p *Portal) adminSetRole(w http.ResponseWriter, r *http.Request, admin stri
 		return
 	}
 	if body.Role != roleUser && body.Role != roleAdmin {
-		writeError(w, http.StatusUnprocessableEntity, "role must be user or admin")
+		writeCoded(w, http.StatusUnprocessableEntity, codeRoleInvalid, "role must be user or admin")
 		return
 	}
 	if body.Role == roleUser && name == admin {
-		writeError(w, http.StatusConflict, "you cannot remove your own admin role")
+		writeCoded(w, http.StatusConflict, codeOwnAdminRole, "you cannot remove your own admin role")
 		return
 	}
 	if !p.confirmAdmin(w, r, admin, body.Confirm) || !p.targetExists(w, name) {
@@ -159,11 +159,11 @@ func (p *Portal) adminSetRole(w http.ResponseWriter, r *http.Request, admin stri
 	}
 	switch {
 	case errors.Is(err, auth.ErrLastAdmin):
-		writeError(w, http.StatusConflict, "there must always be at least one admin")
+		writeCoded(w, http.StatusConflict, codeLastAdmin, "there must always be at least one admin")
 		return
 	case err != nil:
 		log.Printf("portal: %s %s: %v", action, logName(name), err)
-		writeError(w, http.StatusInternalServerError, "could not change the role")
+		writeCoded(w, http.StatusInternalServerError, codeRoleChangeFailed, "could not change the role")
 		return
 	}
 	p.audit(r, action, admin, name)
@@ -177,7 +177,7 @@ func (p *Portal) adminDelete(w http.ResponseWriter, r *http.Request, admin strin
 		return
 	}
 	if name == admin {
-		writeError(w, http.StatusConflict, "you cannot delete your own account")
+		writeCoded(w, http.StatusConflict, codeOwnAccount, "you cannot delete your own account")
 		return
 	}
 	if !p.confirmAdmin(w, r, admin, body.Confirm) || !p.targetExists(w, name) {
@@ -187,11 +187,11 @@ func (p *Portal) adminDelete(w http.ResponseWriter, r *http.Request, admin strin
 	wasAdmin := p.roles.IsAdmin(name)
 	switch err := p.roles.DemoteUnlessLast(name); {
 	case errors.Is(err, auth.ErrLastAdmin):
-		writeError(w, http.StatusConflict, "there must always be at least one admin")
+		writeCoded(w, http.StatusConflict, codeLastAdmin, "there must always be at least one admin")
 		return
 	case err != nil:
 		log.Printf("portal: clear role of %s: %v", logName(name), err)
-		writeError(w, http.StatusInternalServerError, "could not delete the user")
+		writeCoded(w, http.StatusInternalServerError, codeUserDeleteFailed, "could not delete the user")
 		return
 	}
 	if err := p.users.Delete(name); err != nil {
@@ -201,7 +201,7 @@ func (p *Portal) adminDelete(w http.ResponseWriter, r *http.Request, admin strin
 			}
 		}
 		log.Printf("portal: delete user %s: %v", logName(name), err)
-		writeError(w, http.StatusInternalServerError, "could not delete the user")
+		writeCoded(w, http.StatusInternalServerError, codeUserDeleteFailed, "could not delete the user")
 		return
 	}
 	p.EndSessions(name)
@@ -210,13 +210,13 @@ func (p *Portal) adminDelete(w http.ResponseWriter, r *http.Request, admin strin
 }
 
 func (p *Portal) confirmAdmin(w http.ResponseWriter, r *http.Request, admin, password string) bool {
-	return p.confirmPassword(w, r, admin, password, "admin confirmation", "your password is wrong")
+	return p.confirmPassword(w, r, admin, password, "admin confirmation", codeWrongPassword, "your password is wrong")
 }
 
 func (p *Portal) targetExists(w http.ResponseWriter, name string) bool {
 	exists, ok := userExists(w, p.users, name)
 	if ok && !exists {
-		writeError(w, http.StatusNotFound, "no such user")
+		writeCoded(w, http.StatusNotFound, codeUserNotFound, "no such user")
 	}
 
 	return ok && exists

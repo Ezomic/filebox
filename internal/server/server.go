@@ -333,7 +333,7 @@ func decodeJSONMax(w http.ResponseWriter, r *http.Request, into any, limit int64
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeCoded(w, http.StatusBadRequest, codeInvalidRequest, "invalid request body")
 		return false
 	}
 

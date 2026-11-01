@@ -3,17 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign in with your link</title>
+  <title data-i18n="signin.title">Sign in with your link</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
 </head>
 <body>
   <main>
     <form class="card auth" id="sign-in-form">
-      <h1>Sign in with your link</h1>
-      <p class="detail">Press the button to sign in. Your password stays as it is.</p>
+      <h1 data-i18n="signin.title">Sign in with your link</h1>
+      <p class="detail" data-i18n="signin.intro">Press the button to sign in. Your password stays as it is.</p>
       <p class="error" id="error" role="alert"></p>
-      <button type="submit">Sign in</button>
-      <a class="link" href="/sign-in-link">Ask for a new link</a>
+      <button type="submit" data-i18n="login.submit">Sign in</button>
+      <a class="link" href="/sign-in-link" data-i18n="common.newLink">Ask for a new link</a>
     </form>
   </main>
   <script src="/static/sign-in.js"></script>

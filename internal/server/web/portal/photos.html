@@ -3,35 +3,36 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Your photos</title>
+  <title data-i18n="photos.title">Your photos</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
 </head>
 <body>
   <main class="wide">
     <header class="bar">
-      <h1>Your photos</h1>
+      <h1 data-i18n="photos.title">Your photos</h1>
       <nav class="actions">
-        <a class="link" href="/">Files</a>
-        <a class="link" href="/photos" aria-current="page">Photos</a>
-        <a class="link" id="tv-link" href="/tv" hidden>TV</a>
-        <a class="link" href="/trash">Trash</a>
-        <a class="link" href="/password">Password</a>
-        <button class="link" id="logout" type="button">Sign out</button>
+        <a class="link" href="/" data-i18n="nav.files">Files</a>
+        <a class="link" href="/photos" aria-current="page" data-i18n="nav.photos">Photos</a>
+        <a class="link" id="tv-link" href="/tv" data-i18n="nav.tv" hidden>TV</a>
+        <a class="link" href="/trash" data-i18n="nav.trash">Trash</a>
+        <a class="link" href="/password" data-i18n="nav.password">Password</a>
+        <button class="link" id="logout" type="button" data-i18n="nav.signout">Sign out</button>
       </nav>
     </header>
     <p class="error" id="status" role="status"></p>
     <section class="card">
       <div class="filters">
-        <div class="type-filter" id="type-filter" role="group" aria-label="Show">
-          <button class="link" type="button" data-type="" aria-pressed="true">All</button>
-          <button class="link" type="button" data-type="image" aria-pressed="false">Photos</button>
-          <button class="link" type="button" data-type="video" aria-pressed="false">Videos</button>
+        <div class="type-filter" id="type-filter" role="group" aria-label="Show" data-i18n-attr="aria-label:photos.show">
+          <button class="link" type="button" data-type="" aria-pressed="true" data-i18n="photos.all">All</button>
+          <button class="link" type="button" data-type="image" aria-pressed="false" data-i18n="nav.photos">Photos</button>
+          <button class="link" type="button" data-type="video" aria-pressed="false" data-i18n="photos.videos">Videos</button>
         </div>
         <form class="jump" id="jump">
-          <label for="jump-year">Jump to</label>
-          <input id="jump-year" type="number" inputmode="numeric" min="1900" max="9999" placeholder="Year" required>
-          <select id="jump-month" aria-label="Month">
-            <option value="">Whole year</option>
+          <label for="jump-year" data-i18n="photos.jumpTo">Jump to</label>
+          <input id="jump-year" type="number" inputmode="numeric" min="1900" max="9999" placeholder="Year" data-i18n-attr="placeholder:photos.year" required>
+          <select id="jump-month" aria-label="Month" data-i18n-attr="aria-label:photos.month">
+            <option value="" data-i18n="photos.wholeYear">Whole year</option>
             <option value="01">January</option>
             <option value="02">February</option>
             <option value="03">March</option>
@@ -45,13 +46,13 @@
             <option value="11">November</option>
             <option value="12">December</option>
           </select>
-          <button id="jump-go" type="submit">Go</button>
+          <button id="jump-go" type="submit" data-i18n="photos.go">Go</button>
         </form>
         <p class="detail" id="jump-note" role="status"></p>
       </div>
       <p class="detail" id="summary"></p>
       <div id="photo-groups"></div>
-      <p class="detail" id="empty" hidden>No photos or videos here yet.</p>
+      <p class="detail" id="empty" data-i18n="photos.empty" hidden>No photos or videos here yet.</p>
       <div id="sentinel" class="sentinel"></div>
     </section>
   </main>

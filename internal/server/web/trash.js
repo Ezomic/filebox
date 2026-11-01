@@ -15,7 +15,7 @@ async function api(method, path) {
     throw new Error('signed out');
   }
   const body = response.status === 204 ? {} : await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || 'Something went wrong.');
+  if (!response.ok) throw i18n.failure(body, 'error.generic');
   return body;
 }
 
@@ -33,52 +33,52 @@ function button(label, onClick, className) {
   return node;
 }
 
-function formatSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let unit = -1;
-  do {
-    value /= 1024;
-    unit += 1;
-  } while (value >= 1024 && unit < units.length - 1);
-  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
-}
+const formatSize = (bytes) => i18n.size(bytes);
 
 function expiresIn(expires) {
   const days = Math.ceil((new Date(expires).getTime() - Date.now()) / DAY);
-  if (days <= 0) return 'expires today';
-  return days === 1 ? 'expires in 1 day' : `expires in ${days} days`;
+  return days <= 0 ? t('trash.expiresToday') : t('trash.expiresIn', { count: days });
 }
 
 function scope() {
   return userSelect && userSelect.value !== '' ? `?user=${encodeURIComponent(userSelect.value)}` : '';
 }
 
-function showError(message) {
-  statusBox.textContent = message;
+function showError(error) {
+  if (error) i18n.report(statusBox, error);
+  else i18n.msg(statusBox);
 }
 
-function showNotice(message) {
-  notice.textContent = message;
-  notice.hidden = message === '';
+function showNotice(producer) {
+  if (producer) i18n.msg(notice, producer);
+  else i18n.msg(notice);
+  notice.hidden = !producer;
+}
+
+let listing = null;
+
+function render(items, totalSize) {
+  listing = { items, totalSize };
+  if (items.length === 0) i18n.msg(summary);
+  else i18n.msg(summary, () => t('trash.summary', { count: items.length, size: formatSize(totalSize) }));
+  rows.replaceChildren(...items.map(trashRow));
+  byId('empty').hidden = items.length > 0;
+  emptyButton.hidden = items.length === 0;
+  emptyConfirm.replaceChildren();
 }
 
 async function load() {
   try {
     const { items, totalSize } = await api('GET', `/api/trash${scope()}`);
-    showError('');
-    summary.textContent = items.length === 0 ? '' : `${items.length === 1 ? '1 item' : `${items.length} items`} in the trash, ${formatSize(totalSize)} in total. Items are removed for good after 30 days.`;
-    rows.replaceChildren(...items.map(trashRow));
-    byId('empty').hidden = items.length > 0;
-    emptyButton.hidden = items.length === 0;
-    emptyConfirm.replaceChildren();
+    showError(null);
+    render(items, totalSize);
     window.refreshStorage?.();
   } catch (error) {
     if (error.message === 'signed out') return;
-    showError(error.message);
+    showError(error);
+    listing = null;
     rows.replaceChildren();
-    summary.textContent = '';
+    i18n.msg(summary);
     byId('empty').hidden = true;
     emptyButton.hidden = true;
   }
@@ -87,8 +87,8 @@ async function load() {
 function trashRow(item) {
   const actions = el('td', undefined, 'row-actions');
   const nameCell = el('td', item.isDir ? `${item.name}/` : item.name, 'name');
-  const folder = item.folder === '' ? 'Files' : `Files/${item.folder}`;
-  const where = el('td', `${folder} · deleted ${new Date(item.deleted).toLocaleDateString()} · ${expiresIn(item.expires)}`, 'meta');
+  const folder = item.folder === '' ? t('nav.files') : `${t('nav.files')}/${item.folder}`;
+  const where = el('td', t('trash.where', { folder, date: i18n.date(item.deleted), expires: expiresIn(item.expires) }), 'meta');
   const row = el('tr');
   row.append(nameCell, where, el('td', formatSize(item.size), 'meta'), actions);
   showActions(actions, item);
@@ -97,35 +97,38 @@ function trashRow(item) {
 
 function showActions(cell, item) {
   cell.replaceChildren(
-    button('Restore', () => restore(item), 'link'),
-    button('Delete forever', () => confirmPurge(cell, item), 'link danger'),
+    button(t('trash.restore'), () => restore(item), 'link'),
+    button(t('trash.deleteForever'), () => confirmPurge(cell, item), 'link danger'),
   );
 }
 
 async function restore(item) {
   try {
     const { path } = await api('POST', `/api/trash/${item.id}/restore${scope()}`);
-    showNotice(path === item.path ? `Restored ${path}.` : `Restored as ${path}.`);
+    showNotice(() => (path === item.path ? t('files.restored', { path }) : t('trash.restoredAs', { path })));
     await load();
   } catch (error) {
-    if (error.message !== 'signed out') showNotice(error.message);
+    if (error.message !== 'signed out') {
+      i18n.msg(notice, () => i18n.describe(error));
+      notice.hidden = false;
+    }
   }
 }
 
 function confirmPurge(cell, item) {
   const message = el('span', undefined, 'error');
   cell.replaceChildren(
-    el('span', `Delete ${item.name} for good?`, 'error'),
-    button('Delete forever', async () => {
+    el('span', t('trash.confirmDelete', { name: item.name }), 'error'),
+    button(t('trash.deleteForever'), async () => {
       try {
         await api('DELETE', `/api/trash/${item.id}${scope()}`);
-        showNotice('');
+        showNotice(null);
         await load();
       } catch (error) {
-        if (error.message !== 'signed out') message.textContent = error.message;
+        if (error.message !== 'signed out') i18n.report(message, error);
       }
     }, 'danger-solid'),
-    button('Cancel', () => showActions(cell, item), 'link'),
+    button(t('common.cancel'), () => showActions(cell, item), 'link'),
     message,
   );
 }
@@ -134,17 +137,17 @@ emptyButton.addEventListener('click', () => {
   const message = el('span', undefined, 'error');
   emptyButton.hidden = true;
   emptyConfirm.replaceChildren(
-    el('span', 'This deletes everything in the trash for good.', 'error'),
-    button('Empty trash', async () => {
+    el('span', t('trash.confirmEmpty'), 'error'),
+    button(t('trash.emptyAll'), async () => {
       try {
         await api('DELETE', `/api/trash${scope()}`);
-        showNotice('Emptied the trash.');
+        showNotice(() => t('trash.emptied'));
         await load();
       } catch (error) {
-        if (error.message !== 'signed out') message.textContent = error.message;
+        if (error.message !== 'signed out') i18n.report(message, error);
       }
     }, 'danger-solid'),
-    button('Cancel', () => {
+    button(t('common.cancel'), () => {
       emptyConfirm.replaceChildren();
       emptyButton.hidden = false;
     }, 'link'),
@@ -155,7 +158,7 @@ emptyButton.addEventListener('click', () => {
 async function loadUsers() {
   const { users } = await api('GET', '/api/users');
   users.forEach((user) => {
-    const option = el('option', `${user.name}'s trash`);
+    const option = el('option', t('trash.userTrash', { name: user.name }));
     option.value = user.name;
     userSelect.append(option);
   });
@@ -168,11 +171,16 @@ byId('logout').addEventListener('click', async () => {
 
 if (userSelect) {
   userSelect.addEventListener('change', () => {
-    showNotice('');
+    showNotice(null);
     load();
   });
   loadUsers().catch((error) => {
-    if (error.message !== 'signed out') showError(error.message);
+    if (error.message !== 'signed out') showError(error);
   });
 }
+
+i18n.onChange(() => {
+  if (listing) render(listing.items, listing.totalSize);
+});
+
 load();

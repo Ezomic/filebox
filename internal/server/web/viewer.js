@@ -41,18 +41,18 @@ function buildViewer(options) {
   const overlay = el('div', undefined, 'viewer');
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-label', 'File preview');
+  overlay.setAttribute('aria-label', t('viewer.label'));
   const title = el('span', undefined, 'viewer-title');
-  const download = el('a', 'Download', 'link');
-  const previous = button('Previous', () => step(-1), 'link');
-  const next = button('Next', () => step(1), 'link');
-  const close = button('Close', closeViewer, 'link');
+  const download = el('a', t('common.download'), 'link');
+  const previous = button(t('viewer.previous'), () => step(-1), 'link');
+  const next = button(t('viewer.next'), () => step(1), 'link');
+  const close = button(t('viewer.close'), closeViewer, 'link');
   const bar = el('div', undefined, 'viewer-bar');
   bar.append(title, previous, next, download);
   const datePanel = options.onSetDate ? buildDatePanel(options) : null;
-  if (datePanel) bar.append(button('Change date', datePanel.toggle, 'link'));
+  if (datePanel) bar.append(button(t('viewer.changeDate'), datePanel.toggle, 'link'));
   if (options.onRemove) {
-    bar.append(button('Delete', () => options.onRemove(viewItems[viewer.index], viewer.index), 'link danger'));
+    bar.append(button(t('common.delete'), () => options.onRemove(viewItems[viewer.index], viewer.index), 'link danger'));
   }
   bar.append(close);
   const body = el('div', undefined, 'viewer-body');
@@ -73,11 +73,11 @@ function buildDatePanel(options) {
   input.type = 'date';
   input.required = true;
   input.min = '1900-01-01';
-  input.setAttribute('aria-label', 'Photo date');
-  const save = el('button', 'Save date');
+  input.setAttribute('aria-label', t('viewer.photoDate'));
+  const save = el('button', t('viewer.saveDate'));
   save.type = 'submit';
-  const reset = button('Reset to original', () => run(() => options.onResetDate(viewItems[viewer.index], viewer.index)), 'link');
-  const cancel = button('Cancel', () => { form.hidden = true; }, 'link');
+  const reset = button(t('viewer.resetDate'),() => run(() => options.onResetDate(viewItems[viewer.index], viewer.index)), 'link');
+  const cancel = button(t('common.cancel'), () => { form.hidden = true; }, 'link');
   const message = el('p', undefined, 'error');
   message.setAttribute('role', 'status');
   form.append(input, save, reset, cancel, message);
@@ -89,7 +89,7 @@ function buildDatePanel(options) {
     try {
       await action();
     } catch (error) {
-      if (error.message !== 'signed out') message.textContent = error.message;
+      if (error.message !== 'signed out') message.textContent = i18n.describe(error);
     } finally {
       save.disabled = false;
       reset.disabled = false;
@@ -99,7 +99,7 @@ function buildDatePanel(options) {
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     if (input.value === '') {
-      message.textContent = 'Pick a date.';
+      message.textContent = t('viewer.pickDate');
       return;
     }
     run(() => options.onSetDate(viewItems[viewer.index], viewer.index, input.value));
@@ -145,16 +145,16 @@ function mediaBody(item) {
 }
 
 function failedBody() {
-  return el('p', 'This file could not be previewed. Download it instead.', 'viewer-note');
+  return el('p', t('viewer.failed'), 'viewer-note');
 }
 
 function textBody(item, token) {
   const pre = el('pre', undefined, 'viewer-text');
   if (item.size > TEXT_LIMIT) {
-    pre.textContent = 'Too large to preview, download instead.';
+    pre.textContent = t('viewer.tooLarge');
     return pre;
   }
-  pre.textContent = 'Loading...';
+  pre.textContent = t('common.loading');
   const current = () => viewer !== null && viewer.token === token;
   fetch(item.url)
     .then(async (response) => {
@@ -164,11 +164,11 @@ function textBody(item, token) {
       }
       if (!response.ok) throw new Error('failed');
       if (Number(response.headers.get('Content-Length')) > TEXT_LIMIT) {
-        if (current()) pre.textContent = 'Too large to preview, download instead.';
+        if (current()) pre.textContent = t('viewer.tooLarge');
         return;
       }
       const text = await response.text();
-      if (current()) pre.textContent = text.length > TEXT_LIMIT ? 'Too large to preview, download instead.' : text;
+      if (current()) pre.textContent = text.length > TEXT_LIMIT ? t('viewer.tooLarge') : text;
     })
     .catch(() => {
       if (current()) viewer.body.replaceChildren(failedBody());

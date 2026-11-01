@@ -38,7 +38,7 @@ func (s *Server) listUsers(w http.ResponseWriter, _ *http.Request) {
 	names, err := s.users.List()
 	if err != nil {
 		log.Printf("list users: %v", err)
-		writeError(w, http.StatusInternalServerError, "could not list users")
+		writeCoded(w, http.StatusInternalServerError, codeUserListFailed, "could not list users")
 		return
 	}
 
@@ -91,7 +91,7 @@ func (s *Server) changeUserPassword(w http.ResponseWriter, r *http.Request) {
 	switch exists, ok := s.userExists(w, name); {
 	case !ok:
 	case !exists:
-		writeError(w, http.StatusNotFound, "no such user")
+		writeCoded(w, http.StatusNotFound, codeUserNotFound, "no such user")
 	default:
 		if err := s.users.SetPassword(name, body.Password); err != nil {
 			log.Printf("change password for %q: %v", name, err)
@@ -112,7 +112,7 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	switch exists, ok := s.userExists(w, name); {
 	case !ok:
 	case !exists:
-		writeError(w, http.StatusNotFound, "no such user")
+		writeCoded(w, http.StatusNotFound, codeUserNotFound, "no such user")
 	default:
 		if err := s.users.Delete(name); err != nil {
 			log.Printf("delete user %q: %v", name, err)
@@ -142,7 +142,7 @@ func (s *Server) setUserRole(w http.ResponseWriter, r *http.Request) {
 	switch exists, ok := s.userExists(w, name); {
 	case !ok:
 	case !exists:
-		writeError(w, http.StatusNotFound, "no such user")
+		writeCoded(w, http.StatusNotFound, codeUserNotFound, "no such user")
 	default:
 		action, err := "promote", s.store.Promote(name)
 		if body.Role == roleUser {
@@ -172,7 +172,7 @@ func userExists(w http.ResponseWriter, users system.Users, name string) (exists,
 	names, err := users.List()
 	if err != nil {
 		log.Printf("list users: %v", err)
-		writeError(w, http.StatusInternalServerError, "could not list users")
+		writeCoded(w, http.StatusInternalServerError, codeUserListFailed, "could not list users")
 		return false, false
 	}
 
@@ -181,7 +181,7 @@ func userExists(w http.ResponseWriter, users system.Users, name string) (exists,
 
 func validName(w http.ResponseWriter, name string) bool {
 	if !system.ValidUsername(name) {
-		writeError(w, http.StatusUnprocessableEntity, "username must be 3 to 32 characters: lowercase letters, digits, - and _, starting with a letter")
+		writeCoded(w, http.StatusUnprocessableEntity, codeUsernameInvalid, "username must be 3 to 32 characters: lowercase letters, digits, - and _, starting with a letter")
 		return false
 	}
 
@@ -190,7 +190,7 @@ func validName(w http.ResponseWriter, name string) bool {
 
 func validPassword(w http.ResponseWriter, password string) bool {
 	if system.ValidatePassword(password) != nil {
-		writeError(w, http.StatusUnprocessableEntity, "password must be 12 to 128 characters on a single line")
+		writeCoded(w, http.StatusUnprocessableEntity, codePasswordInvalid, "password must be 12 to 128 characters on a single line")
 		return false
 	}
 
