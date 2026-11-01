@@ -334,7 +334,7 @@ install_streambox() {
 
 	getent group streambox >/dev/null || groupadd --system streambox || return 1
 	getent passwd streambox >/dev/null ||
-		useradd --system --user-group --no-create-home --home-dir /var/lib/streambox \
+		useradd --system --gid streambox --no-create-home --home-dir /var/lib/streambox \
 			--shell /usr/sbin/nologin streambox || return 1
 	# The panel reads the tokens in /etc/streambox to talk to the add-on.
 	usermod -aG streambox filebox || return 1
