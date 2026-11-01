@@ -13,7 +13,7 @@ func FuzzPortalEmailRequests(f *testing.F) {
 		`{"token":"","password":""}`, `{"token":1}`, `{"email":"a@b.co","current":"` + bobPassword + `"}`,
 		`{"email":"a@b.co\r\nBcc: x@example.com","current":"` + bobPassword + `"}`, `{"email":"a@b@c.co","current":"x"}`,
 		`{"email":"bob@example.com"}`, `{"email":"BOB@Example.COM "}`, `{"email":"amy@example.com"}`, `{"email":"bob＠example.com"}`,
-		`{"email":"bob@example.com
+		`{"email":"bob@example.com
 Bcc: x@example.com"}`, `{"email":1}`,
 		`{"token":"` + strings.Repeat("A", 43) + `"}`, `{"token":""}`, `{"token":"` + strings.Repeat("A", 44) + `"}`,
 		`{"username":"bob@example.com","password":"` + bobPassword + `"}`, `{"username":" BOB@example.com ","password":"` + bobPassword + `"}`,
