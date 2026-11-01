@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Ezomic/filebox/internal/system"
@@ -29,6 +30,7 @@ const (
 type PortalDeps struct {
 	Verifier system.Verifier
 	Users    system.Users
+	Roles    Roles
 	// OpenFiles returns a Files confined to that user's own folder; it is closed after each request.
 	OpenFiles func(user string) (system.Files, error)
 	MaxUpload int64
@@ -43,6 +45,7 @@ type PortalDeps struct {
 type Portal struct {
 	verifier   system.Verifier
 	users      system.Users
+	roles      Roles
 	openFiles  func(user string) (system.Files, error)
 	maxUpload  int64
 	thumbs     *Thumbs
@@ -70,6 +73,7 @@ func NewPortal(deps PortalDeps) *Portal {
 	p := &Portal{
 		verifier:   deps.Verifier,
 		users:      deps.Users,
+		roles:      deps.Roles,
 		openFiles:  deps.OpenFiles,
 		maxUpload:  deps.MaxUpload,
 		thumbs:     deps.Thumbs,
@@ -90,6 +94,7 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.Handle("GET /static/viewer.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/photos.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(p.pages))))
+	p.mux.HandleFunc("/", p.notFound)
 	p.mux.HandleFunc("GET /{$}", p.homePage)
 	p.mux.HandleFunc("GET /login", p.loginPage)
 	p.mux.HandleFunc("POST /api/login", p.login)
@@ -97,6 +102,12 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.HandleFunc("GET /api/me", p.requireSession(p.me))
 	p.mux.HandleFunc("PUT /api/me/password", p.requireSession(p.changePassword))
 	p.mux.HandleFunc("GET /password", p.passwordPage)
+	p.mux.HandleFunc("GET /admin/users", p.adminPage)
+	p.mux.HandleFunc("GET /api/admin/users", p.requireAdmin(p.adminList))
+	p.mux.HandleFunc("POST /api/admin/users", p.requireAdmin(p.adminCreate))
+	p.mux.HandleFunc("PUT /api/admin/users/{name}/password", p.requireAdmin(p.adminSetPassword))
+	p.mux.HandleFunc("PUT /api/admin/users/{name}/role", p.requireAdmin(p.adminSetRole))
+	p.mux.HandleFunc("DELETE /api/admin/users/{name}", p.requireAdmin(p.adminDelete))
 	p.mux.HandleFunc("GET /api/files", p.fileRoute(fileHandlers.listFiles))
 	p.mux.HandleFunc("DELETE /api/files", p.fileRoute(fileHandlers.deleteFile))
 	p.mux.HandleFunc("GET /api/files/download", p.fileRoute(fileHandlers.downloadFile))
@@ -169,6 +180,18 @@ func (s sharedAssets) Open(name string) (fs.File, error) {
 	}
 
 	return s.FS.Open(name)
+}
+
+// Pages that must not reveal themselves answer with this too, so they look like any other unknown path.
+func (p *Portal) notFound(w http.ResponseWriter, r *http.Request) {
+	page, err := fs.ReadFile(p.pages, "notfound.html")
+	if strings.HasPrefix(r.URL.Path, "/api/") || err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write(page)
 }
 
 func (p *Portal) homePage(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +362,7 @@ func (p *Portal) logout(w http.ResponseWriter, r *http.Request, _ string) {
 }
 
 func (p *Portal) me(w http.ResponseWriter, _ *http.Request, user string) {
-	writeJSON(w, http.StatusOK, map[string]string{"user": user})
+	writeJSON(w, http.StatusOK, map[string]any{"user": user, "admin": p.roles.IsAdmin(user)})
 }
 
 func (p *Portal) currentUser(r *http.Request) (string, bool) {
@@ -388,34 +411,7 @@ func (p *Portal) changePassword(w http.ResponseWriter, r *http.Request, user str
 	if !decodeJSON(w, r, &body) || !validPassword(w, body.Password) {
 		return
 	}
-
-	ip := ipKey(r)
-	if !p.ipLimit.begin(ip) {
-		log.Printf("portal: password change blocked user=%s ip=%s", logName(user), ip)
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
-		return
-	}
-	defer p.ipLimit.end(ip)
-	if !p.userLimit.begin(user) {
-		log.Printf("portal: password change blocked user=%s ip=%s", logName(user), ip)
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
-		return
-	}
-	defer p.userLimit.end(user)
-	ok, err := p.verify(user, body.Current)
-	switch {
-	case errors.Is(err, errPortalBusy):
-		writeError(w, http.StatusServiceUnavailable, "busy, try again in a moment")
-		return
-	case err != nil:
-		log.Printf("portal: password check failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "could not check the password right now")
-		return
-	case !ok:
-		p.ipLimit.fail(ip)
-		p.userLimit.fail(user)
-		log.Printf("portal: password change failed user=%s ip=%s", logName(user), ip)
-		writeError(w, http.StatusUnauthorized, "your current password is wrong")
+	if !p.confirmPassword(w, r, user, body.Current, "password change", "your current password is wrong") {
 		return
 	}
 
@@ -424,7 +420,44 @@ func (p *Portal) changePassword(w http.ResponseWriter, r *http.Request, user str
 		writeError(w, http.StatusInternalServerError, "could not change the password")
 		return
 	}
-	log.Printf("portal: password changed user=%s ip=%s", user, ip)
+	log.Printf("portal: password changed user=%s ip=%s", user, ipKey(r))
 	p.sessions.destroyUser(user)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// confirmPassword checks the signed-in user's own password through the same limits as login and
+// writes the error response itself when the check does not pass.
+func (p *Portal) confirmPassword(w http.ResponseWriter, r *http.Request, user, password, action, wrongMessage string) bool {
+	ip := ipKey(r)
+	if !p.ipLimit.begin(ip) {
+		log.Printf("portal: %s blocked user=%s ip=%s", action, logName(user), ip)
+		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return false
+	}
+	defer p.ipLimit.end(ip)
+	if !p.userLimit.begin(user) {
+		log.Printf("portal: %s blocked user=%s ip=%s", action, logName(user), ip)
+		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return false
+	}
+	defer p.userLimit.end(user)
+
+	ok, err := p.verify(user, password)
+	switch {
+	case errors.Is(err, errPortalBusy):
+		writeError(w, http.StatusServiceUnavailable, "busy, try again in a moment")
+		return false
+	case err != nil:
+		log.Printf("portal: password check failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "could not check the password right now")
+		return false
+	case !ok:
+		p.ipLimit.fail(ip)
+		p.userLimit.fail(user)
+		log.Printf("portal: %s failed user=%s ip=%s", action, logName(user), ip)
+		writeError(w, http.StatusUnauthorized, wrongMessage)
+		return false
+	}
+
+	return true
 }
