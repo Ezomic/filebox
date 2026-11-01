@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forgot your password</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <form class="card auth" id="forgot-form">
+      <h1>Forgot your password</h1>
+      <p class="detail" id="intro">Enter your username and we will email a link to the address you confirmed on your account. The link works once and expires after 30 minutes.</p>
+      <p class="detail">No confirmed address? Ask the owner to reset your password.</p>
+      <label for="username">Username</label>
+      <input id="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+      <p class="error" id="error" role="alert"></p>
+      <p class="detail" id="done" role="status" hidden></p>
+      <button type="submit">Email me a link</button>
+      <a class="link" href="/login">Back to sign in</a>
+    </form>
+  </main>
+  <script src="/static/forgot.js"></script>
+</body>
+</html>

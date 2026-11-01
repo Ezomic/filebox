@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Ezomic/filebox/internal/mail"
 	"github.com/Ezomic/filebox/internal/system"
 )
 
@@ -36,6 +37,10 @@ type PortalDeps struct {
 	MaxUpload int64
 	// Thumbs makes photo thumbnails; nil turns the thumbnail routes into a 503.
 	Thumbs *Thumbs
+	// Contacts, Mail and PortalURL switch on email addresses and password reset by email; all three are needed.
+	Contacts  Contacts
+	Mail      mail.Sender
+	PortalURL string
 }
 
 // Portal is the public, per-user web interface. It is a separate handler from the admin
@@ -54,6 +59,7 @@ type Portal struct {
 	verifyWait time.Duration
 	pages      fs.FS
 	mux        *http.ServeMux
+	email      *emailFlow
 }
 
 func NewPortal(deps PortalDeps) *Portal {
@@ -79,9 +85,11 @@ func NewPortal(deps PortalDeps) *Portal {
 		verifying:  make(chan struct{}, portalMaxVerifying),
 		verifyWait: portalVerifyWait,
 		pages:      pages,
+		email:      newEmailFlow(deps),
 	}
 
 	p.mux = http.NewServeMux()
+	p.emailRoutes()
 	p.mux.Handle("GET /static/style.css", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/files.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/trash.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
@@ -155,6 +163,7 @@ func sameOrigin(r *http.Request) bool {
 // EndSessions signs a user out everywhere, for example after an admin changes or deletes the account.
 func (p *Portal) EndSessions(user string) {
 	p.sessions.destroyUser(user)
+	p.email.dropIfGone(user, p.users)
 }
 
 // sharedAssets exposes only the stylesheet and the file browser script from the admin

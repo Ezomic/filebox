@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Ezomic/filebox/internal/auth"
+	"github.com/Ezomic/filebox/internal/mail"
 	"github.com/Ezomic/filebox/internal/server"
 	"github.com/Ezomic/filebox/internal/system"
 	"github.com/Ezomic/filebox/internal/tlsutil"
@@ -61,14 +62,16 @@ func main() {
 
 	users := system.NewUsers()
 	thumbs := server.NewThumbs(system.NewThumbnailer())
-	portal := server.NewPortal(server.PortalDeps{
+	portalDeps := server.PortalDeps{
 		Verifier:  system.NewVerifier(),
 		Users:     users,
 		Roles:     store,
 		OpenFiles: system.UserFilesOpener(*filesDir),
 		MaxUpload: *maxUpload,
 		Thumbs:    thumbs,
-	})
+	}
+	enableEmail(&portalDeps, *dataDir)
+	portal := server.NewPortal(portalDeps)
 
 	deps := server.Deps{
 		Host:          system.NewHost(*disk),
@@ -147,4 +150,26 @@ func portalServer(addr string, certs *tlsutil.Reloader, portal http.Handler) *ht
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
+}
+
+// Password reset by email stays off, and the panel still starts, unless mail.json holds a usable config.
+func enableEmail(deps *server.PortalDeps, dataDir string) {
+	config, ok, err := mail.LoadConfig(filepath.Join(dataDir, "mail.json"))
+	switch {
+	case err != nil:
+		log.Printf("password reset by email is off: mail.json: %v", err)
+		return
+	case !ok:
+		log.Print("password reset by email is off: no mail.json")
+		return
+	}
+	contacts, err := auth.OpenContacts(dataDir)
+	if err != nil {
+		log.Printf("password reset by email is off: open contacts: %v", err)
+		return
+	}
+	deps.Contacts = contacts
+	deps.Mail = mail.NewZero(config.URL, config.Token)
+	deps.PortalURL = config.PortalURL
+	log.Print("password reset by email is on")
 }
