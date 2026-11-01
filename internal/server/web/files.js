@@ -77,6 +77,7 @@ function go(path) {
 }
 
 async function load() {
+  closeViewer();
   currentPath = pathFromHash();
   try {
     const { entries } = await api('GET', `/api/files?path=${encodeURIComponent(currentPath)}`);
@@ -926,6 +927,7 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     closeViewer();
   } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     if (/^(VIDEO|AUDIO|INPUT)$/.test(event.target.tagName)) return;
     step(event.key === 'ArrowLeft' ? -1 : 1);
   }
