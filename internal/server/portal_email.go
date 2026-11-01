@@ -36,6 +36,7 @@ type Contacts interface {
 	Get(user string) (auth.Contact, bool)
 	Set(user, email string) error
 	Confirm(user, email string) (bool, error)
+	Lookup(email string) (string, bool)
 	Forget(user string) error
 }
 
@@ -95,6 +96,7 @@ func (p *Portal) emailRoutes() {
 	p.mux.HandleFunc("POST /api/email/confirm", p.confirmEmail)
 	p.mux.HandleFunc("GET /api/me/email", p.requireSession(p.myEmail))
 	p.mux.HandleFunc("PUT /api/me/email", p.requireSession(p.setMyEmail))
+	p.signInRoutes()
 }
 
 func (p *Portal) staticPage(name string) http.HandlerFunc {

@@ -445,8 +445,8 @@ func TestResetWorksForAdminsToo(t *testing.T) {
 
 func TestResetLinkIsBoundToItsUser(t *testing.T) {
 	h := newEmailHarness(t)
-	h.confirmedAddress(t, "amy", "same@example.com")
-	h.confirmedAddress(t, "bob", "same@example.com")
+	h.confirmedAddress(t, "amy", "amy@example.com")
+	h.confirmedAddress(t, "bob", "bob@example.com")
 	amyToken := h.requestReset(t, "amy", "192.0.2.63")
 	bobToken := h.requestReset(t, "bob", "192.0.2.64")
 

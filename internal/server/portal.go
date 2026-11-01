@@ -263,21 +263,22 @@ func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer p.ipLimit.end(ip)
-	if !system.ValidUsername(body.Username) {
+	target, valid := p.signInTarget(body.Username)
+	if !valid {
 		p.ipLimit.fail(ip)
 		log.Printf("portal: login failed user=%s ip=%s", logName(body.Username), ip)
 		writeError(w, http.StatusUnauthorized, "wrong username or password")
 		return
 	}
-	if !p.userLimit.begin(body.Username) {
+	if !p.userLimit.begin(target.limitKey) {
 		log.Printf("portal: login blocked user=%s ip=%s", logName(body.Username), ip)
 		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
-	defer p.userLimit.end(body.Username)
+	defer p.userLimit.end(target.limitKey)
 
-	generation := p.sessions.generation(body.Username)
-	ok, err := p.verify(body.Username, body.Password)
+	generation := p.sessions.generation(target.account)
+	ok, err := p.verify(target.account, body.Password)
 	switch {
 	case errors.Is(err, errPortalBusy):
 		writeError(w, http.StatusServiceUnavailable, "busy, try again in a moment")
@@ -286,25 +287,32 @@ func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
 		log.Printf("portal: password check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "could not check the password right now")
 		return
-	case !ok:
+	case !ok || !target.real:
 		p.ipLimit.fail(ip)
-		p.userLimit.fail(body.Username)
+		p.userLimit.fail(target.limitKey)
 		log.Printf("portal: login failed user=%s ip=%s", logName(body.Username), ip)
 		writeError(w, http.StatusUnauthorized, "wrong username or password")
 		return
 	}
 
-	token, err := p.sessions.create(body.Username, generation)
+	if !p.startSession(w, target.account, generation) {
+		return
+	}
+	p.userLimit.reset(target.limitKey)
+	log.Printf("portal: login ok user=%s ip=%s", target.account, ip)
+}
+
+// startSession opens a session for the account and answers 204 with the cookie, or writes the error itself.
+func (p *Portal) startSession(w http.ResponseWriter, user string, generation uint64) bool {
+	token, err := p.sessions.create(user, generation)
 	switch {
 	case errors.Is(err, errStaleLogin):
 		writeError(w, http.StatusConflict, "your account just changed, try again")
-		return
+		return false
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "could not start session")
-		return
+		return false
 	}
-	p.userLimit.reset(body.Username)
-	log.Printf("portal: login ok user=%s ip=%s", body.Username, ip)
 	http.SetCookie(w, &http.Cookie{
 		Name:     portalCookieName,
 		Value:    token,
@@ -315,6 +323,8 @@ func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 	})
 	w.WriteHeader(http.StatusNoContent)
+
+	return true
 }
 
 var errPortalBusy = errors.New("too many password checks running")

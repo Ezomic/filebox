@@ -1,6 +1,15 @@
 const form = document.getElementById('login-form');
 const errorBox = document.getElementById('error');
 
+fetch('/api/forgot')
+  .then((response) => (response.ok ? response.json() : null))
+  .then((status) => {
+    if (status && status.enabled) {
+      document.getElementById('link-option').hidden = false;
+    }
+  })
+  .catch(() => {});
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   errorBox.textContent = '';
