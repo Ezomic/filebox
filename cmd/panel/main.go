@@ -60,11 +60,13 @@ func main() {
 	}
 
 	users := system.NewUsers()
+	thumbs := server.NewThumbs(system.NewThumbnailer())
 	portal := server.NewPortal(server.PortalDeps{
 		Verifier:  system.NewVerifier(),
 		Users:     users,
 		OpenFiles: system.UserFilesOpener(*filesDir),
 		MaxUpload: *maxUpload,
+		Thumbs:    thumbs,
 	})
 
 	deps := server.Deps{
@@ -78,6 +80,7 @@ func main() {
 		Smart:         system.NewSmart(),
 		PowerDelay:    time.Second,
 		MaxUpload:     *maxUpload,
+		Thumbs:        thumbs,
 
 		OnUserChanged: portal.EndSessions,
 		Version:       version,
@@ -110,6 +113,7 @@ func main() {
 	defer cancel()
 	go system.RunUploadSweeper(stop, *filesDir, 24*time.Hour, time.Now)
 	go system.RunTrashSweeper(stop, *filesDir, 24*time.Hour, time.Now)
+	go system.RunThumbSweeper(stop, *filesDir, 24*time.Hour, time.Now)
 	failed := make(chan error, len(servers))
 	for _, s := range servers {
 		go func() {

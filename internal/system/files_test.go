@@ -32,6 +32,7 @@ func TestCleanPath(t *testing.T) {
 		`a\b`, `..\x`, "a\x00b", "\x00", "a\nb", "a\tb", "a\x7fb", "\xff\xfe",
 		"trailing.", "trailing ", "dir/trailing.", "dir /file", " ", "  ", "a/ ",
 		strings.Repeat("a", 256), strings.Repeat("a/", 3000), strings.Repeat("a", 4097),
+		".thumbs", ".THUMBS", "a/.Thumbs/b", ".thumbs/x.t.jpg",
 		"%2e%2e", // stays literal here; decoding happens once in net/http
 	}
 	for _, input := range invalid[:len(invalid)-1] {
