@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Ezomic/filebox/internal/system"
@@ -80,6 +81,7 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.mux.Handle("GET /static/style.css", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/files.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(p.pages))))
+	p.mux.HandleFunc("/", p.notFound)
 	p.mux.HandleFunc("GET /{$}", p.homePage)
 	p.mux.HandleFunc("GET /login", p.loginPage)
 	p.mux.HandleFunc("POST /api/login", p.login)
@@ -149,6 +151,18 @@ func (s sharedAssets) Open(name string) (fs.File, error) {
 	}
 
 	return s.FS.Open(name)
+}
+
+// Pages that must not reveal themselves answer with this too, so they look like any other unknown path.
+func (p *Portal) notFound(w http.ResponseWriter, r *http.Request) {
+	page, err := fs.ReadFile(p.pages, "notfound.html")
+	if strings.HasPrefix(r.URL.Path, "/api/") || err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write(page)
 }
 
 func (p *Portal) homePage(w http.ResponseWriter, r *http.Request) {

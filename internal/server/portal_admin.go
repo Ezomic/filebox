@@ -51,7 +51,7 @@ func (p *Portal) adminPage(w http.ResponseWriter, r *http.Request) {
 	case !ok:
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	case !p.roles.IsAdmin(user):
-		writeError(w, http.StatusForbidden, "admins only")
+		p.notFound(w, r)
 	default:
 		http.ServeFileFS(w, r, p.pages, "admin.html")
 	}

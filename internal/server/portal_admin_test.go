@@ -28,6 +28,15 @@ func adminRoutes() []adminRoute {
 	}
 }
 
+// The page pretends not to exist for plain users; the API says no with JSON.
+func refusedStatus(route adminRoute) int {
+	if route.path == "/admin/users" {
+		return http.StatusNotFound
+	}
+
+	return http.StatusForbidden
+}
+
 func (h *portalHarness) call(method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	return h.do(method, path, body, "192.0.2.10", cookie)
 }
@@ -77,8 +86,8 @@ func TestAdminRoutesRefusePlainUsersWithoutTouchingAnything(t *testing.T) {
 	calls := h.verifier.Calls
 
 	for _, route := range adminRoutes() {
-		if rec := h.call(route.method, route.path, route.body, bob); rec.Code != http.StatusForbidden {
-			t.Errorf("%s %s: got %d, want 403", route.method, route.path, rec.Code)
+		if rec := h.call(route.method, route.path, route.body, bob); rec.Code != refusedStatus(route) {
+			t.Errorf("%s %s: got %d, want %d", route.method, route.path, rec.Code, refusedStatus(route))
 		}
 	}
 	if h.spy.mutations != 0 || h.verifier.Calls != calls {
@@ -99,6 +108,44 @@ func TestAdminPageIsServedToAdminsOnly(t *testing.T) {
 	}
 	if rec := h.call("GET", "/static/admin.js", "", nil); rec.Code != http.StatusOK {
 		t.Fatalf("admin script got %d", rec.Code)
+	}
+}
+
+func TestPlainUserSeesTheSameNotFoundPageAsAnyUnknownPath(t *testing.T) {
+	h := newPortalHarness(t)
+	_, bob, _ := h.sessions(t)
+
+	page := h.call("GET", "/admin/users", "", bob)
+	unknown := h.call("GET", "/no/such/page", "", bob)
+	if page.Code != http.StatusNotFound || !strings.HasPrefix(page.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("got %d %q", page.Code, page.Header().Get("Content-Type"))
+	}
+	if page.Body.String() != unknown.Body.String() || unknown.Code != http.StatusNotFound {
+		t.Fatalf("the page must match any unknown path: %d %q vs %d %q", page.Code, page.Body, unknown.Code, unknown.Body)
+	}
+	body := strings.ToLower(page.Body.String())
+	for _, word := range []string{"admin", "role", "forbidden", "permission"} {
+		if strings.Contains(body, word) {
+			t.Fatalf("the page must not hint at %q: %s", word, body)
+		}
+	}
+	if !strings.Contains(body, "/static/style.css") || !strings.Contains(body, `href="/"`) || !strings.Contains(body, "viewport") {
+		t.Fatalf("the page must use the shared look and link home: %s", body)
+	}
+}
+
+func TestUnknownPortalPathsAnswerJSONUnderAPIAndHTMLElsewhere(t *testing.T) {
+	h := newPortalHarness(t)
+
+	api := h.call("GET", "/api/nothing", "", nil)
+	if api.Code != http.StatusNotFound || !strings.HasPrefix(api.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("got %d %q", api.Code, api.Header().Get("Content-Type"))
+	}
+	for _, path := range []string{"/nothing", "/admin/other", "/Admin/Users"} {
+		rec := h.call("GET", path, "", nil)
+		if rec.Code != http.StatusNotFound || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
+			t.Fatalf("%s: got %d %q", path, rec.Code, rec.Header().Get("Content-Type"))
+		}
 	}
 }
 
@@ -389,7 +436,7 @@ func TestAdminDemotionAppliesToOpenSessionsImmediately(t *testing.T) {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
 	}
 	for _, route := range adminRoutes() {
-		if rec := h.call(route.method, route.path, route.body, bob); rec.Code != http.StatusForbidden {
+		if rec := h.call(route.method, route.path, route.body, bob); rec.Code != refusedStatus(route) {
 			t.Errorf("%s %s after demotion: got %d", route.method, route.path, rec.Code)
 		}
 	}
