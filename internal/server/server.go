@@ -117,6 +117,8 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("POST /api/users", s.requireSession(s.createUser))
 	mux.HandleFunc("PUT /api/users/{name}/password", s.requireSession(s.changeUserPassword))
 	mux.HandleFunc("PUT /api/users/{name}/role", s.requireSession(s.setUserRole))
+	mux.HandleFunc("PUT /api/users/{name}/quota", s.requireSession(s.setUserQuota))
+	mux.HandleFunc("DELETE /api/users/{name}/quota", s.requireSession(s.clearUserQuota))
 	mux.HandleFunc("DELETE /api/users/{name}", s.requireSession(s.deleteUser))
 	mux.HandleFunc("GET /api/files", s.requireSession(s.fh.listFiles))
 	mux.HandleFunc("DELETE /api/files", s.scopedRoute(fileHandlers.deleteFile))

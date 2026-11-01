@@ -120,6 +120,16 @@ func runFakeHelper(mode string) {
 	case "fail":
 		fmt.Fprintln(os.Stderr, "useradd: secret internal detail")
 		os.Exit(3)
+	case "unavailable":
+		fmt.Fprintln(os.Stderr, "filebox-user: btrfs quotas are not enabled")
+		os.Exit(quotaUnavailableExit)
+	case "quota-list":
+		fmt.Print("amy 4096 1048576\nbob - -\n")
+		os.Exit(0)
+	case "expect-set":
+		os.Exit(exitUnless(strings.Join(args, "|") == "quota-set|alice|10485760"))
+	case "expect-clear":
+		os.Exit(exitUnless(strings.Join(args, "|") == "quota-clear|alice"))
 	case "match":
 		os.Exit(0)
 	case "mismatch":
@@ -182,4 +192,12 @@ func TestExecUsersRejectsInvalidInputBeforeRunning(t *testing.T) {
 	if err := users.Delete("-rf"); !errors.Is(err, ErrInvalidUsername) {
 		t.Fatalf("got %v", err)
 	}
+}
+
+func exitUnless(ok bool) int {
+	if ok {
+		return 0
+	}
+
+	return 98
 }

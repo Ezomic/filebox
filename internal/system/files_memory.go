@@ -20,6 +20,36 @@ type FakeFiles struct {
 	uploads map[string]*memoryUpload
 	trash   map[string]*memoryTrashed
 	thumbs  map[string][]byte
+	// limit is a byte quota like the one btrfs enforces: partial uploads and trash count, 0 means unlimited.
+	limit int64
+}
+
+func (f *FakeFiles) SetLimit(bytes int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.limit = bytes
+}
+
+func (f *FakeFiles) usedLocked() int64 {
+	var used int64
+	for _, entry := range f.entries {
+		used += int64(len(entry.data))
+	}
+	for _, upload := range f.uploads {
+		used += int64(len(upload.data))
+	}
+	for _, trashed := range f.trash {
+		for _, entry := range trashed.entries {
+			used += int64(len(entry.data))
+		}
+	}
+
+	return used
+}
+
+func (f *FakeFiles) fitsLocked(extra int64) bool {
+	return f.limit == 0 || f.usedLocked()+extra <= f.limit
 }
 
 func NewFakeFiles() *FakeFiles {
@@ -144,6 +174,13 @@ func (f *FakeFiles) Write(path string, content io.Reader, overwrite bool) error 
 	defer f.mu.Unlock()
 	if err := f.writeAllowed(path, overwrite); err != nil {
 		return err
+	}
+	var replaced int64
+	if old, ok := f.entries[path]; ok {
+		replaced = int64(len(old.data))
+	}
+	if !f.fitsLocked(int64(len(data)) - replaced) {
+		return ErrOverQuota
 	}
 	f.entries[path] = &memoryEntry{data: data, modified: time.Now()}
 

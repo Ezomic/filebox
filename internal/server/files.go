@@ -196,6 +196,8 @@ func fileError(w http.ResponseWriter, action, name string, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "that path is a folder")
 	case errors.Is(err, system.ErrNotMedia):
 		writeError(w, http.StatusUnsupportedMediaType, "this file type has no thumbnail")
+	case errors.Is(err, system.ErrOverQuota):
+		writeError(w, http.StatusInsufficientStorage, overQuotaMessage)
 	case errors.Is(err, system.ErrIntoSelf):
 		writeError(w, http.StatusUnprocessableEntity, "a folder cannot be moved into itself")
 	default:

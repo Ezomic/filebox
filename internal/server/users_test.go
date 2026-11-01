@@ -47,6 +47,24 @@ func (s *spyUsers) Delete(name string) error {
 	return s.FakeUsers.Delete(name)
 }
 
+func (s *spyUsers) SetQuota(name string, bytes int64) error {
+	s.mutations++
+	if s.failWith != nil {
+		return s.failWith
+	}
+
+	return s.FakeUsers.SetQuota(name, bytes)
+}
+
+func (s *spyUsers) ClearQuota(name string) error {
+	s.mutations++
+	if s.failWith != nil {
+		return s.failWith
+	}
+
+	return s.FakeUsers.ClearQuota(name)
+}
+
 const goodPassword = "a perfectly fine password"
 
 func jsonBody(t *testing.T, fields map[string]any) string {

@@ -183,7 +183,7 @@ func (d *dirFiles) copyToTemp(dir string, content io.Reader) (string, error) {
 	if err := errors.Join(copyErr, closeErr); err != nil {
 		_ = d.root.Remove(temp)
 
-		return "", err
+		return "", quotaError(err)
 	}
 
 	return temp, nil
@@ -332,6 +332,16 @@ func (d *dirFiles) classify(name string, err error) error {
 		return ErrNotDir
 	case errors.Is(err, syscall.ENOTEMPTY):
 		return ErrNotEmpty
+	}
+
+	return quotaError(err)
+}
+
+// btrfs answers EDQUOT when a write would take the user past their qgroup limit. It can show up on any write, on
+// the sync after it, or when the file is closed.
+func quotaError(err error) error {
+	if errors.Is(err, syscall.EDQUOT) {
+		return ErrOverQuota
 	}
 
 	return err

@@ -9,9 +9,9 @@ import (
 )
 
 type userEntry struct {
-	Name  string  `json:"name"`
-	Bytes *uint64 `json:"bytes"`
-	Admin bool    `json:"admin"`
+	Name  string `json:"name"`
+	Admin bool   `json:"admin"`
+	quotaView
 }
 
 type roleRequest struct {
@@ -43,15 +43,17 @@ func (s *Server) listUsers(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	sizes, ready := s.usage.Sizes()
+	quotas, quotasOn := loadQuotas(s.users)
 	entries := make([]userEntry, 0, len(names))
 	for _, name := range names {
 		entry := userEntry{Name: name, Admin: s.store.IsAdmin(name)}
 		if size, ok := sizes[name]; ready && ok {
 			entry.Bytes = &size
 		}
+		entry.fill(quotas, name)
 		entries = append(entries, entry)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"users": entries, "usageReady": ready})
+	writeJSON(w, http.StatusOK, map[string]any{"users": entries, "usageReady": ready, "quotas": quotasOn})
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {

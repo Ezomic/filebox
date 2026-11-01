@@ -21,6 +21,7 @@ var (
 	ErrIsDir       = errors.New("is a folder")
 	ErrNotEmpty    = errors.New("folder is not empty")
 	ErrIntoSelf    = errors.New("cannot move a folder into itself")
+	ErrOverQuota   = errors.New("over quota")
 
 	ErrUploadOffset     = errors.New("upload offset does not match")
 	ErrUploadTooLarge   = errors.New("chunk goes past the declared size")

@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -101,7 +102,7 @@ func (d *dirFiles) CreateUpload(name string, size int64, overwrite bool) (Upload
 	if err := d.writeMeta(id, uploadMeta{Path: name, Size: size, Overwrite: overwrite}); err != nil {
 		_ = d.root.Remove(d.partPath(id))
 
-		return UploadInfo{}, err
+		return UploadInfo{}, quotaError(err)
 	}
 
 	return UploadInfo{ID: id, Path: name, Size: size, Overwrite: overwrite}, nil
@@ -186,6 +187,8 @@ func (d *dirFiles) AppendUpload(id string, offset, length int64, content io.Read
 	switch {
 	case errors.Is(copyErr, ErrUploadTooLarge):
 		return info, copyErr
+	case errors.Is(copyErr, syscall.EDQUOT) || errors.Is(closeErr, syscall.EDQUOT):
+		return info, ErrOverQuota
 	case copyErr != nil:
 		return info, errors.Join(ErrUploadShort, copyErr)
 	case closeErr != nil:
@@ -242,7 +245,7 @@ func (d *dirFiles) syncPart(id string) error {
 		return notFoundOr(err)
 	}
 
-	return errors.Join(part.Sync(), part.Close())
+	return quotaError(errors.Join(part.Sync(), part.Close()))
 }
 
 var uploadFilePattern = regexp.MustCompile(`^([0-9a-f]{32})\.(part|json)$`)
