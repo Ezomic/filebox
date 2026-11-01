@@ -73,9 +73,9 @@ func (a fileHandlers) emptyTrash(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"removed": removed})
 }
 
-// The panel browses the data root, so its own trash holds what was deleted there. An admin
-// reaches one user's trash with ?user=, which is opened the same way the portal opens it.
-func (s *Server) trashRoute(call func(fileHandlers, http.ResponseWriter, *http.Request)) http.HandlerFunc {
+// The panel browses the data root, so its own trash and photos are the ones from there. An admin
+// reaches one user's with ?user=, which is opened the same way the portal opens it.
+func (s *Server) scopedRoute(call func(fileHandlers, http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return s.requireSession(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := queryValue(w, r, "user")
 		if !ok {
@@ -105,6 +105,6 @@ func (s *Server) trashRoute(call func(fileHandlers, http.ResponseWriter, *http.R
 		if closer, ok := files.(io.Closer); ok {
 			defer closer.Close()
 		}
-		call(fileHandlers{files: files, maxUpload: s.maxUpload}, w, r)
+		call(fileHandlers{files: files, maxUpload: s.maxUpload, thumbs: s.thumbs}, w, r)
 	})
 }

@@ -29,6 +29,8 @@ type harness struct {
 	usage   *system.FakeUsage
 	root    string
 	outside string
+	tool    *system.FakeThumbnailer
+	thumbs  *Thumbs
 
 	usersBase string
 }
@@ -77,9 +79,11 @@ func newHarnessWithFiles(t *testing.T, wrap func(system.Files) system.Files) *ha
 	}
 	openUser := func(user string) (system.Files, error) { return system.OpenUserFiles(usersBase, user) }
 
-	handler := New(store, Deps{Host: host, Users: users, Files: wrap(files), OpenUserFiles: openUser, Logs: logs, Power: power, Smart: smart, Usage: usage, MaxUpload: testMaxUpload})
+	tool := system.NewFakeThumbnailer()
+	thumbs := NewThumbs(tool)
+	handler := New(store, Deps{Host: host, Users: users, Files: wrap(files), OpenUserFiles: openUser, Logs: logs, Power: power, Smart: smart, Usage: usage, MaxUpload: testMaxUpload, Thumbs: thumbs})
 
-	return &harness{handler: handler, store: store, host: host, users: users, files: files, logs: logs, power: power, smart: smart, usage: usage, root: root, outside: outside, usersBase: usersBase}
+	return &harness{handler: handler, store: store, host: host, users: users, files: files, logs: logs, power: power, smart: smart, usage: usage, root: root, outside: outside, tool: tool, thumbs: thumbs, usersBase: usersBase}
 }
 
 func (h *harness) do(method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {

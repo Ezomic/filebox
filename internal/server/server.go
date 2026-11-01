@@ -36,6 +36,8 @@ type Deps struct {
 	Usage         system.Usage
 	Smart         system.Smart
 	MaxUpload     int64
+	// Thumbs makes photo thumbnails; nil turns the thumbnail routes into a 503.
+	Thumbs *Thumbs
 	// PowerDelay is how long shutdown and reboot wait so the response can reach the browser first.
 	PowerDelay time.Duration
 	// OnUserChanged runs after an admin changes a user's password or deletes the user.
@@ -57,6 +59,7 @@ type Server struct {
 	smart         system.Smart
 	powerDelay    time.Duration
 	maxUpload     int64
+	thumbs        *Thumbs
 	sessions      *sessions
 	limiter       *loginLimiter
 	pages         fs.FS
@@ -85,10 +88,11 @@ func New(store *auth.Store, deps Deps) http.Handler {
 		smart:         deps.Smart,
 		powerDelay:    deps.PowerDelay,
 		maxUpload:     deps.MaxUpload,
+		thumbs:        deps.Thumbs,
 		sessions:      newSessions(sessionTTL),
 		limiter:       newLoginLimiter(maxLoginFails, failWindow),
 		pages:         pages,
-		fh:            fileHandlers{files: deps.Files, maxUpload: deps.MaxUpload},
+		fh:            fileHandlers{files: deps.Files, maxUpload: deps.MaxUpload, thumbs: deps.Thumbs},
 
 		onUserChanged:    deps.OnUserChanged,
 		portalCertExpiry: deps.PortalCertExpiry,
@@ -114,9 +118,13 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("PUT /api/users/{name}/password", s.requireSession(s.changeUserPassword))
 	mux.HandleFunc("DELETE /api/users/{name}", s.requireSession(s.deleteUser))
 	mux.HandleFunc("GET /api/files", s.requireSession(s.fh.listFiles))
-	mux.HandleFunc("DELETE /api/files", s.requireSession(s.fh.deleteFile))
-	mux.HandleFunc("GET /api/files/download", s.requireSession(s.fh.downloadFile))
-	mux.HandleFunc("GET /api/files/view", s.requireSession(s.fh.viewFile))
+	mux.HandleFunc("DELETE /api/files", s.scopedRoute(fileHandlers.deleteFile))
+	mux.HandleFunc("GET /api/files/download", s.scopedRoute(fileHandlers.downloadFile))
+	mux.HandleFunc("GET /api/files/view", s.scopedRoute(fileHandlers.viewFile))
+	mux.HandleFunc("GET /photos", s.photosPage)
+	mux.HandleFunc("GET /api/files/photos", s.scopedRoute(fileHandlers.listPhotos))
+	mux.HandleFunc("GET /api/files/thumb", s.scopedRoute(fileHandlers.thumbFile))
+	mux.HandleFunc("GET /api/files/preview", s.scopedRoute(fileHandlers.previewFile))
 	mux.HandleFunc("PUT /api/files/content", s.requireSession(s.fh.uploadFile))
 	mux.HandleFunc("POST /api/files/folder", s.requireSession(s.fh.createFolder))
 	mux.HandleFunc("POST /api/files/rename", s.requireSession(s.fh.renameFile))
@@ -127,10 +135,10 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("PUT /api/uploads/{id}", s.requireSession(s.fh.appendChunk))
 	mux.HandleFunc("POST /api/uploads/{id}/finish", s.requireSession(s.fh.finishUpload))
 	mux.HandleFunc("GET /trash", s.trashPage)
-	mux.HandleFunc("GET /api/trash", s.trashRoute(fileHandlers.listTrash))
-	mux.HandleFunc("DELETE /api/trash", s.trashRoute(fileHandlers.emptyTrash))
-	mux.HandleFunc("POST /api/trash/{id}/restore", s.trashRoute(fileHandlers.restoreTrash))
-	mux.HandleFunc("DELETE /api/trash/{id}", s.trashRoute(fileHandlers.purgeTrash))
+	mux.HandleFunc("GET /api/trash", s.scopedRoute(fileHandlers.listTrash))
+	mux.HandleFunc("DELETE /api/trash", s.scopedRoute(fileHandlers.emptyTrash))
+	mux.HandleFunc("POST /api/trash/{id}/restore", s.scopedRoute(fileHandlers.restoreTrash))
+	mux.HandleFunc("DELETE /api/trash/{id}", s.scopedRoute(fileHandlers.purgeTrash))
 	mux.HandleFunc("GET /api/disks", s.requireSession(s.disks))
 	mux.HandleFunc("GET /api/logs", s.requireSession(s.readLogs))
 	mux.HandleFunc("POST /api/system/restart-sshd", s.requireSession(s.powerAction(system.RestartSSHD)))
