@@ -128,6 +128,11 @@ function Assert-InstallSettings {
             if ([string]$package -cnotmatch '^firmware-[a-z0-9-]+$') { throw "Invalid firmware package name: $package" }
         }
     }
+    if ($Settings.ContainsKey('Addons') -and $Settings.Addons) {
+        foreach ($addon in @($Settings.Addons)) {
+            if ([string]$addon -cnotmatch '^streambox\z') { throw "Unknown add-on: $addon" }
+        }
+    }
     if ($Settings.User -in @('root', 'filebox')) { throw 'The login name cannot be root or filebox.' }
     if ($Settings.DataAction -ne 'none') {
         if (-not $Settings.ContainsKey('DataPartUuid') -or [string]$Settings.DataPartUuid -cnotmatch '^[0-9a-fA-F-]{8,40}$') {
@@ -191,10 +196,12 @@ function New-ConfText {
     $data = ''
     if ($Settings.ContainsKey('DataPartUuid') -and $Settings.DataPartUuid) { $data = [string]$Settings.DataPartUuid }
     $cleanup = ''
+    $addons = ''
     $wifiSsid = ''
     $wifiPsk = ''
     if ($Settings.ContainsKey('WifiSsid') -and $Settings.WifiSsid) { $wifiSsid = [string]$Settings.WifiSsid; $wifiPsk = [string]$Settings.WifiPsk }
     if ($Settings.ContainsKey('CleanupPartUuid') -and $Settings.CleanupPartUuid) { $cleanup = [string]$Settings.CleanupPartUuid }
+    if ($Settings.ContainsKey('Addons') -and $Settings.Addons) { $addons = (@($Settings.Addons) -join ',') }
 
     $lines = @(
         'TARGET_PARTUUID=' + (ConvertTo-ShellLiteral $Settings.TargetPartUuid)
@@ -206,6 +213,7 @@ function New-ConfText {
         'SSH_KEY=' + (ConvertTo-ShellLiteral $Settings.SshKey)
         'WIFI_SSID=' + (ConvertTo-ShellLiteral $wifiSsid)
         'WIFI_PSK=' + (ConvertTo-ShellLiteral $wifiPsk)
+        'ADDONS=' + (ConvertTo-ShellLiteral $addons)
     )
 
     return (($lines -join "`n") + "`n")

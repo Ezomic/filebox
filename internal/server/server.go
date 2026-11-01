@@ -45,6 +45,8 @@ type Deps struct {
 	// PortalCertExpiry reports when the public portal certificate expires; nil when the portal is off.
 	PortalCertExpiry func() time.Time
 	Version          string
+	// TV is the streambox add-on; nil when it is not installed.
+	TV *TV
 }
 
 type Server struct {
@@ -68,6 +70,7 @@ type Server struct {
 	onUserChanged    func(name string)
 	portalCertExpiry func() time.Time
 	version          string
+	tv               *TV
 }
 
 func New(store *auth.Store, deps Deps) http.Handler {
@@ -97,6 +100,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 		onUserChanged:    deps.OnUserChanged,
 		portalCertExpiry: deps.PortalCertExpiry,
 		version:          deps.Version,
+		tv:               deps.TV,
 	}
 
 	mux := http.NewServeMux()
@@ -113,6 +117,11 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("GET /api/metrics", s.requireSession(s.metrics))
 	mux.HandleFunc("GET /api/version", s.requireSession(s.versionInfo))
 	mux.HandleFunc("GET /api/portal", s.requireSession(s.portalStatus))
+	mux.HandleFunc("GET /api/tv", s.requireSession(s.tvStatus))
+	if s.tv != nil {
+		mux.HandleFunc("GET /tv", s.tvPage)
+		mux.HandleFunc("/api/tv/", s.requireSession(s.tvAdminProxy))
+	}
 	mux.HandleFunc("GET /api/users", s.requireSession(s.listUsers))
 	mux.HandleFunc("POST /api/users", s.requireSession(s.createUser))
 	mux.HandleFunc("PUT /api/users/{name}/password", s.requireSession(s.changeUserPassword))

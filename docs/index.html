@@ -50,6 +50,7 @@
     <a href="#install">Install</a>
     <a href="#portal">Web portal</a>
     <a href="#quotas">Quotas</a>
+    <a href="#tv">TV add-on</a>
     <a href="#update">Update</a>
     <a href="#problems">Problems</a>
     <a href="#security">Security</a>
@@ -139,6 +140,28 @@ sudo systemctl start filebox-dns.service</code></pre>
   </ul>
   <div class="note">The portal must be exposed directly. Do not put it behind a reverse proxy, because it identifies visitors by their connecting address.</div>
 
+  <h2 id="tv">TV add-on (optional)</h2>
+  <p>The TV add-on is <a href="https://github.com/Ezomic/streambox">streambox</a>: it turns streams and video files into TV channels that family can watch in an IPTV app (VLC, Kodi, TiviMate and similar) or any player that opens an M3U playlist. It is off unless you ask for it.</p>
+  <div class="warn"><strong>Only your own content.</strong> Use cameras, free-to-air or public streams, and videos you own or may share. filebox does not supply or find any channels.</div>
+  <h3>Install</h3>
+  <p>Tick the TV add-on in the Windows wizard (or run it with <code>-Streambox</code>). On a box that is already running, use:</p>
+<pre><code>cd deploy
+sudo ADDONS=streambox ./setup.sh ../filebox-panel</code></pre>
+  <p>This installs ffmpeg and a checksum-verified streambox release that is pinned to your filebox release. The choice is remembered in <code>/etc/filebox/addons</code>, so <code>sudo filebox-update</code> keeps the add-on up to date. If the add-on cannot be installed (for example, the release cannot be downloaded) filebox itself is not affected and the setup output says what failed; fix the cause and run <code>sudo filebox-update</code> again.</p>
+  <h3>Use</h3>
+  <ul>
+    <li><strong>You:</strong> open the TV page in the admin panel. Add a channel from a stream URL (<code>http</code>, <code>https</code>, <code>rtsp</code>, <code>rtmp</code> or <code>srt</code>), or loop video files. Copy those files to <code>/srv/streambox/media</code> on the box first. Streams are passed through without re-encoding unless you tick re-encode, which needs much more CPU. Files are always re-encoded.</li>
+    <li><strong>Family:</strong> sign in to the web portal and open TV. It shows one playlist link to paste into their IPTV app. The program guide is included.</li>
+  </ul>
+  <h3>Good to know</h3>
+  <ul>
+    <li>The link works from anywhere, without a password, for anyone who has it. Keep it in the family. To replace it, change <code>STREAMBOX_VIEW_TOKEN</code> in <code>/etc/streambox/streambox.env</code> (use at least 24 letters and digits) and run <code>sudo systemctl restart streambox filebox-panel</code>.</li>
+    <li>Streams travel through the portal on port 443 under <code>/tv</code>, so nothing new is opened in the router. Wrong links are rate limited and banned by fail2ban like failed logins.</li>
+    <li>streambox itself only listens on this machine. The admin token never leaves it, and the admin panel is still Tailscale only.</li>
+    <li>Transcoding runs at low priority so SFTP and the panel stay responsive, but an old PC can only handle a few channels at once.</li>
+    <li>To remove it: <code>sudo systemctl disable --now streambox</code>, delete <code>/etc/streambox/streambox.env</code> and remove the <code>streambox</code> line from <code>/etc/filebox/addons</code> (otherwise the next update installs it again), then <code>sudo systemctl restart filebox-panel</code>.</li>
+  </ul>
+
   <h2 id="disks">Add a second disk (RAID1 mirror)</h2>
   <p>With one disk, a dead disk loses everything. A data partition on btrfs becomes a mirror in place, while the server keeps running. A mirror protects against a dead disk, not against deleting a file: the delete happens on both disks.</p>
   <div class="warn"><strong>Check the device name with <code>lsblk</code>.</strong> The disk you add is erased.</div>
@@ -205,6 +228,7 @@ sudo systemctl start filebox-panel</code></pre>
     <li>Public: port 2222 (SFTP, family accounts only, locked into their own folder) and port 443 (the web portal).</li>
     <li>Not public: the admin panel (Tailscale only) and SSH on port 22 (Tailscale, and your home network until you close it in step 8).</li>
     <li>Repeated wrong passwords are slowed by the portal itself and then banned at the firewall by fail2ban.</li>
+    <li>With the TV add-on, the portal also serves the TV streams to anyone who has the playlist link (still on port 443).</li>
     <li>Passwords are never stored by the web portal. It asks the system to check the same password SFTP uses.</li>
     <li>Keep the box updated: run <code>sudo apt update &amp;&amp; sudo apt upgrade</code> now and then, and <code>sudo filebox-update</code> when there is a new release.</li>
   </ul>
