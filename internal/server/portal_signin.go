@@ -32,6 +32,7 @@ func (p *Portal) signInRoutes() {
 type signInIdentity struct {
 	account  string
 	limitKey string
+	limit    *loginLimiter
 	real     bool
 }
 
@@ -39,7 +40,7 @@ type signInIdentity struct {
 // Anything else is refused. An address nobody has confirmed gets the decoy account.
 func (p *Portal) signInTarget(identifier string) (signInIdentity, bool) {
 	if system.ValidUsername(identifier) {
-		return signInIdentity{account: identifier, limitKey: identifier, real: true}, true
+		return signInIdentity{account: identifier, limitKey: identifier, limit: p.userLimit, real: true}, true
 	}
 	address := strings.TrimSpace(identifier)
 	if !validEmail(address) {
@@ -47,11 +48,11 @@ func (p *Portal) signInTarget(identifier string) (signInIdentity, bool) {
 	}
 	if contacts := p.email.contacts; contacts != nil {
 		if user, found := contacts.Lookup(address); found {
-			return signInIdentity{account: user, limitKey: user, real: true}, true
+			return signInIdentity{account: user, limitKey: user, limit: p.userLimit, real: true}, true
 		}
 	}
 
-	return signInIdentity{account: signInDecoy, limitKey: "email:" + strings.ToLower(address)}, true
+	return signInIdentity{account: signInDecoy, limitKey: strings.ToLower(address), limit: p.email.addressLimit}, true
 }
 
 type signInLinkBody struct {

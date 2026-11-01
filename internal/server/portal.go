@@ -270,12 +270,12 @@ func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "wrong username or password")
 		return
 	}
-	if !p.userLimit.begin(target.limitKey) {
+	if !target.limit.begin(target.limitKey) {
 		log.Printf("portal: login blocked user=%s ip=%s", logName(body.Username), ip)
 		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
-	defer p.userLimit.end(target.limitKey)
+	defer target.limit.end(target.limitKey)
 
 	generation := p.sessions.generation(target.account)
 	ok, err := p.verify(target.account, body.Password)
@@ -289,7 +289,7 @@ func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
 		return
 	case !ok || !target.real:
 		p.ipLimit.fail(ip)
-		p.userLimit.fail(target.limitKey)
+		target.limit.fail(target.limitKey)
 		log.Printf("portal: login failed user=%s ip=%s", logName(body.Username), ip)
 		writeError(w, http.StatusUnauthorized, "wrong username or password")
 		return
@@ -298,11 +298,10 @@ func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
 	if !p.startSession(w, target.account, generation) {
 		return
 	}
-	p.userLimit.reset(target.limitKey)
+	target.limit.reset(target.limitKey)
 	log.Printf("portal: login ok user=%s ip=%s", target.account, ip)
 }
 
-// startSession opens a session for the account and answers 204 with the cookie, or writes the error itself.
 func (p *Portal) startSession(w http.ResponseWriter, user string, generation uint64) bool {
 	token, err := p.sessions.create(user, generation)
 	switch {
