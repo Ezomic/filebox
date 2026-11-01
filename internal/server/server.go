@@ -112,6 +112,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("GET /api/files", s.requireSession(s.fh.listFiles))
 	mux.HandleFunc("DELETE /api/files", s.requireSession(s.fh.deleteFile))
 	mux.HandleFunc("GET /api/files/download", s.requireSession(s.fh.downloadFile))
+	mux.HandleFunc("GET /api/files/view", s.requireSession(s.fh.viewFile))
 	mux.HandleFunc("PUT /api/files/content", s.requireSession(s.fh.uploadFile))
 	mux.HandleFunc("POST /api/files/folder", s.requireSession(s.fh.createFolder))
 	mux.HandleFunc("POST /api/files/rename", s.requireSession(s.fh.renameFile))
