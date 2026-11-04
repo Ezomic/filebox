@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0f17" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <title data-i18n="share.title">Shared with you</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
+</head>
+<body>
+  <main class="wide">
+    <header class="bar">
+      <h1 id="title" data-i18n="share.title">Shared with you</h1>
+    </header>
+    <p class="error" id="status" role="status"></p>
+    <section class="card" id="file-card" hidden>
+      <p class="detail" id="file-meta"></p>
+      <div class="toolbar">
+        <a class="link" id="file-download" data-i18n="common.download">Download</a>
+      </div>
+      <img id="file-preview" class="share-preview" alt="" hidden>
+    </section>
+    <section class="card" id="folder-card" hidden>
+      <nav class="crumbs" id="crumbs" aria-label="Folder path" data-i18n-attr="aria-label:files.path"></nav>
+      <table id="files">
+        <tbody id="entry-rows"></tbody>
+      </table>
+      <p class="detail" id="empty" data-i18n="files.empty" hidden>This folder is empty.</p>
+      <div class="toolbar">
+        <a class="link" id="zip-download" data-i18n="share.downloadAll">Download all as zip</a>
+      </div>
+    </section>
+    <p class="detail" data-i18n="share.footer">You are viewing a link someone shared with you. You can only download from it.</p>
+  </main>
+  <script src="/static/share.js"></script>
+</body>
+</html>

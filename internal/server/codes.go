@@ -69,6 +69,14 @@ const (
 	codeTooManyDates         = "too_many_dates"
 	codeInvalidRequest       = "invalid_request"
 	codeStorageUnavailable   = "storage_unavailable"
+	codeShareNameInvalid     = "share_name_invalid"
+	codeShareNameReserved    = "share_name_reserved"
+	codeShareNameTaken       = "share_name_taken"
+	codeShareTargetInvalid   = "share_target_invalid"
+	codeShareLimit           = "share_limit"
+	codeShareExpiryInvalid   = "share_expiry_invalid"
+	codeShareNotFound        = "share_not_found"
+	codeShareSaveFailed      = "share_save_failed"
 )
 
 func writeCoded(w http.ResponseWriter, status int, code, message string) {

@@ -32,5 +32,7 @@ jobs:
           go test ./internal/server -run '^$' -fuzz '^FuzzPortalStreamPathsReachOnlyStreams$' -fuzztime 20s
           go test ./internal/server -run '^$' -fuzz '^FuzzPortalAdminRequests$' -fuzztime 20s
           go test ./internal/server -run '^$' -fuzz '^FuzzPortalEmailRequests$' -fuzztime 20s
+          go test ./internal/server -run '^$' -fuzz '^FuzzShareRoutesStayConfined$' -fuzztime 30s
+          go test ./internal/server -run '^$' -fuzz '^FuzzShareName$' -fuzztime 15s
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

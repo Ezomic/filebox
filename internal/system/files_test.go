@@ -455,3 +455,39 @@ func TestNewDirFilesNeedsExistingDirectory(t *testing.T) {
 		t.Fatal("expected an error for a missing root")
 	}
 }
+
+func TestDirFilesLstatDescribesALinkNotItsTarget(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "real", "f"), []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real", filepath.Join(dir, "alias")); err != nil {
+		t.Skipf("this OS refused to create a symlink: %v", err)
+	}
+	files, err := NewDirFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.(io.Closer).Close()
+
+	if info, err := files.Lstat("alias"); err != nil || !info.Symlink || info.IsDir {
+		t.Fatalf("a link to a folder is a link, not a folder: %+v %v", info, err)
+	}
+	if info, err := files.Lstat("real"); err != nil || info.Symlink || !info.IsDir {
+		t.Fatalf("got %+v %v", info, err)
+	}
+	if info, err := files.Lstat("real/f"); err != nil || info.Symlink || info.IsDir || info.Size != 2 {
+		t.Fatalf("got %+v %v", info, err)
+	}
+	for _, bad := range []string{"", "../x", ".trash", "real/.UPLOADS"} {
+		if _, err := files.Lstat(bad); !errors.Is(err, ErrInvalidPath) {
+			t.Errorf("%q: got %v", bad, err)
+		}
+	}
+	if _, err := files.Lstat("nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v", err)
+	}
+}

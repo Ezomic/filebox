@@ -30,6 +30,10 @@ func (f *FakeFiles) Stat(path string) (FileInfo, error) {
 	return FileInfo{Name: baseOf(path), IsDir: entry.isDir, Size: int64(len(entry.data)), Modified: entry.modified}, nil
 }
 
+func (f *FakeFiles) Lstat(path string) (FileInfo, error) {
+	return f.Stat(path)
+}
+
 func (f *FakeFiles) CreateUpload(path string, size int64, overwrite bool) (UploadInfo, error) {
 	path, err := cleanNonRoot(path)
 	if err != nil {

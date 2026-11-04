@@ -227,6 +227,71 @@ function showDeleteForm(cell, user) {
   });
 }
 
+let sharedLinks = [];
+
+function shareNotice(producer) {
+  const box = byId('share-notice');
+  if (producer) i18n.msg(box, producer);
+  else i18n.msg(box);
+  box.hidden = !producer;
+}
+
+function sharedRow(share) {
+  const row = el('tr');
+  const name = el('td', undefined, 'name');
+  name.append(el('div', `/${share.name}`));
+  name.append(el('div', t('admin.shareOwner', { owner: share.owner, path: share.path }), 'detail'));
+  const meta = el('td', undefined, 'meta');
+  meta.append(el('div', shareExpiryText(share), share.expired ? 'error' : 'detail'));
+  meta.append(el('div', t('shares.downloads', { count: share.downloads }), 'detail'));
+  const actions = el('td', undefined, 'row-actions');
+  row.append(name, meta, actions);
+  showShareActions(actions, share);
+  return row;
+}
+
+function showShareActions(cell, share) {
+  cell.replaceChildren(button(t('shares.revoke'), () => showShareRevoke(cell, share), 'link danger'));
+}
+
+function showShareRevoke(cell, share) {
+  const form = el('form', undefined, 'inline');
+  const message = el('span', undefined, 'error');
+  const confirm = el('button', t('shares.revoke'), 'danger-solid');
+  confirm.type = 'submit';
+  form.append(el('span', t('shares.revokeNotice', { name: share.name }), 'error'), confirm, button(t('common.cancel'), () => showShareActions(cell, share), 'link'), message);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    confirm.disabled = true;
+    try {
+      await api('DELETE', `/api/admin/shares/${encodeURIComponent(share.name)}`);
+      shareNotice(() => t('shares.revoked', { name: share.name }));
+      await loadShares();
+    } catch (error) {
+      i18n.report(message, error);
+      confirm.disabled = false;
+    }
+  });
+  cell.replaceChildren(form);
+  confirm.focus();
+}
+
+function renderShares() {
+  const body = byId('share-rows');
+  body.replaceChildren(...sharedLinks.map(sharedRow));
+  byId('shares-empty').hidden = sharedLinks.length > 0;
+}
+
+async function loadShares() {
+  try {
+    ({ shares: sharedLinks } = await api('GET', '/api/admin/shares'));
+  } catch {
+    return;
+  }
+  byId('shares-card').hidden = false;
+  renderShares();
+}
+
 byId('add-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const errorBox = byId('add-error');
@@ -251,9 +316,11 @@ byId('logout').addEventListener('click', async () => {
 
 i18n.onChange(() => {
   if (!rows.querySelector('form')) renderUsers();
+  if (!byId('share-rows').querySelector('form')) renderShares();
 });
 
 api('GET', '/api/me').then((body) => {
   me = body.user;
+  loadShares();
   return load();
 }).catch(() => {});

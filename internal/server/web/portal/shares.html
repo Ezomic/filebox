@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0f17" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <title data-i18n="shares.title">Shared links</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
+</head>
+<body>
+  <main class="wide">
+    <header class="bar">
+      <h1 data-i18n="shares.title">Shared links</h1>
+      <nav class="actions">
+        <a class="link" href="/" data-i18n="nav.files">Files</a>
+        <a class="link" href="/family" data-i18n="nav.family">Family</a>
+        <a class="link" href="/photos" data-i18n="nav.photos">Photos</a>
+        <a class="link" href="/backup" data-i18n="nav.backup">Back up</a>
+        <a class="link" id="tv-link" href="/tv" data-i18n="nav.tv" hidden>TV</a>
+        <a class="link" href="/trash" data-i18n="nav.trash">Trash</a>
+        <a class="link" href="/shares" aria-current="page" data-i18n="nav.shares">Shared links</a>
+        <a class="link" href="/password" data-i18n="nav.password">Password</a>
+        <button class="link" id="logout" type="button" data-i18n="nav.signout">Sign out</button>
+      </nav>
+    </header>
+    <p class="error" id="status" role="status"></p>
+    <p class="notice" id="notice" role="status" hidden></p>
+    <section class="card">
+      <p class="detail" data-i18n="shares.intro">Anyone with a link can download what it points to, without signing in. Links only work while the file or folder stays where it is. To make a new link, use Share in your files.</p>
+      <table id="files">
+        <tbody id="share-rows"></tbody>
+      </table>
+      <p class="detail" id="empty" data-i18n="shares.empty" hidden>You have not shared anything yet.</p>
+    </section>
+  </main>
+  <script src="/static/nav.js"></script>
+  <script src="/static/shareui.js"></script>
+  <script src="/static/shares.js"></script>
+  <script src="/static/tvlink.js"></script>
+</body>
+</html>

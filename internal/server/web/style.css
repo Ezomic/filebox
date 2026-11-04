@@ -393,6 +393,8 @@ button.folder::before {
   form.inline > .detail { flex-basis: auto; }
 }
 
+.share-preview { display: block; max-width: 100%; max-height: 70vh; margin: 14px auto 0; border-radius: 10px; object-fit: contain; }
+
 .notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--card); overflow-wrap: anywhere; }
 .notice[hidden] { display: none; }
 #empty-confirm { margin-top: 0; }

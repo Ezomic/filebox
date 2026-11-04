@@ -35,6 +35,14 @@
       </table>
       <p class="detail" id="empty" data-i18n="admin.empty" hidden>No users yet.</p>
     </section>
+    <section class="card stacked" id="shares-card" hidden>
+      <div class="label" data-i18n="admin.shares">Shared links</div>
+      <p class="notice" id="share-notice" role="status" hidden></p>
+      <table id="files">
+        <tbody id="share-rows"></tbody>
+      </table>
+      <p class="detail" id="shares-empty" data-i18n="admin.sharesEmpty" hidden>Nobody has shared anything.</p>
+    </section>
     <form class="card stacked" id="add-form" autocomplete="off">
       <div class="label" data-i18n="admin.add">Add user</div>
       <label for="new-name" data-i18n="common.username">Username</label>
@@ -46,6 +54,7 @@
     </form>
   </main>
   <script src="/static/nav.js"></script>
+  <script src="/static/shareui.js"></script>
   <script src="/static/admin.js"></script>
   <script src="/static/tvlink.js"></script>
 </body>

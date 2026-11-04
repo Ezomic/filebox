@@ -60,6 +60,10 @@ func (a fileHandlers) downloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	serveAttachment(w, r, file, info)
+}
+
+func serveAttachment(w http.ResponseWriter, r *http.Request, file system.File, info system.FileInfo) {
 	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": info.Name})
 	if disposition == "" {
 		disposition = "attachment"

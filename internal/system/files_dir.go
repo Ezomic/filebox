@@ -120,6 +120,19 @@ func (d *dirFiles) Stat(name string) (FileInfo, error) {
 	return FileInfo{Name: info.Name(), IsDir: info.IsDir(), Size: info.Size(), Modified: info.ModTime()}, nil
 }
 
+func (d *dirFiles) Lstat(name string) (FileInfo, error) {
+	name, err := cleanNonRoot(name)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	info, err := d.root.Lstat(name)
+	if err != nil {
+		return FileInfo{}, d.classify(name, err)
+	}
+
+	return FileInfo{Name: info.Name(), IsDir: info.IsDir(), Size: info.Size(), Modified: info.ModTime(), Symlink: info.Mode()&fs.ModeSymlink != 0}, nil
+}
+
 func (d *dirFiles) Write(name string, content io.Reader, overwrite bool) error {
 	name, err := cleanNonRoot(name)
 	if err != nil {
