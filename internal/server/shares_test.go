@@ -304,18 +304,6 @@ func TestEveryRegisteredRouteIsReservedFromShareNames(t *testing.T) {
 			t.Errorf("the router serves /%s but reservedShareNames does not list it, so a portal without that route could hand the name out", segment)
 		}
 	}
-	for _, segment := range slices.Collect(func(yield func(string) bool) {
-		for s := range portal.mux.first {
-			if !yield(s) {
-				return
-			}
-		}
-	}) {
-		normalized := normalizeShareName(segment)
-		if shareNamePattern.MatchString(normalized) && len(normalized) >= shareNameMin && portal.shareNameProblem(normalized) != codeShareNameReserved {
-			t.Errorf("/%s is a route and must be reserved", segment)
-		}
-	}
 }
 
 func TestRouterRefusesAWildcardAsFirstSegment(t *testing.T) {
@@ -1305,5 +1293,22 @@ func TestSharePagesRenderNamesAsText(t *testing.T) {
 	raw, _ := fs.ReadFile(webFiles, "web/portal/shareui.js")
 	if !strings.Contains(string(raw), "window.location.origin") {
 		t.Error("the copied address must be built from the page's own origin")
+	}
+}
+
+func TestMissesOnRoutePathsNeverCountAgainstTheVisitor(t *testing.T) {
+	h := newShareHarness(t)
+	h.seed(t)
+	h.mustCreate(t, h.amy, "real-link", "notes.txt")
+	for i := range shareMissLimit + 10 {
+		if rec := h.visit("GET", fmt.Sprintf("/static/nope-%d.png", i)); rec.Code != http.StatusNotFound {
+			t.Fatalf("got %d", rec.Code)
+		}
+		if rec := h.visit("GET", "/api/nothing"); rec.Code != http.StatusNotFound {
+			t.Fatalf("got %d", rec.Code)
+		}
+	}
+	if rec := h.visit("GET", "/real-link/download"); rec.Code != 200 {
+		t.Fatalf("a visitor with broken asset requests must still reach a real link, got %d", rec.Code)
 	}
 }

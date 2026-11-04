@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -60,16 +61,28 @@ func (p *Portal) serveShare(w http.ResponseWriter, r *http.Request) bool {
 	if !ok {
 		return false
 	}
+	if slices.Contains(reservedShareNames, name) || p.mux.claims(name) {
+		return false
+	}
 	ip := ipKey(r)
-	if p.shareMiss.blocked(ip) || !p.shareFlood.reserve(ip) {
-		w.Header().Set("Retry-After", "60")
-		writeCoded(w, http.StatusTooManyRequests, codeRateLimited, "too many requests, try again later")
-		return true
+	if !p.shareMiss.begin(ip) {
+		return p.tooManyShareRequests(w)
+	}
+	defer p.shareMiss.end(ip)
+	if !p.shareFlood.reserve(ip) {
+		return p.tooManyShareRequests(w)
 	}
 	if !p.answerShare(w, r, name, action) {
 		p.shareMiss.fail(ip)
 		return false
 	}
+
+	return true
+}
+
+func (p *Portal) tooManyShareRequests(w http.ResponseWriter) bool {
+	w.Header().Set("Retry-After", "60")
+	writeCoded(w, http.StatusTooManyRequests, codeRateLimited, "too many requests, try again later")
 
 	return true
 }
