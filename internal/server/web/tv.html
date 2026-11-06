@@ -26,6 +26,27 @@
       </table>
       <p class="detail" id="empty" hidden>No channels yet.</p>
     </section>
+    <section class="card stacked">
+      <div class="label">Share links</div>
+      <p class="detail">A share link plays one channel for anyone who has it, without signing in. Give each TV its own link, so you can revoke one without touching the others.</p>
+      <table id="shares">
+        <tbody id="share-rows"></tbody>
+      </table>
+      <p class="detail" id="no-shares" hidden>No share links yet.</p>
+      <p class="error" id="no-portal" hidden>The portal's public address is not known (is the web portal on?), so only the codes are shown. Share links only work through the portal.</p>
+    </section>
+    <form class="card stacked" id="share-form" autocomplete="off" hidden>
+      <div class="label">New share link</div>
+      <label for="share-label">Who is it for</label>
+      <input type="text" id="share-label" required maxlength="60" placeholder="Mum's TV">
+      <label for="share-channel">Channel</label>
+      <select id="share-channel" required></select>
+      <label for="share-slug">Link name (a-z, 0-9 and single hyphens, up to 24)</label>
+      <input type="text" id="share-slug" required maxlength="24" pattern="[A-Za-z0-9]+(-[A-Za-z0-9]+)*" autocapitalize="none" spellcheck="false">
+      <p class="detail">Eight random characters are added to the end, for example holiday-film-k7p3x9qm.</p>
+      <p class="error" id="share-error" role="alert"></p>
+      <button type="submit">Create share link</button>
+    </form>
     <form class="card stacked" id="add-form" autocomplete="off">
       <div class="label">Add channel</div>
       <p class="detail">Only add streams and files you own or have the right to share.</p>
