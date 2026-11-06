@@ -17,6 +17,19 @@ function setLink(admin) {
   nav.querySelector('a[href="/"]').after(link);
 }
 
+function addSharesLink() {
+  const trash = nav?.querySelector('a[href="/trash"]');
+  if (!trash || nav.querySelector('a[href="/shares"]')) return;
+  const link = document.createElement('a');
+  link.className = 'link';
+  link.href = '/shares';
+  link.textContent = t('nav.shares');
+  link.setAttribute('data-i18n', 'nav.shares');
+  trash.after(link);
+}
+
+addSharesLink();
+
 // The last answer is remembered for this tab so the link is already there on the next page, not added after a request.
 try {
   setLink(sessionStorage.getItem(key) === '1');

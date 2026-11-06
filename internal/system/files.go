@@ -65,6 +65,8 @@ type Files interface {
 	Remove(path string) error
 	Mkdir(path string) error
 	Stat(path string) (FileInfo, error)
+	// Lstat describes the entry itself, never what a symlink points at: Symlink is set and IsDir is false for a link.
+	Lstat(path string) (FileInfo, error)
 
 	CreateUpload(path string, size int64, overwrite bool) (UploadInfo, error)
 	UploadStatus(id string) (UploadInfo, error)

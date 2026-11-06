@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"path"
 	"strings"
+
+	"github.com/Ezomic/filebox/internal/system"
 )
 
 type viewType struct {
@@ -63,6 +65,10 @@ func (a fileHandlers) viewFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	serveViewed(w, r, file, info, kind)
+}
+
+func serveViewed(w http.ResponseWriter, r *http.Request, file system.File, info system.FileInfo, kind viewType) {
 	disposition := mime.FormatMediaType("inline", map[string]string{"filename": info.Name})
 	if disposition == "" {
 		disposition = "inline"

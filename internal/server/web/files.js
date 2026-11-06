@@ -146,11 +146,73 @@ function showActions(cell, entry, path) {
     link.download = entry.name;
     nodes.push(link);
   }
+  if (!inFamily) nodes.push(button(t('files.share'), () => showShareForm(cell, entry, path), 'link'));
   nodes.push(
     button(t('files.rename'), () => showRenameForm(cell, entry, path), 'link'),
     button(t('common.delete'), () => deleteEntry(path), 'link danger'),
   );
   cell.replaceChildren(...nodes);
+}
+
+function showShareForm(cell, entry, path) {
+  const name = el('input');
+  name.type = 'text';
+  name.maxLength = 40;
+  name.autocapitalize = 'none';
+  name.spellcheck = false;
+  name.setAttribute('aria-label', t('files.shareName'));
+  name.placeholder = t('files.shareNameHint');
+  const expiry = expirySelect(t('shares.expiryLabel'));
+
+  const form = el('form', undefined, 'inline');
+  const message = el('span', undefined, 'error');
+  const create = el('button', t('files.shareCreate'));
+  create.type = 'submit';
+  form.append(
+    el('span', t('files.shareNotice', { name: entry.name }), 'detail'),
+    name,
+    expiry,
+    create,
+    button(t('common.cancel'), () => showActions(cell, entry, path), 'link'),
+    message,
+  );
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    create.disabled = true;
+    try {
+      const share = await api('POST', '/api/shares', { name: name.value.trim(), path, expires: expiry.value });
+      showCreatedShare(cell, entry, path, share);
+    } catch (error) {
+      i18n.report(message, error);
+      create.disabled = false;
+    }
+  });
+
+  cell.replaceChildren(form);
+  name.focus();
+}
+
+function showCreatedShare(cell, entry, path, share) {
+  const url = shareUrl(share.name);
+  const link = el('input');
+  link.type = 'text';
+  link.readOnly = true;
+  link.value = url;
+  link.setAttribute('aria-label', t('files.shareLink'));
+  link.addEventListener('focus', () => link.select());
+
+  const form = el('form', undefined, 'inline');
+  const message = el('span', undefined, 'detail');
+  form.append(
+    link,
+    button(t('shares.copy'), () => copyShareUrl(url, (producer) => i18n.msg(message, producer)), 'link'),
+    button(t('files.shareDone'), () => showActions(cell, entry, path), 'link'),
+    message,
+  );
+  form.addEventListener('submit', (event) => event.preventDefault());
+  cell.replaceChildren(form);
+  link.select();
 }
 
 function showRenameForm(cell, entry, path) {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Ezomic/filebox/internal/auth"
 	"github.com/Ezomic/filebox/internal/mail"
 	"github.com/Ezomic/filebox/internal/system"
 )
@@ -47,6 +48,8 @@ type PortalDeps struct {
 	Contacts  Contacts
 	Mail      mail.Sender
 	PortalURL string
+	// Shares holds the public share links; nil switches share links off.
+	Shares *auth.Shares
 }
 
 // Portal is the public, per-user web interface. It is a separate handler from the admin
@@ -66,7 +69,11 @@ type Portal struct {
 	verifying  chan struct{}
 	verifyWait time.Duration
 	pages      fs.FS
-	mux        *http.ServeMux
+	mux        *routes
+	shares     *auth.Shares
+	now        func() time.Time
+	shareMiss  *loginLimiter
+	shareFlood *loginLimiter
 	email      *emailFlow
 	tv         *TV
 	tvLimit    *loginLimiter
@@ -100,10 +107,16 @@ func NewPortal(deps PortalDeps) *Portal {
 		email:      newEmailFlow(deps),
 		tv:         deps.TV,
 		tvLimit:    newLoginLimiter(tvIPFails, failWindow),
+		shares:     deps.Shares,
+		now:        time.Now,
+		shareMiss:  newLoginLimiter(shareMissLimit, failWindow),
+		shareFlood: newLoginLimiter(shareFloodLimit, shareFloodSpan),
 	}
+	p.forgetSharesOfGoneUsers()
 
-	p.mux = http.NewServeMux()
+	p.mux = newRoutes()
 	p.emailRoutes()
+	p.mux.HandleFunc("GET /robots.txt", robotsTxt)
 	p.mux.Handle("GET /static/style.css", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/files.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/trash.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
@@ -118,7 +131,7 @@ func NewPortal(deps PortalDeps) *Portal {
 		p.mux.HandleFunc("GET /"+icon, installAsset(shared, icon, "image/png"))
 	}
 	p.mux.Handle("GET /static/", http.StripPrefix("/static/", assetsOnly(http.FileServerFS(p.pages))))
-	p.mux.HandleFunc("/", p.notFound)
+	p.mux.HandleFunc("/", p.catchAll)
 	p.mux.HandleFunc("GET /{$}", p.homePage)
 	p.mux.HandleFunc("GET /login", p.loginPage)
 	p.mux.HandleFunc("POST /api/login", p.login)
@@ -172,6 +185,9 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.fileAPI("GET /api/uploads/{id}", fileHandlers.uploadStatus)
 	p.fileAPI("PUT /api/uploads/{id}", fileHandlers.appendChunk)
 	p.fileAPI("POST /api/uploads/{id}/finish", fileHandlers.finishUpload)
+	if p.shares != nil {
+		p.shareRoutes()
+	}
 
 	return p
 }
@@ -179,6 +195,7 @@ func NewPortal(deps PortalDeps) *Portal {
 func (p *Portal) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	header := w.Header()
 	header.Set("Strict-Transport-Security", "max-age=31536000")
+	header.Set("X-Robots-Tag", "noindex, nofollow")
 	if !sameOrigin(r) {
 		http.Error(w, "cross-origin request refused", http.StatusForbidden)
 
@@ -204,6 +221,12 @@ func sameOrigin(r *http.Request) bool {
 func (p *Portal) EndSessions(user string) {
 	p.sessions.destroyUser(user)
 	p.email.dropIfGone(user, p.users)
+	p.forgetSharesOfGoneUser(user)
+}
+
+func robotsTxt(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = io.WriteString(w, "User-agent: *\nDisallow: /\n")
 }
 
 // sharedAssets exposes only the stylesheet and the file browser script from the admin

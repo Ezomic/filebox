@@ -201,25 +201,17 @@ func (a fileHandlers) downloadZip(w http.ResponseWriter, r *http.Request) {
 		fileError(w, "zip", name, err)
 		return
 	}
+	a.streamZip(w, r, name)
+}
+
+func (a fileHandlers) streamZip(w http.ResponseWriter, r *http.Request, name string) {
 	isFile, err := a.isFile(name)
 	if err != nil {
 		fileError(w, "zip", name, err)
 		return
 	}
 
-	archiveName := baseName(name)
-	if archiveName == "" {
-		archiveName = "files"
-	}
-	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": archiveName + ".zip"})
-	if disposition == "" {
-		disposition = "attachment"
-	}
-	header := w.Header()
-	header.Set("Content-Type", "application/zip")
-	header.Set("Content-Disposition", disposition)
-	header.Set("X-Content-Type-Options", "nosniff")
-
+	archiveName := zipHeaders(w, name)
 	out := &deadlineWriter{ResponseWriter: w, rc: http.NewResponseController(w)}
 	z := &zipper{files: a.files, zw: zip.NewWriter(out), buf: make([]byte, zipCopyBuffer), request: r}
 	if isFile {
@@ -234,6 +226,23 @@ func (a fileHandlers) downloadZip(w http.ResponseWriter, r *http.Request) {
 		log.Printf("zip: %v", logCause(err))
 		panic(http.ErrAbortHandler)
 	}
+}
+
+func zipHeaders(w http.ResponseWriter, name string) (archiveName string) {
+	archiveName = baseName(name)
+	if archiveName == "" {
+		archiveName = "files"
+	}
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": archiveName + ".zip"})
+	if disposition == "" {
+		disposition = "attachment"
+	}
+	header := w.Header()
+	header.Set("Content-Type", "application/zip")
+	header.Set("Content-Disposition", disposition)
+	header.Set("X-Content-Type-Options", "nosniff")
+
+	return archiveName
 }
 
 func (a fileHandlers) isFile(name string) (bool, error) {

@@ -83,6 +83,11 @@ func main() {
 		TV:         tv,
 		Thumbs:     thumbs,
 	}
+	shares, err := auth.OpenShares(*dataDir)
+	if err != nil {
+		log.Fatalf("open share links: %v", err)
+	}
+	portalDeps.Shares = shares
 	enableEmail(&portalDeps, *dataDir)
 	portal := server.NewPortal(portalDeps)
 
