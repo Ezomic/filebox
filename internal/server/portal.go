@@ -37,7 +37,11 @@ type PortalDeps struct {
 	OpenFiles func(user string) (system.Files, error)
 	// OpenFamily returns a Files confined to the folder every signed-in user shares; nil switches the Family pages off.
 	OpenFamily func() (system.Files, error)
-	MaxUpload  int64
+	// OpenVersions returns the earlier versions of that user's files; nil switches Earlier versions off.
+	OpenVersions func(user string) (system.Versions, error)
+	// OpenFamilyVersions returns the earlier versions of the family folder; nil switches them off for that folder.
+	OpenFamilyVersions func() (system.Versions, error)
+	MaxUpload          int64
 	// Disk reports the usage of the filesystem holding the files; nil turns the storage bar off and never blocks an upload.
 	Disk system.DiskSpace
 	// TV is the streambox add-on; nil when it is not installed.
@@ -60,6 +64,10 @@ type Portal struct {
 	roles      Roles
 	openFiles  func(user string) (system.Files, error)
 	openFamily func() (system.Files, error)
+
+	openVersions       func(user string) (system.Versions, error)
+	openFamilyVersions func() (system.Versions, error)
+
 	maxUpload  int64
 	space      *storageProbe
 	thumbs     *Thumbs
@@ -95,6 +103,10 @@ func NewPortal(deps PortalDeps) *Portal {
 		roles:      deps.Roles,
 		openFiles:  deps.OpenFiles,
 		openFamily: deps.OpenFamily,
+
+		openVersions:       deps.OpenVersions,
+		openFamilyVersions: deps.OpenFamilyVersions,
+
 		maxUpload:  deps.MaxUpload,
 		space:      newStorageProbe(deps.Disk, deps.Users),
 		thumbs:     deps.Thumbs,
@@ -185,6 +197,9 @@ func NewPortal(deps PortalDeps) *Portal {
 	p.fileAPI("GET /api/uploads/{id}", fileHandlers.uploadStatus)
 	p.fileAPI("PUT /api/uploads/{id}", fileHandlers.appendChunk)
 	p.fileAPI("POST /api/uploads/{id}/finish", fileHandlers.finishUpload)
+	if p.openVersions != nil {
+		p.versionRoutes()
+	}
 	if p.shares != nil {
 		p.shareRoutes()
 	}

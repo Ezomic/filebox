@@ -1,0 +1,8 @@
+[Unit]
+Description=Free space by deleting the oldest filebox earlier versions when the disk is 95% full
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/filebox-snapshot check
+Nice=19
+IOSchedulingClass=idle

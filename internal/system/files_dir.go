@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const (
@@ -20,6 +21,8 @@ const (
 
 type dirFiles struct {
 	root *os.Root
+	// skip is a folder at the top that walks never enter. Only the data root has one: the earlier versions.
+	skip string
 }
 
 func NewDirFiles(dir string) (Files, error) {
@@ -131,6 +134,18 @@ func (d *dirFiles) Lstat(name string) (FileInfo, error) {
 	}
 
 	return FileInfo{Name: info.Name(), IsDir: info.IsDir(), Size: info.Size(), Modified: info.ModTime(), Symlink: info.Mode()&fs.ModeSymlink != 0}, nil
+}
+
+func (d *dirFiles) SetModified(name string, modified time.Time) error {
+	name, err := cleanNonRoot(name)
+	if err != nil {
+		return err
+	}
+	if err := d.root.Chtimes(name, time.Time{}, modified); err != nil {
+		return d.classify(name, err)
+	}
+
+	return nil
 }
 
 func (d *dirFiles) Write(name string, content io.Reader, overwrite bool) error {
@@ -246,6 +261,18 @@ func (d *dirFiles) Remove(name string) error {
 		}
 	}
 	if err := d.root.Remove(name); err != nil {
+		return d.classify(name, err)
+	}
+
+	return nil
+}
+
+func (d *dirFiles) RemoveAll(name string) error {
+	name, err := cleanNonRoot(name)
+	if err != nil {
+		return err
+	}
+	if err := d.root.RemoveAll(name); err != nil {
 		return d.classify(name, err)
 	}
 

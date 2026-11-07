@@ -63,10 +63,15 @@ type Files interface {
 	Write(path string, content io.Reader, overwrite bool) error
 	Rename(from, to string) error
 	Remove(path string) error
+	// RemoveAll deletes a file or a folder with everything in it, for good and without the trash. It clears the half
+	// copy of a failed restore, which usually failed for lack of space, so the trash could not take it either.
+	RemoveAll(path string) error
 	Mkdir(path string) error
 	Stat(path string) (FileInfo, error)
 	// Lstat describes the entry itself, never what a symlink points at: Symlink is set and IsDir is false for a link.
 	Lstat(path string) (FileInfo, error)
+	// SetModified sets the modification time, so a restored earlier version keeps the time it had.
+	SetModified(path string, modified time.Time) error
 
 	CreateUpload(path string, size int64, overwrite bool) (UploadInfo, error)
 	UploadStatus(id string) (UploadInfo, error)

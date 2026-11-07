@@ -22,6 +22,7 @@ umask 022
 
 readonly GROUP=sftpusers
 readonly BASE=/srv/sftp
+readonly SNAPSHOTS=$BASE/.snapshots
 readonly NAME_RE='^[a-z][a-z0-9_-]{2,31}$'
 readonly MIN_PASSWORD=12
 readonly MAX_PASSWORD=128
@@ -145,12 +146,24 @@ make_files_dir() {
 	fi
 }
 
+# Earlier versions (filebox-snapshot) belong to the account, not to the name, so a later account with the same name
+# must never see them. They move aside like the archived home and expire on the normal schedule.
+set_snapshots_aside() {
+	local from=$SNAPSHOTS/$1 to=$SNAPSHOTS/$1.deleted-$2
+	[ -e "$from" ] || [ -L "$from" ] || return 0
+	[ -d "$from" ] && [ ! -L "$from" ] || return 1
+	mv -T -- "$from" "$to" || return 1
+	chown root:root -- "$to"
+	chmod 0700 -- "$to"
+}
+
 cmd_create() {
 	local name=$1
 	valid_name "$name"
 	read_password
 	getent passwd -- "$name" >/dev/null && die "user already exists"
 	getent group -- "$name" >/dev/null && die "name is taken by a group"
+	set_snapshots_aside "$name" "$(date +%Y%m%d%H%M%S)" || die "could not move the earlier versions of a previous $name aside"
 
 	local home=$BASE/$name created=0
 	# shellcheck disable=SC2329 # invoked by the EXIT trap
@@ -180,20 +193,23 @@ cmd_create() {
 }
 
 cmd_delete() {
-	local name=$1 uid archive
+	local name=$1 uid stamp archive
 	valid_name "$name"
 	require_sftp_user "$name"
 	uid=$(id -u -- "$name")
 	pkill -KILL -U "$uid" 2>/dev/null || true
 	userdel -- "$name" >/dev/null || die "could not delete user"
+	stamp=$(date +%Y%m%d%H%M%S)
 	# Data is kept so a mistaken delete is recoverable; remove the directory by hand to free space.
 	if [ -d "$BASE/$name" ] && [ ! -L "$BASE/$name" ]; then
-		archive=$BASE/$name.deleted-$(date +%Y%m%d%H%M%S)
+		archive=$BASE/$name.deleted-$stamp
 		mv -T -- "$BASE/$name" "$archive" || die "user deleted but could not archive the home"
 		# The old uid could be reused by a later user, so the archive must not stay theirs.
 		chown root:root -- "$archive"
 		chmod 0700 -- "$archive"
 	fi
+	# After the home: once the files folder is gone, no new snapshot of it can appear under the old name.
+	set_snapshots_aside "$name" "$stamp" || die "user deleted but could not move their earlier versions aside"
 }
 
 cmd_passwd() {
