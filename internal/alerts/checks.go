@@ -19,6 +19,7 @@ const (
 	pruneWindow     = 24 * time.Hour
 	restartWindow   = 24 * time.Hour
 	keepNewest      = 7
+	backupOverdue   = 3 * 24 * time.Hour
 )
 
 // What each check looks at, as the dashboard and an alert say it: "Could not check the SMART disk health".
@@ -29,6 +30,7 @@ const (
 	snapshotsName = "the earlier versions"
 	certName      = "the portal certificate"
 	restartName   = "how filebox last shut down"
+	backupName    = "the offsite backup"
 )
 
 // DiskCheck watches how full the data disk is.
@@ -389,6 +391,93 @@ func prunedProblem(low system.SnapshotLowSpace) Problem {
 		Detail:  detail,
 		Cleared: "No earlier versions have been deleted to free space for 24 hours.",
 		Easing:  low.Deleted == 0,
+	}
+}
+
+// BackupCheck watches the offsite backup add-on: a night that failed, no complete backup for 3 days once the first one
+// has finished (the first upload may take a week of nights), and a monthly check that failed. Main only adds it when
+// the add-on is installed.
+func BackupCheck(read func() (system.BackupStatus, error)) Check {
+	return func(now time.Time) Result {
+		status, err := read()
+		switch {
+		case errors.Is(err, system.ErrNoBackupStatus):
+			return Result{Source: "backup", Name: backupName, Known: true}
+		case err != nil:
+			log.Printf("alerts: read backup status: %v", err)
+			return Result{Source: "backup", Name: backupName}
+		}
+
+		return Result{Source: "backup", Name: backupName, Known: true, Problems: backupProblems(status, now)}
+	}
+}
+
+func backupProblems(status system.BackupStatus, now time.Time) []Problem {
+	if !status.Configured {
+		return nil
+	}
+	var problems []Problem
+	if run := status.Run; run != nil {
+		problems = append(problems, failedRunProblems(*run)...)
+	}
+	if !status.Latest.IsZero() && now.Sub(status.Latest) >= backupOverdue {
+		problems = append(problems, overdueProblem(status, now))
+	}
+	if check := status.Check; check != nil && !check.OK {
+		problems = append(problems, Problem{
+			Key:     "backup-check",
+			Subject: "The monthly check of the offsite backup failed",
+			Detail: "On " + when(check.At) + " restic could not read part of the offsite backup back, or found it damaged, so a " +
+				"restore may fail. The next night checks again. See: sudo journalctl -u filebox-backup",
+			Cleared: "The check of the offsite backup passes again.",
+		})
+	}
+
+	return problems
+}
+
+func failedRunProblems(run system.BackupRun) []Problem {
+	night := "The nightly offsite backup of " + when(run.Started)
+	subject, detail := "The offsite backup failed", ""
+	switch run.Result {
+	case system.BackupFailed:
+		detail = night + " failed, so nothing new reached the backup. The destination may be unreachable or full."
+	case system.BackupPrepareFailed:
+		detail = night + " could not start: it could not list the accounts or prepare the folders to read."
+	case system.BackupIncomplete:
+		subject = "The offsite backup could not read every file"
+		detail = night + " finished, but some files could not be read and are not in it. That can mean a damaged file " +
+			"or a failing disk; check the disk health on the dashboard."
+	case system.BackupPruneFailed:
+		subject = "Old offsite backups could not be removed"
+		detail = night + " finished, but removing the backups that are no longer kept failed, so the backup keeps growing."
+	default:
+		return nil
+	}
+
+	return []Problem{{
+		Key:     "backup-failed",
+		Subject: subject,
+		Detail:  detail + " See: sudo journalctl -u filebox-backup",
+		Cleared: "The nightly offsite backup works again.",
+	}}
+}
+
+func overdueProblem(status system.BackupStatus, now time.Time) Problem {
+	days := uint64(now.Sub(status.Latest) / (24 * time.Hour))
+	detail := "The newest complete offsite backup was started on " + when(status.Latest) + "."
+	if status.Run != nil && status.Run.Result == system.BackupStopped {
+		detail += " The nightly runs stop at the 6 hour limit before they finish and carry on the next night. When that " +
+			"keeps happening there is more new data than the connection can send in a night."
+	} else {
+		detail += " See the offsite backup on the dashboard, and: sudo journalctl -u filebox-backup"
+	}
+
+	return Problem{
+		Key:     "backup-overdue",
+		Subject: "No offsite backup for " + plural(days, "day"),
+		Detail:  detail,
+		Cleared: "A complete offsite backup has finished again.",
 	}
 }
 

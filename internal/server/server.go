@@ -48,6 +48,8 @@ type Deps struct {
 	Snapshots func() (system.SnapshotStatus, error)
 	// Alerts holds the open problems and the alert address; nil leaves the dashboard without problems.
 	Alerts *alerts.Monitor
+	// Offsite reads what filebox-backup last reported; nil when the backup add-on is not installed.
+	Offsite func() (system.BackupStatus, error)
 }
 
 type Server struct {
@@ -70,6 +72,7 @@ type Server struct {
 	tv               *TV
 	snapshotStatus   func() (system.SnapshotStatus, error)
 	alerts           *alerts.Monitor
+	offsiteStatus    func() (system.BackupStatus, error)
 }
 
 func New(store *auth.Store, deps Deps) http.Handler {
@@ -98,6 +101,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 		tv:               deps.TV,
 		snapshotStatus:   deps.Snapshots,
 		alerts:           deps.Alerts,
+		offsiteStatus:    deps.Offsite,
 	}
 
 	mux := http.NewServeMux()
@@ -129,6 +133,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("GET /api/disks", s.requireSession(s.disks))
 	mux.HandleFunc("GET /api/storage", s.requireSession(s.storage))
 	mux.HandleFunc("GET /api/snapshots", s.requireSession(s.snapshots))
+	mux.HandleFunc("GET /api/offsite", s.requireSession(s.offsite))
 	mux.HandleFunc("GET /api/logs", s.requireSession(s.readLogs))
 	mux.HandleFunc("GET /api/alerts", s.requireSession(s.alertStatus))
 	mux.HandleFunc("PUT /api/alerts/address", s.requireSession(s.setAlertAddress))
@@ -168,7 +173,7 @@ type adminAssets struct{ fs.FS }
 func (a adminAssets) Open(name string) (fs.File, error) {
 	switch name {
 	case "style.css", "auth.js", "dashboard.js", "users.js", "snapshots.js", "logs.js", "tv.js", "tvlink.js", "diskalert.js",
-		"problems.js", "settings.js":
+		"problems.js", "settings.js", "offsite.js":
 		return a.FS.Open(name)
 	}
 

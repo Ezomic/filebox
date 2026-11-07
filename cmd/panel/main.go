@@ -42,6 +42,7 @@ func main() {
 	streamboxEnv := flag.String("streambox-env", "/etc/streambox/streambox.env", "streambox settings file with its tokens")
 	snapshotStatus := flag.String("snapshot-status", "/var/lib/filebox-snapshot/status", "status file filebox-snapshot writes for the earlier versions")
 	healthStatus := flag.String("health-status", "/var/lib/filebox-health/status", "status file filebox-health writes with SMART and the btrfs data disk")
+	backupStatus := flag.String("backup-status", "", "status file filebox-backup writes, empty when the backup add-on is not installed")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -100,6 +101,11 @@ func main() {
 
 	health := system.NewHealth(*healthStatus)
 	snapshots := func() (system.SnapshotStatus, error) { return system.ReadSnapshotStatus(*snapshotStatus) }
+	var backup func() (system.BackupStatus, error)
+	if *backupStatus != "" {
+		backup = func() (system.BackupStatus, error) { return system.ReadBackupStatus(*backupStatus) }
+		log.Printf("backup add-on enabled, status in %s", *backupStatus)
+	}
 	var portalCerts *tlsutil.Reloader
 	var certExpiry func() time.Time
 	if *portalListen != "" {
@@ -109,7 +115,7 @@ func main() {
 		}
 		certExpiry = portalCerts.NotAfter
 	}
-	monitor := openAlerts(*dataDir, sender, space, health, snapshots, certExpiry)
+	monitor := openAlerts(*dataDir, sender, space, health, snapshots, backup, certExpiry)
 	portalDeps.Healthy = monitor.Healthy
 	portal := server.NewPortal(portalDeps)
 
@@ -129,6 +135,7 @@ func main() {
 		TV:               tv,
 		Snapshots:        snapshots,
 		Alerts:           monitor,
+		Offsite:          backup,
 	}
 
 	srv := &http.Server{
@@ -217,9 +224,9 @@ func enableEmail(deps *server.PortalDeps, dataDir string, sender mail.Sender, po
 	log.Print("password reset by email is on")
 }
 
-// Problems still show on the dashboard without mail.json; only the emails need it.
+// Problems still show on the dashboard without mail.json; only the emails need it. backup is nil without the add-on.
 func openAlerts(dataDir string, sender mail.Sender, space system.DiskSpace, health *system.Health,
-	snapshots func() (system.SnapshotStatus, error), certExpiry func() time.Time) *alerts.Monitor {
+	snapshots func() (system.SnapshotStatus, error), backup func() (system.BackupStatus, error), certExpiry func() time.Time) *alerts.Monitor {
 	counters, err := alerts.OpenCounters(dataDir)
 	if err != nil {
 		log.Fatalf("open alert counters: %v", err)
@@ -228,14 +235,18 @@ func openAlerts(dataDir string, sender mail.Sender, space system.DiskSpace, heal
 	if err != nil {
 		log.Fatalf("open failing disks: %v", err)
 	}
-	monitor, err := alerts.Open(dataDir, sender, []alerts.Check{
+	checks := []alerts.Check{
 		alerts.DiskCheck(space),
 		alerts.SmartCheck(health, counters, failing),
 		alerts.MirrorCheck(health.Btrfs, counters),
 		alerts.SnapshotCheck(snapshots),
 		alerts.CertCheck(certExpiry),
 		alerts.RestartCheck(system.NewBoot()),
-	})
+	}
+	if backup != nil {
+		checks = append(checks, alerts.BackupCheck(backup))
+	}
+	monitor, err := alerts.Open(dataDir, sender, checks)
 	if err != nil {
 		log.Fatalf("open alerts: %v", err)
 	}
