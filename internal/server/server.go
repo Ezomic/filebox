@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Ezomic/filebox/internal/alerts"
 	"github.com/Ezomic/filebox/internal/auth"
 	"github.com/Ezomic/filebox/internal/system"
 )
@@ -45,6 +46,8 @@ type Deps struct {
 	TV *TV
 	// Snapshots reads what filebox-snapshot last reported about the earlier versions; nil when there is nothing to read.
 	Snapshots func() (system.SnapshotStatus, error)
+	// Alerts holds the open problems and the alert address; nil leaves the dashboard without problems.
+	Alerts *alerts.Monitor
 }
 
 type Server struct {
@@ -66,6 +69,7 @@ type Server struct {
 	version          string
 	tv               *TV
 	snapshotStatus   func() (system.SnapshotStatus, error)
+	alerts           *alerts.Monitor
 }
 
 func New(store *auth.Store, deps Deps) http.Handler {
@@ -93,6 +97,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 		version:          deps.Version,
 		tv:               deps.TV,
 		snapshotStatus:   deps.Snapshots,
+		alerts:           deps.Alerts,
 	}
 
 	mux := http.NewServeMux()
@@ -100,6 +105,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("GET /{$}", s.dashboardPage)
 	mux.HandleFunc("GET /users", s.usersPage)
 	mux.HandleFunc("GET /logs", s.logsPage)
+	mux.HandleFunc("GET /settings", s.settingsPage)
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("GET /setup", s.setupPage)
 	mux.HandleFunc("POST /api/setup", s.setup)
@@ -124,6 +130,9 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("GET /api/storage", s.requireSession(s.storage))
 	mux.HandleFunc("GET /api/snapshots", s.requireSession(s.snapshots))
 	mux.HandleFunc("GET /api/logs", s.requireSession(s.readLogs))
+	mux.HandleFunc("GET /api/alerts", s.requireSession(s.alertStatus))
+	mux.HandleFunc("PUT /api/alerts/address", s.requireSession(s.setAlertAddress))
+	mux.HandleFunc("POST /api/alerts/test", s.requireSession(s.sendTestAlert))
 	mux.HandleFunc("POST /api/system/restart-sshd", s.requireSession(s.powerAction(system.RestartSSHD)))
 	mux.HandleFunc("POST /api/system/shutdown", s.requireSession(s.powerAction(system.Shutdown)))
 	mux.HandleFunc("POST /api/system/reboot", s.requireSession(s.powerAction(system.Reboot)))
@@ -158,7 +167,8 @@ type adminAssets struct{ fs.FS }
 
 func (a adminAssets) Open(name string) (fs.File, error) {
 	switch name {
-	case "style.css", "auth.js", "dashboard.js", "users.js", "snapshots.js", "logs.js", "tv.js", "tvlink.js", "diskalert.js":
+	case "style.css", "auth.js", "dashboard.js", "users.js", "snapshots.js", "logs.js", "tv.js", "tvlink.js", "diskalert.js",
+		"problems.js", "settings.js":
 		return a.FS.Open(name)
 	}
 
