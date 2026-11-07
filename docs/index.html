@@ -217,6 +217,25 @@ sudo filebox-user convert &lt;name&gt;
 sudo systemctl start filebox-panel</code></pre>
   <p>Their first earlier version is taken the next night.</p>
   <div class="warn"><strong>Not a backup.</strong> Earlier versions are on the same disk as the files. They help when something is deleted or overwritten, not when the disk dies. On a spinning disk with quotas on, deleting old snapshots costs extra work; it runs at low priority, at night and when the disk is nearly full.</div>
+
+  <h2 id="alerts">Alert emails</h2>
+  <p>The panel checks the box every 10 minutes and lists open problems at the top of the dashboard. To get them by email as well, open Settings in the admin panel, enter your address, save it and press <em>Send test email</em>. The emails use the same mail setup as password reset (<code>mail.json</code> in <code>/var/lib/filebox</code>); without it, problems only show on the dashboard.</p>
+  <p>You get one email when a problem starts, a reminder every 7 days while it lasts, and one when it is over. The emails and the dashboard say which disk, which check or which account, never which file. A problem is:</p>
+  <ul>
+    <li>SMART says a disk is failing, or its reallocated sector count goes up compared with what that disk reported before.</li>
+    <li>The monthly scrub found errors.</li>
+    <li>The mirror is missing a disk, the data disk is not mounted (see <a href="#disks">If a mirror disk dies</a>), or btrfs counts new read or write errors on it.</li>
+    <li>The data disk is 95% full. That is over once it is below 90% again.</li>
+    <li>The nightly earlier versions failed, or old ones were deleted to free space.</li>
+    <li>The portal certificate expires within 14 days.</li>
+    <li>The box restarted without a clean shutdown, for example after a power cut. This stays open for a day. To see what the box knows about the previous run: <code>sudo journalctl -b -1 _PID=1 UNIT=shutdown.target</code> shows a "Reached target shutdown.target" line after a clean shutdown, and nothing after a power cut.</li>
+    <li>A check could not look for a whole day, for example because <code>filebox-health.timer</code>, which reads SMART and the data disk every 10 minutes, stopped. The dashboard lists such a check sooner, as <em>Could not check</em>.</li>
+  </ul>
+  <p>A problem that goes away is over once it has stayed away for an hour, so one that comes and goes stays one alert.</p>
+  <h3>Outside monitor</h3>
+  <p><code>https://files.thijssensoftware.nl/healthz</code> answers <code>200 ok</code> while nothing is wrong and a bare <code>503</code> while any problem is open, so an uptime monitor notices a problem as well as a box that is down. It never says which problem, and it is rate limited per address, so check it at most once a minute. On a status page, keep it private (in the status app: <code>is_public</code> off), so a disk warning never shows in public.</p>
+  <p>A share link named <code>healthz</code> that was made before this update no longer opens; the panel log names it when the panel starts.</p>
+
   <h2 id="update">Update</h2>
   <p>One command on the box:</p>
 <pre><code>sudo filebox-update</code></pre>

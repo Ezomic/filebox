@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Ezomic/filebox/internal/alerts"
 	"github.com/Ezomic/filebox/internal/auth"
 	"github.com/Ezomic/filebox/internal/mail"
 	"github.com/Ezomic/filebox/internal/server"
@@ -24,6 +25,8 @@ import (
 
 // Set at build time: -ldflags "-X main.version=v1.2.3".
 var version = "dev"
+
+const alertEvery = 10 * time.Minute
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8443", "address to listen on, normally the Tailscale IP")
@@ -38,6 +41,7 @@ func main() {
 	streamboxURL := flag.String("streambox-url", "", "loopback URL of the streambox add-on, empty when it is not installed")
 	streamboxEnv := flag.String("streambox-env", "/etc/streambox/streambox.env", "streambox settings file with its tokens")
 	snapshotStatus := flag.String("snapshot-status", "/var/lib/filebox-snapshot/status", "status file filebox-snapshot writes for the earlier versions")
+	healthStatus := flag.String("health-status", "/var/lib/filebox-health/status", "status file filebox-health writes with SMART and the btrfs data disk")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -91,7 +95,22 @@ func main() {
 		log.Fatalf("open share links: %v", err)
 	}
 	portalDeps.Shares = shares
-	enableEmail(&portalDeps, *dataDir)
+	sender, portalURL := loadMail(*dataDir)
+	enableEmail(&portalDeps, *dataDir, sender, portalURL)
+
+	health := system.NewHealth(*healthStatus)
+	snapshots := func() (system.SnapshotStatus, error) { return system.ReadSnapshotStatus(*snapshotStatus) }
+	var portalCerts *tlsutil.Reloader
+	var certExpiry func() time.Time
+	if *portalListen != "" {
+		portalCerts, err = tlsutil.NewReloader(*portalCert, *portalKey)
+		if err != nil {
+			log.Fatalf("load portal certificate: %v", err)
+		}
+		certExpiry = portalCerts.NotAfter
+	}
+	monitor := openAlerts(*dataDir, sender, space, health, snapshots, certExpiry)
+	portalDeps.Healthy = monitor.Healthy
 	portal := server.NewPortal(portalDeps)
 
 	deps := server.Deps{
@@ -100,22 +119,16 @@ func main() {
 		Logs:       system.NewLogs(),
 		Power:      system.NewPower(),
 		Usage:      system.NewUsage(*filesDir),
-		Smart:      system.NewSmart(),
+		Smart:      health,
 		Disk:       space,
 		PowerDelay: time.Second,
 
-		OnUserChanged: portal.EndSessions,
-		Version:       version,
-		TV:            tv,
-		Snapshots:     func() (system.SnapshotStatus, error) { return system.ReadSnapshotStatus(*snapshotStatus) },
-	}
-	var portalCerts *tlsutil.Reloader
-	if *portalListen != "" {
-		portalCerts, err = tlsutil.NewReloader(*portalCert, *portalKey)
-		if err != nil {
-			log.Fatalf("load portal certificate: %v", err)
-		}
-		deps.PortalCertExpiry = portalCerts.NotAfter
+		OnUserChanged:    portal.EndSessions,
+		PortalCertExpiry: certExpiry,
+		Version:          version,
+		TV:               tv,
+		Snapshots:        snapshots,
+		Alerts:           monitor,
 	}
 
 	srv := &http.Server{
@@ -138,6 +151,7 @@ func main() {
 	go system.RunUploadSweeper(stop, *filesDir, 24*time.Hour, time.Now)
 	go system.RunTrashSweeper(stop, *filesDir, 24*time.Hour, time.Now)
 	go system.RunThumbSweeper(stop, *filesDir, 24*time.Hour, time.Now)
+	go monitor.Run(stop, alertEvery)
 	failed := make(chan error, len(servers))
 	for _, s := range servers {
 		go func() {
@@ -172,15 +186,24 @@ func portalServer(addr string, certs *tlsutil.Reloader, portal http.Handler) *ht
 	}
 }
 
-// Password reset by email stays off, and the panel still starts, unless mail.json holds a usable config.
-func enableEmail(deps *server.PortalDeps, dataDir string) {
+// Email stays off, and the panel still starts, unless mail.json holds a usable config. The sender is nil then.
+func loadMail(dataDir string) (mail.Sender, string) {
 	config, ok, err := mail.LoadConfig(filepath.Join(dataDir, "mail.json"))
 	switch {
 	case err != nil:
-		log.Printf("password reset by email is off: mail.json: %v", err)
-		return
+		log.Printf("email is off: mail.json: %v", err)
+		return nil, ""
 	case !ok:
-		log.Print("password reset by email is off: no mail.json")
+		log.Print("email is off: no mail.json")
+		return nil, ""
+	}
+
+	return mail.NewZero(config.URL, config.Token), config.PortalURL
+}
+
+func enableEmail(deps *server.PortalDeps, dataDir string, sender mail.Sender, portalURL string) {
+	if sender == nil {
+		log.Print("password reset by email is off")
 		return
 	}
 	contacts, err := auth.OpenContacts(dataDir)
@@ -189,7 +212,33 @@ func enableEmail(deps *server.PortalDeps, dataDir string) {
 		return
 	}
 	deps.Contacts = contacts
-	deps.Mail = mail.NewZero(config.URL, config.Token)
-	deps.PortalURL = config.PortalURL
+	deps.Mail = sender
+	deps.PortalURL = portalURL
 	log.Print("password reset by email is on")
+}
+
+// Problems still show on the dashboard without mail.json; only the emails need it.
+func openAlerts(dataDir string, sender mail.Sender, space system.DiskSpace, health *system.Health,
+	snapshots func() (system.SnapshotStatus, error), certExpiry func() time.Time) *alerts.Monitor {
+	counters, err := alerts.OpenCounters(dataDir)
+	if err != nil {
+		log.Fatalf("open alert counters: %v", err)
+	}
+	failing, err := alerts.OpenFailingDisks(dataDir)
+	if err != nil {
+		log.Fatalf("open failing disks: %v", err)
+	}
+	monitor, err := alerts.Open(dataDir, sender, []alerts.Check{
+		alerts.DiskCheck(space),
+		alerts.SmartCheck(health, counters, failing),
+		alerts.MirrorCheck(health.Btrfs, counters),
+		alerts.SnapshotCheck(snapshots),
+		alerts.CertCheck(certExpiry),
+		alerts.RestartCheck(system.NewBoot()),
+	})
+	if err != nil {
+		log.Fatalf("open alerts: %v", err)
+	}
+
+	return monitor
 }
