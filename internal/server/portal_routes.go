@@ -12,7 +12,7 @@ var reservedShareNames = []string{
 	"admin", "api", "backup", "confirm-email", "family", "favicon.ico", "files", "forgot", "login", "logout", "manifest.webmanifest",
 	"password", "photos", "reset", "robots.txt", "settings", "share", "shared", "shares", "sign-in", "sign-in-link", "static", "trash",
 	"tv", "upload", "uploads", "users", "apple-touch-icon.png", "icon-192.png", "icon-512.png", "icon-maskable-512.png",
-	"download", "downloads", "index", "health", "status", "s",
+	"download", "downloads", "index", "health", "healthz", "status", "s",
 }
 
 // routes is a ServeMux that remembers the first path segment of every pattern registered on it. That is the one

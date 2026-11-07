@@ -54,6 +54,8 @@ type PortalDeps struct {
 	PortalURL string
 	// Shares holds the public share links; nil switches share links off.
 	Shares *auth.Shares
+	// Healthy is false while any alert is open, which turns /healthz into a 503; nil always answers ok.
+	Healthy func() bool
 }
 
 // Portal is the public, per-user web interface. It is a separate handler from the admin
@@ -85,6 +87,9 @@ type Portal struct {
 	email      *emailFlow
 	tv         *TV
 	tvLimit    *loginLimiter
+
+	healthy     func() bool
+	healthLimit *loginLimiter
 }
 
 func NewPortal(deps PortalDeps) *Portal {
@@ -123,12 +128,16 @@ func NewPortal(deps PortalDeps) *Portal {
 		now:        time.Now,
 		shareMiss:  newLoginLimiter(shareMissLimit, failWindow),
 		shareFlood: newLoginLimiter(shareFloodLimit, shareFloodSpan),
+
+		healthy:     deps.Healthy,
+		healthLimit: newLoginLimiter(healthzLimit, healthzSpan),
 	}
 	p.forgetSharesOfGoneUsers()
 
 	p.mux = newRoutes()
 	p.emailRoutes()
 	p.mux.HandleFunc("GET /robots.txt", robotsTxt)
+	p.mux.HandleFunc("GET /healthz", p.healthz)
 	p.mux.Handle("GET /static/style.css", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/files.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
 	p.mux.Handle("GET /static/trash.js", http.StripPrefix("/static/", http.FileServerFS(sharedAssets{shared})))
@@ -203,6 +212,7 @@ func NewPortal(deps PortalDeps) *Portal {
 	if p.shares != nil {
 		p.shareRoutes()
 	}
+	p.warnShadowedShares()
 
 	return p
 }
