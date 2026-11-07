@@ -16,11 +16,9 @@ import (
 // switchable is a check whose findings the test sets.
 type switchable struct {
 	result Result
-	calls  int
 }
 
 func (s *switchable) check(time.Time) Result {
-	s.calls++
 	return s.result
 }
 
@@ -216,26 +214,5 @@ func TestMonitorFileIsPrivate(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("mode %v", info.Mode())
-	}
-}
-
-func TestEveryRepeatsTheLastResultWithinItsPeriod(t *testing.T) {
-	inner := &switchable{result: diskFull(96)}
-	check := Every(time.Hour, inner.check)
-	check(start)
-	check(start.Add(59 * time.Minute))
-	if inner.calls != 1 {
-		t.Fatalf("ran %d times within the hour", inner.calls)
-	}
-	check(start.Add(time.Hour))
-	if inner.calls != 2 {
-		t.Fatalf("ran %d times after the hour", inner.calls)
-	}
-
-	inner.result = Result{Source: "disk"}
-	check(start.Add(3 * time.Hour))
-	check(start.Add(3*time.Hour + time.Minute))
-	if inner.calls != 4 {
-		t.Fatalf("a check that could not look must try again next time, ran %d times", inner.calls)
 	}
 }

@@ -1,15 +1,9 @@
 package system
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
-	"strings"
-	"sync"
-	"time"
 )
-
-const smartTTL = time.Minute
 
 var ErrSmartUnavailable = errors.New("disk health unavailable")
 
@@ -52,29 +46,23 @@ type smartctlReport struct {
 	} `json:"ata_smart_attributes"`
 }
 
-// Input is one smartctl JSON document per line; lines that do not parse are skipped.
-func parseSmartLines(output string) []DiskHealth {
-	disks := []DiskHealth{}
-	scanner := bufio.NewScanner(strings.NewReader(output))
-	scanner.Buffer(make([]byte, 0, 64*1024), 4<<20)
-	for scanner.Scan() {
-		var report smartctlReport
-		if json.Unmarshal([]byte(scanner.Text()), &report) != nil || report.Device.Name == "" {
-			continue
-		}
-		disk := DiskHealth{Device: report.Device.Name, Model: report.ModelName, Serial: report.SerialNumber, Reallocated: report.reallocated()}
-		if report.SmartStatus != nil {
-			passed := report.SmartStatus.Passed
-			disk.Healthy = &passed
-		}
-		if report.Temperature != nil {
-			celsius := report.Temperature.Current
-			disk.TempCelsius = &celsius
-		}
-		disks = append(disks, disk)
+// parseSmartReport reads one smartctl JSON document; ok is false when it is not one.
+func parseSmartReport(line []byte) (DiskHealth, bool) {
+	var report smartctlReport
+	if json.Unmarshal(line, &report) != nil || report.Device.Name == "" {
+		return DiskHealth{}, false
+	}
+	disk := DiskHealth{Device: report.Device.Name, Model: report.ModelName, Serial: report.SerialNumber, Reallocated: report.reallocated()}
+	if report.SmartStatus != nil {
+		passed := report.SmartStatus.Passed
+		disk.Healthy = &passed
+	}
+	if report.Temperature != nil {
+		celsius := report.Temperature.Current
+		disk.TempCelsius = &celsius
 	}
 
-	return disks
+	return disk, true
 }
 
 func (r smartctlReport) reallocated() *uint64 {
@@ -89,32 +77,6 @@ func (r smartctlReport) reallocated() *uint64 {
 	}
 
 	return nil
-}
-
-// Spinning disks are slow to answer, so one reading is shared for smartTTL.
-type cachedSmart struct {
-	read func() ([]DiskHealth, error)
-	now  func() time.Time
-
-	mu     sync.Mutex
-	disks  []DiskHealth
-	readAt time.Time
-}
-
-func (c *cachedSmart) Disks() ([]DiskHealth, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if !c.readAt.IsZero() && c.now().Sub(c.readAt) < smartTTL {
-		return c.disks, nil
-	}
-	disks, err := c.read()
-	if err != nil {
-		return nil, err
-	}
-	c.disks, c.readAt = disks, c.now()
-
-	return disks, nil
 }
 
 type FakeSmart struct {

@@ -1,9 +1,8 @@
 package system
 
 import (
-	"errors"
+	"strings"
 	"testing"
-	"time"
 )
 
 const sampleSmart = `{"device":{"name":"/dev/sda"},"model_name":"WDC WD5000AAKX","smart_status":{"passed":true},"temperature":{"current":34}}
@@ -13,7 +12,19 @@ not json at all
 {"model_name":"no device name"}
 `
 
-func TestParseSmartLines(t *testing.T) {
+// parseSmartLines reads one smartctl JSON document per line and skips the lines that are not one.
+func parseSmartLines(output string) []DiskHealth {
+	var disks []DiskHealth
+	for _, line := range strings.Split(output, "\n") {
+		if disk, ok := parseSmartReport([]byte(line)); ok {
+			disks = append(disks, disk)
+		}
+	}
+
+	return disks
+}
+
+func TestParseSmartReports(t *testing.T) {
 	disks := parseSmartLines(sampleSmart)
 	if len(disks) != 3 {
 		t.Fatalf("got %d disks: %+v", len(disks), disks)
@@ -29,7 +40,7 @@ func TestParseSmartLines(t *testing.T) {
 	}
 }
 
-func TestParseSmartLinesReadsTheSerialAndReallocatedSectors(t *testing.T) {
+func TestParseSmartReportReadsTheSerialAndReallocatedSectors(t *testing.T) {
 	line := `{"device":{"name":"/dev/sda"},"serial_number":"WD-WCAYUJ123456","smart_status":{"passed":true},` +
 		`"ata_smart_attributes":{"table":[{"id":1,"raw":{"value":7}},{"id":5,"raw":{"value":12}},{"id":197,"raw":{"value":3}}]}}
 {"device":{"name":"/dev/nvme0"},"serial_number":"S4EVNF0M","smart_status":{"passed":true},"nvme_smart_health_information_log":{"media_errors":0}}
@@ -47,56 +58,5 @@ func TestParseSmartLinesReadsTheSerialAndReallocatedSectors(t *testing.T) {
 	}
 	if disks[2].Reallocated != nil {
 		t.Fatalf("a nonsense count is no count: %+v", disks[2])
-	}
-}
-
-func TestParseSmartLinesEmptyIsNotNil(t *testing.T) {
-	if disks := parseSmartLines(""); disks == nil || len(disks) != 0 {
-		t.Fatalf("got %#v", disks)
-	}
-}
-
-func TestCachedSmartReadsOncePerMinute(t *testing.T) {
-	now := time.Now()
-	reads := 0
-	c := &cachedSmart{now: func() time.Time { return now }, read: func() ([]DiskHealth, error) {
-		reads++
-		return []DiskHealth{{Device: "/dev/sda"}}, nil
-	}}
-
-	for range 3 {
-		if _, err := c.Disks(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if reads != 1 {
-		t.Fatalf("reads=%d", reads)
-	}
-	now = now.Add(smartTTL + time.Second)
-	_, _ = c.Disks()
-	if reads != 2 {
-		t.Fatalf("reads=%d after expiry", reads)
-	}
-}
-
-func TestCachedSmartDoesNotCacheFailures(t *testing.T) {
-	reads := 0
-	c := &cachedSmart{now: time.Now, read: func() ([]DiskHealth, error) {
-		reads++
-		return nil, ErrSmartUnavailable
-	}}
-	for range 2 {
-		if _, err := c.Disks(); !errors.Is(err, ErrSmartUnavailable) {
-			t.Fatalf("got %v", err)
-		}
-	}
-	if reads != 2 {
-		t.Fatalf("reads=%d", reads)
-	}
-}
-
-func TestReadSmartHelperReportsMissingCommand(t *testing.T) {
-	if _, err := readSmartHelper([]string{"this-command-does-not-exist"}); !errors.Is(err, ErrSmartUnavailable) {
-		t.Fatalf("got %v", err)
 	}
 }

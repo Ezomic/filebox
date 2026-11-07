@@ -25,21 +25,6 @@ var (
 // The checks of a Monitor run one at a time.
 type Check func(now time.Time) Result
 
-// Every runs check at most once per period and repeats its last result in between, for a check that is slow or
-// would keep a disk from sleeping. A check that could not look tries again on the next run.
-func Every(period time.Duration, check Check) Check {
-	var last Result
-	var at time.Time
-
-	return func(now time.Time) Result {
-		if !last.Known || now.Sub(at) >= period {
-			last, at = check(now), now
-		}
-
-		return last
-	}
-}
-
 // Monitor runs the checks on a timer and emails the alert address. The open alerts and the address live in the panel
 // data directory, so a restart neither forgets a problem nor mails it twice.
 type Monitor struct {

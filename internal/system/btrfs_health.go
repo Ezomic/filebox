@@ -1,26 +1,13 @@
 package system
 
 import (
-	"bufio"
-	"context"
 	"errors"
-	"fmt"
-	"io"
-	"os/exec"
-	"strings"
 	"time"
 )
 
-const (
-	btrfsHealthHeader  = "filebox-disk-health 1"
-	btrfsHealthTimeout = 30 * time.Second
-	maxBtrfsDevices    = 64
-)
+const maxBtrfsDevices = 64
 
-var (
-	ErrBtrfsHealthUnavailable = errors.New("data disk health unavailable")
-	errBadBtrfsHealth         = errors.New("unexpected disk health report")
-)
+var ErrBtrfsHealthUnavailable = errors.New("data disk health unavailable")
 
 const (
 	BtrfsOn        = "on"
@@ -28,7 +15,7 @@ const (
 	BtrfsOff       = "off"
 )
 
-// BtrfsHealth is what filebox-disk-health reports about the btrfs data disk: disk IDs, counts and dates, never a file.
+// BtrfsHealth is what filebox-health reports about the btrfs data disk: disk IDs, counts and dates, never a file.
 type BtrfsHealth struct {
 	// State is BtrfsOn, BtrfsUnmounted (set up in /etc/fstab but not mounted), or BtrfsOff with Reason "not_btrfs" or
 	// "no_btrfs_progs".
@@ -55,50 +42,6 @@ type BtrfsScrub struct {
 	Started       time.Time
 	Errors        uint64
 	Uncorrectable uint64
-}
-
-// ParseBtrfsHealth is strict about the lines it knows and skips the ones it does not, so a newer helper can add some.
-func ParseBtrfsHealth(r io.Reader) (BtrfsHealth, error) {
-	lines := bufio.NewScanner(r)
-	if !lines.Scan() || lines.Text() != btrfsHealthHeader {
-		return BtrfsHealth{}, fmt.Errorf("%w: missing header", errBadBtrfsHealth)
-	}
-	var health BtrfsHealth
-	devicesUnknown := false
-	for lines.Scan() {
-		fields := strings.Fields(lines.Text())
-		if len(fields) == 0 {
-			continue
-		}
-		var err error
-		switch fields[0] {
-		case "state":
-			err = health.parseState(fields[1:])
-		case "device":
-			err = health.parseDevice(fields[1:])
-		case "devices":
-			devicesUnknown = len(fields) == 2 && fields[1] == "unknown"
-			if !devicesUnknown {
-				err = errors.New("devices")
-			}
-		case "scrub":
-			health.Scrub, err = parseScrub(fields[1:])
-		}
-		if err != nil {
-			return BtrfsHealth{}, fmt.Errorf("%w: %v", errBadBtrfsHealth, err)
-		}
-	}
-	if err := lines.Err(); err != nil {
-		return BtrfsHealth{}, err
-	}
-	if health.State == "" {
-		return BtrfsHealth{}, fmt.Errorf("%w: no state", errBadBtrfsHealth)
-	}
-	if devicesUnknown || health.State != BtrfsOn {
-		health.Devices = nil
-	}
-
-	return health, nil
 }
 
 func (h *BtrfsHealth) parseState(fields []string) error {
@@ -167,18 +110,4 @@ func parseScrub(fields []string) (*BtrfsScrub, error) {
 	}
 
 	return scrub, nil
-}
-
-func readBtrfsHealthHelper(argv []string) (BtrfsHealth, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), btrfsHealthTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
-	if err != nil {
-		return BtrfsHealth{}, fmt.Errorf("%w: %v", ErrBtrfsHealthUnavailable, err)
-	}
-
-	return ParseBtrfsHealth(strings.NewReader(string(out)))
 }

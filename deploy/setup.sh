@@ -385,9 +385,10 @@ EOF
 install_helpers() {
 	log "Installing the user helper and sudo rule"
 	install -m 0750 -o root -g filebox "$SRC/filebox-user" /usr/local/sbin/filebox-user
-	install -m 0750 -o root -g filebox "$SRC/filebox-smart" /usr/local/sbin/filebox-smart
-	install -m 0750 -o root -g filebox "$SRC/filebox-disk-health" /usr/local/sbin/filebox-disk-health
 	install -m 0750 -o root -g filebox "$SRC/filebox-verify" /usr/local/sbin/filebox-verify
+	install -m 0750 -o root -g root "$SRC/filebox-health" /usr/local/sbin/filebox-health
+	# Replaced by filebox-health, which the panel no longer runs through sudo.
+	rm -f /usr/local/sbin/filebox-smart
 	install -m 0750 -o root -g root "$SRC/filebox-dns-update" /usr/local/sbin/filebox-dns-update
 	install -m 0750 -o root -g root "$SRC/filebox-portal-cert" /usr/local/sbin/filebox-portal-cert
 	install -m 0750 -o root -g root "$SRC/filebox-update" /usr/local/sbin/filebox-update
@@ -409,9 +410,7 @@ filebox ALL=(root) NOPASSWD: /usr/local/sbin/filebox-user list, \
 	/usr/local/sbin/filebox-verify *, \
 	/usr/bin/systemctl restart ssh, \
 	/usr/bin/systemctl poweroff, \
-	/usr/bin/systemctl reboot, \
-	/usr/local/sbin/filebox-smart, \
-	/usr/local/sbin/filebox-disk-health ""
+	/usr/bin/systemctl reboot
 EOF
 	visudo -cf "$tmp" >/dev/null || die "generated sudoers rule is invalid"
 	install -m 0440 -o root -g root "$tmp" /etc/sudoers.d/filebox
@@ -428,15 +427,17 @@ install_services() {
 		"$SRC"/systemd/filebox-portal-cert.service "$SRC"/systemd/filebox-portal-cert.timer \
 		"$SRC"/systemd/filebox-scrub.service "$SRC"/systemd/filebox-scrub.timer \
 		"$SRC"/systemd/filebox-snapshot.service "$SRC"/systemd/filebox-snapshot.timer \
-		"$SRC"/systemd/filebox-snapshot-check.service "$SRC"/systemd/filebox-snapshot-check.timer /etc/systemd/system/
+		"$SRC"/systemd/filebox-snapshot-check.service "$SRC"/systemd/filebox-snapshot-check.timer \
+		"$SRC"/systemd/filebox-health.service "$SRC"/systemd/filebox-health.timer /etc/systemd/system/
 	systemctl daemon-reload
 	systemctl enable filebox-panel.service filebox-dns.timer filebox-portal-cert.timer filebox-scrub.timer \
-		filebox-snapshot.timer filebox-snapshot-check.timer
+		filebox-snapshot.timer filebox-snapshot-check.timer filebox-health.timer
 	# The panel cannot start until Tailscale has an address, so do not wait on it.
 	systemctl restart --no-block filebox-panel.service
-	systemctl restart filebox-dns.timer filebox-portal-cert.timer filebox-scrub.timer filebox-snapshot.timer filebox-snapshot-check.timer
+	systemctl restart filebox-dns.timer filebox-portal-cert.timer filebox-scrub.timer filebox-snapshot.timer filebox-snapshot-check.timer \
+		filebox-health.timer
 	# Writes the first status for the panel now; the first earlier versions are taken tonight.
-	systemctl start --no-block filebox-snapshot-check.service
+	systemctl start --no-block filebox-snapshot-check.service filebox-health.service
 }
 
 # The add-ons asked for, one per line in /etc/filebox/addons. ADDONS (comma separated) adds to them.

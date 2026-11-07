@@ -24,7 +24,7 @@ jobs:
       - name: snapshot helper script
         run: deploy/test/snapshots.sh
       - name: disk health helper script
-        run: deploy/test/diskhealth.sh
+        run: deploy/test/health.sh
       - run: go test -race ./...
       - name: fuzz (short)
         run: |

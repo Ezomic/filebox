@@ -26,11 +26,7 @@ import (
 // Set at build time: -ldflags "-X main.version=v1.2.3".
 var version = "dev"
 
-const (
-	alertEvery = 10 * time.Minute
-	// SMART is read less often, so the checks do not keep a disk from spinning down.
-	smartAlertEvery = 30 * time.Minute
-)
+const alertEvery = 10 * time.Minute
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8443", "address to listen on, normally the Tailscale IP")
@@ -45,6 +41,7 @@ func main() {
 	streamboxURL := flag.String("streambox-url", "", "loopback URL of the streambox add-on, empty when it is not installed")
 	streamboxEnv := flag.String("streambox-env", "/etc/streambox/streambox.env", "streambox settings file with its tokens")
 	snapshotStatus := flag.String("snapshot-status", "/var/lib/filebox-snapshot/status", "status file filebox-snapshot writes for the earlier versions")
+	healthStatus := flag.String("health-status", "/var/lib/filebox-health/status", "status file filebox-health writes with SMART and the btrfs data disk")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -101,7 +98,7 @@ func main() {
 	sender, portalURL := loadMail(*dataDir)
 	enableEmail(&portalDeps, *dataDir, sender, portalURL)
 
-	smart := system.NewSmart()
+	health := system.NewHealth(*healthStatus)
 	snapshots := func() (system.SnapshotStatus, error) { return system.ReadSnapshotStatus(*snapshotStatus) }
 	var portalCerts *tlsutil.Reloader
 	var certExpiry func() time.Time
@@ -112,7 +109,7 @@ func main() {
 		}
 		certExpiry = portalCerts.NotAfter
 	}
-	monitor := openAlerts(*dataDir, sender, space, smart, snapshots, certExpiry)
+	monitor := openAlerts(*dataDir, sender, space, health, snapshots, certExpiry)
 	portalDeps.Healthy = monitor.Healthy
 	portal := server.NewPortal(portalDeps)
 
@@ -122,7 +119,7 @@ func main() {
 		Logs:       system.NewLogs(),
 		Power:      system.NewPower(),
 		Usage:      system.NewUsage(*filesDir),
-		Smart:      smart,
+		Smart:      health,
 		Disk:       space,
 		PowerDelay: time.Second,
 
@@ -221,7 +218,7 @@ func enableEmail(deps *server.PortalDeps, dataDir string, sender mail.Sender, po
 }
 
 // Problems still show on the dashboard without mail.json; only the emails need it.
-func openAlerts(dataDir string, sender mail.Sender, space system.DiskSpace, smart system.Smart,
+func openAlerts(dataDir string, sender mail.Sender, space system.DiskSpace, health *system.Health,
 	snapshots func() (system.SnapshotStatus, error), certExpiry func() time.Time) *alerts.Monitor {
 	counters, err := alerts.OpenCounters(dataDir)
 	if err != nil {
@@ -229,8 +226,8 @@ func openAlerts(dataDir string, sender mail.Sender, space system.DiskSpace, smar
 	}
 	monitor, err := alerts.Open(dataDir, sender, []alerts.Check{
 		alerts.DiskCheck(space),
-		alerts.Every(smartAlertEvery, alerts.SmartCheck(smart, counters)),
-		alerts.MirrorCheck(system.ReadBtrfsHealth, counters),
+		alerts.SmartCheck(health, counters),
+		alerts.MirrorCheck(health.Btrfs, counters),
 		alerts.SnapshotCheck(snapshots),
 		alerts.CertCheck(certExpiry),
 		alerts.RestartCheck(system.NewBoot()),
