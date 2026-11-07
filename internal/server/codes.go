@@ -82,3 +82,9 @@ const (
 func writeCoded(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]string{"error": message, "code": code})
 }
+
+const (
+	codeUploadLinkTarget = "upload_link_target_invalid"
+	codeUploadLinkCap    = "upload_link_cap_invalid"
+	codeUploadLinkFull   = "upload_link_full"
+)

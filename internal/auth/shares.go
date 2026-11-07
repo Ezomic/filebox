@@ -21,8 +21,11 @@ var (
 	ErrShareMissing = errors.New("no such share link")
 )
 
-// Share is one public read-only link to a file or folder in its owner's files folder. Names are stored lowercase.
-// A zero Expires means the link never expires.
+// UploadLink is the Kind of a link that only receives files into its folder.
+const UploadLink = "upload"
+
+// Share is one public link in its owner's files folder: a read-only share link to a file or folder, or an upload
+// link into a folder. Both kinds share one set of names, stored lowercase. A zero Expires means the link never expires.
 type Share struct {
 	Name      string    `json:"name"`
 	Owner     string    `json:"owner"`
@@ -31,7 +34,34 @@ type Share struct {
 	Created   time.Time `json:"created"`
 	Expires   time.Time `json:"expires,omitzero"`
 	Downloads int64     `json:"downloads"`
-	LastUsed  time.Time `json:"lastUsed,omitzero"`
+	// LastUsed is the last download of a share link and the last finished file of an upload link.
+	LastUsed time.Time `json:"lastUsed,omitzero"`
+	Kind     string    `json:"kind,omitempty"`
+
+	// An upload link accepts at most Cap bytes in all. Received and ReceivedBytes count the finished files, and
+	// Pending holds the size each unfinished upload declared, by upload id, so the cap counts them too. Lang is
+	// the owner's language for the summary emails.
+	Cap           int64            `json:"cap,omitempty"`
+	Received      int64            `json:"received,omitempty"`
+	ReceivedBytes int64            `json:"receivedBytes,omitempty"`
+	Pending       map[string]int64 `json:"pending,omitempty"`
+	Lang          string           `json:"lang,omitempty"`
+}
+
+func (s Share) IsUploadLink() bool {
+	return s.Kind == UploadLink
+}
+
+// Taken is what an upload link has accepted plus what its unfinished uploads may still add, leaving out stale ids.
+func (s Share) Taken(stale []string) int64 {
+	taken := s.ReceivedBytes
+	for id, size := range s.Pending {
+		if !slices.Contains(stale, id) {
+			taken += size
+		}
+	}
+
+	return taken
 }
 
 // Expired reports whether the link is past its expiry. The expiry moment itself already counts as expired.
@@ -147,14 +177,15 @@ func (s *Shares) Create(share Share, maxPerOwner int) error {
 	return s.save(next)
 }
 
-// SetExpiry changes the expiry of a link the owner holds. A zero time makes it permanent.
+// SetExpiry changes the expiry of a share link the owner holds. A zero time makes it permanent. An upload link keeps
+// the expiry it was made with, so it can never become permanent.
 func (s *Shares) SetExpiry(owner, name string, expires time.Time) (Share, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	name = strings.ToLower(name)
 	share, found := s.byName[name]
-	if !found || share.Owner != owner {
+	if !found || share.Owner != owner || share.IsUploadLink() {
 		return Share{}, ErrShareMissing
 	}
 	share.Expires = expires
@@ -199,6 +230,56 @@ func (s *Shares) Record(name string, at time.Time) error {
 	next[name] = share
 
 	return s.save(next)
+}
+
+// StartUpload adds an unfinished upload to an upload link and forgets the stale ids, whose uploads are gone.
+func (s *Shares) StartUpload(name, id string, size int64, stale []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	name = strings.ToLower(name)
+	link, found := s.byName[name]
+	if !found || !link.IsUploadLink() {
+		return ErrShareMissing
+	}
+	pending := maps.Clone(link.Pending)
+	if pending == nil {
+		pending = map[string]int64{}
+	}
+	for _, gone := range stale {
+		delete(pending, gone)
+	}
+	pending[id] = size
+	link.Pending = pending
+	next := maps.Clone(s.byName)
+	next[name] = link
+
+	return s.save(next)
+}
+
+// FinishUpload counts a pending upload as a received file of the size it declared.
+func (s *Shares) FinishUpload(name, id string, at time.Time) (Share, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	name = strings.ToLower(name)
+	link, found := s.byName[name]
+	size, pending := link.Pending[id]
+	if !found || !pending {
+		return Share{}, ErrShareMissing
+	}
+	link.Pending = maps.Clone(link.Pending)
+	delete(link.Pending, id)
+	link.Received++
+	link.ReceivedBytes += size
+	link.LastUsed = at
+	next := maps.Clone(s.byName)
+	next[name] = link
+	if err := s.save(next); err != nil {
+		return Share{}, err
+	}
+
+	return link, nil
 }
 
 // ForgetOwner removes every link of one account, so a later account with the same name starts with none.

@@ -219,3 +219,102 @@ func TestSharesFailedWriteChangesNothing(t *testing.T) {
 		t.Fatal("a link that could not be saved must not exist in memory either")
 	}
 }
+
+func newUploadLink(name, owner string) Share {
+	link := newShare(name, owner)
+	link.Kind, link.Cap, link.Expires, link.Lang = UploadLink, 100, shareEpoch.Add(24*time.Hour), "nl"
+
+	return link
+}
+
+func TestUploadLinksShareTheNamesAndTheLimitWithShareLinks(t *testing.T) {
+	shares, _ := OpenShares(t.TempDir())
+	if err := shares.Create(newShare("taken-name", "amy"), 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := shares.Create(newUploadLink("TAKEN-NAME", "bob"), 2); !errors.Is(err, ErrShareTaken) {
+		t.Fatalf("one name is one link whatever its kind: %v", err)
+	}
+	if err := shares.Create(newUploadLink("drop-box", "amy"), 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := shares.Create(newShare("third-one", "amy"), 2); !errors.Is(err, ErrShareLimit) {
+		t.Fatalf("upload links count toward the same limit: %v", err)
+	}
+}
+
+func TestUploadLinksKeepTheirExpiry(t *testing.T) {
+	shares, _ := OpenShares(t.TempDir())
+	if err := shares.Create(newUploadLink("drop-box", "amy"), 5); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shares.SetExpiry("amy", "drop-box", time.Time{}); !errors.Is(err, ErrShareMissing) {
+		t.Fatalf("an upload link must never become permanent: %v", err)
+	}
+	if link, _ := shares.Get("drop-box"); !link.Expires.Equal(shareEpoch.Add(24 * time.Hour)) {
+		t.Fatalf("got %v", link.Expires)
+	}
+}
+
+func TestUploadLinksCountPendingAndReceivedFilesAndSurviveAReload(t *testing.T) {
+	dir := t.TempDir()
+	shares, _ := OpenShares(dir)
+	if err := shares.Create(newUploadLink("drop-box", "amy"), 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := shares.Create(newShare("plain-share", "amy"), 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := shares.StartUpload("plain-share", "a", 1, nil); !errors.Is(err, ErrShareMissing) {
+		t.Fatalf("a share link takes no uploads: %v", err)
+	}
+	for id, size := range map[string]int64{"a": 10, "b": 20, "c": 30} {
+		if err := shares.StartUpload("drop-box", id, size, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, _ := shares.Get("drop-box")
+	if err := shares.StartUpload("drop-box", "d", 5, []string{"b"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Pending) != 3 {
+		t.Fatalf("a link read earlier must not change under its reader: %v", before.Pending)
+	}
+	if _, err := shares.FinishUpload("drop-box", "b", shareEpoch); !errors.Is(err, ErrShareMissing) {
+		t.Fatalf("a stale upload was forgotten: %v", err)
+	}
+	finished, err := shares.FinishUpload("drop-box", "a", shareEpoch.Add(time.Hour))
+	if err != nil || finished.Received != 1 || finished.ReceivedBytes != 10 || !finished.LastUsed.Equal(shareEpoch.Add(time.Hour)) {
+		t.Fatalf("got %+v %v", finished, err)
+	}
+	if got := finished.Taken(nil); got != 10+30+5 {
+		t.Fatalf("taken is received plus pending, got %d", got)
+	}
+	if got := finished.Taken([]string{"c"}); got != 10+5 {
+		t.Fatalf("stale uploads hold nothing, got %d", got)
+	}
+
+	reopened, _ := OpenShares(dir)
+	link, _ := reopened.Get("drop-box")
+	if !link.IsUploadLink() || link.Cap != 100 || link.Lang != "nl" || link.Received != 1 || link.ReceivedBytes != 10 || len(link.Pending) != 2 {
+		t.Fatalf("got %+v after reopening", link)
+	}
+	if plain, _ := reopened.Get("plain-share"); plain.IsUploadLink() {
+		t.Fatal("a share link stays a share link")
+	}
+}
+
+func TestForgettingAnOwnerAlsoRemovesTheirUploadLinks(t *testing.T) {
+	shares, _ := OpenShares(t.TempDir())
+	for _, link := range []Share{newUploadLink("amy-drop", "amy"), newShare("amy-share", "amy"), newUploadLink("bob-drop", "bob")} {
+		if err := shares.Create(link, 5); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := shares.ForgetOwner("amy"); err != nil {
+		t.Fatal(err)
+	}
+	if all := shares.All(); len(all) != 1 || all[0].Name != "bob-drop" {
+		t.Fatalf("got %+v", all)
+	}
+}

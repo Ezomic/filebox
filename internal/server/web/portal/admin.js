@@ -228,6 +228,7 @@ function showDeleteForm(cell, user) {
 }
 
 let sharedLinks = [];
+let uploadLinks = [];
 
 function shareNotice(producer) {
   const box = byId('share-notice');
@@ -247,6 +248,22 @@ function sharedRow(share) {
   const actions = el('td', undefined, 'row-actions');
   row.append(name, meta, actions);
   showShareActions(actions, share);
+  return row;
+}
+
+function uploadLinkRow(link) {
+  const row = el('tr');
+  const name = el('td', undefined, 'name');
+  const title = el('div', `/${link.name}`);
+  title.append(el('span', t('admin.uploadLink'), 'badge'));
+  name.append(title);
+  name.append(el('div', t('admin.uploadOwner', { owner: link.owner, path: link.path }), 'detail'));
+  const meta = el('td', undefined, 'meta');
+  meta.append(el('div', shareExpiryText(link), link.expired ? 'error' : 'detail'));
+  meta.append(el('div', uploadUsageText(link), 'detail'));
+  const actions = el('td', undefined, 'row-actions');
+  row.append(name, meta, actions);
+  showShareActions(actions, link);
   return row;
 }
 
@@ -278,13 +295,13 @@ function showShareRevoke(cell, share) {
 
 function renderShares() {
   const body = byId('share-rows');
-  body.replaceChildren(...sharedLinks.map(sharedRow));
-  byId('shares-empty').hidden = sharedLinks.length > 0;
+  body.replaceChildren(...sharedLinks.map(sharedRow), ...uploadLinks.map(uploadLinkRow));
+  byId('shares-empty').hidden = sharedLinks.length + uploadLinks.length > 0;
 }
 
 async function loadShares() {
   try {
-    ({ shares: sharedLinks } = await api('GET', '/api/admin/shares'));
+    ({ shares: sharedLinks, uploadLinks } = await api('GET', '/api/admin/shares'));
   } catch {
     return;
   }

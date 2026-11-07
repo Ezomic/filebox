@@ -104,6 +104,7 @@ func (p *Portal) shareRoutes() {
 	p.mux.HandleFunc("DELETE /api/shares/{name}", p.requireSession(p.revokeShare))
 	p.mux.HandleFunc("GET /api/admin/shares", p.requireAdmin(p.adminListShares))
 	p.mux.HandleFunc("DELETE /api/admin/shares/{name}", p.requireAdmin(p.adminRevokeShare))
+	p.mux.HandleFunc("POST /api/upload-links", p.requireSession(p.createUploadLink))
 }
 
 func (p *Portal) signedInPageHandler(page string) http.HandlerFunc {
@@ -113,11 +114,15 @@ func (p *Portal) signedInPageHandler(page string) http.HandlerFunc {
 }
 
 func (p *Portal) listShares(w http.ResponseWriter, _ *http.Request, user string) {
-	views := []shareView{}
+	views, uploadLinks := []shareView{}, []uploadLinkView{}
 	for _, share := range p.shares.ByOwner(user) {
-		views = append(views, p.viewOf(share))
+		if share.IsUploadLink() {
+			uploadLinks = append(uploadLinks, p.uploadLinkViewOf(share))
+		} else {
+			views = append(views, p.viewOf(share))
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"shares": views, "limit": sharesPerOwner})
+	writeJSON(w, http.StatusOK, map[string]any{"shares": views, "uploadLinks": uploadLinks, "limit": sharesPerOwner})
 }
 
 type shareRequest struct {
@@ -226,7 +231,7 @@ func (p *Portal) storeShare(w http.ResponseWriter, share auth.Share, name string
 		case err == nil:
 			return share, true
 		case errors.Is(err, auth.ErrShareLimit):
-			writeCoded(w, http.StatusConflict, codeShareLimit, "you have reached the limit of share links, revoke one first")
+			writeCoded(w, http.StatusConflict, codeShareLimit, "you have reached the limit of links, revoke one first")
 			return auth.Share{}, false
 		case errors.Is(err, auth.ErrShareTaken):
 			if name != "" {
@@ -283,11 +288,15 @@ func (p *Portal) shareChanged(w http.ResponseWriter, err error) bool {
 }
 
 func (p *Portal) adminListShares(w http.ResponseWriter, _ *http.Request, _ string) {
-	views := []adminShareView{}
+	views, uploadLinks := []adminShareView{}, []adminUploadLinkView{}
 	for _, share := range p.shares.All() {
-		views = append(views, adminShareView{shareView: p.viewOf(share), Owner: share.Owner})
+		if share.IsUploadLink() {
+			uploadLinks = append(uploadLinks, adminUploadLinkView{uploadLinkView: p.uploadLinkViewOf(share), Owner: share.Owner})
+		} else {
+			views = append(views, adminShareView{shareView: p.viewOf(share), Owner: share.Owner})
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"shares": views})
+	writeJSON(w, http.StatusOK, map[string]any{"shares": views, "uploadLinks": uploadLinks})
 }
 
 func (p *Portal) adminRevokeShare(w http.ResponseWriter, r *http.Request, admin string) {

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0f17" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <title data-i18n="receive.title">Send files</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/i18n.js"></script>
+</head>
+<body>
+  <main>
+    <header class="bar">
+      <h1 data-i18n="receive.title">Send files</h1>
+    </header>
+    <p class="error" id="status" role="status"></p>
+    <section class="card stacked" id="receive-card" hidden>
+      <p id="receive-into"></p>
+      <label for="sender" data-i18n="receive.nameLabel">Your name (optional)</label>
+      <input type="text" id="sender" maxlength="64" autocomplete="name" spellcheck="false">
+      <p class="detail" data-i18n="receive.nameHint">With a name, your files go into a folder with that name.</p>
+      <div class="toolbar">
+        <label class="picker big"><span data-i18n="upload.pickFiles">Choose files</span> <input type="file" id="receive-input" multiple></label>
+      </div>
+      <div class="dropzone" id="receive-drop" data-i18n="receive.drop">Or drop files here</div>
+      <p class="detail" data-i18n="receive.keepOpen">Keep this page open until everything is sent.</p>
+      <p id="receive-summary" role="status"></p>
+      <div class="preview" id="receive-sent" hidden>
+        <div class="label" data-i18n="receive.yourFiles">Your files</div>
+        <ul id="sent-rows"></ul>
+      </div>
+    </section>
+    <p class="detail" data-i18n="receive.footer">You can only send files with this link. You cannot see, change or delete what is already there.</p>
+  </main>
+  <script src="/static/upload.js"></script>
+  <script src="/static/receive.js"></script>
+</body>
+</html>

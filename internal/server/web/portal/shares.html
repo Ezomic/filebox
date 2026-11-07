@@ -30,11 +30,24 @@
     <p class="error" id="status" role="status"></p>
     <p class="notice" id="notice" role="status" hidden></p>
     <section class="card">
+      <div class="label" data-i18n="shares.shareLinks">Share links</div>
       <p class="detail" data-i18n="shares.intro">Anyone with a link can download what it points to, without signing in. Links only work while the file or folder stays where it is. To make a new link, use Share in your files.</p>
       <table id="files">
         <tbody id="share-rows"></tbody>
       </table>
       <p class="detail" id="empty" data-i18n="shares.empty" hidden>You have not shared anything yet.</p>
+    </section>
+    <section class="card stacked">
+      <div class="label" data-i18n="uploadLinks.title">Upload links</div>
+      <p class="detail" data-i18n="uploadLinks.intro">Anyone with an upload link can send you files without an account. The files land in the folder you choose and count toward your storage. Visitors never see what is already in it. A link takes files up to its size cap in total, and stops working when it expires.</p>
+      <div class="toolbar" id="upload-start">
+        <button type="button" id="new-upload-link" data-i18n="uploadLinks.new">New upload link</button>
+      </div>
+      <div id="upload-form" hidden></div>
+      <table id="upload-links">
+        <tbody id="upload-rows"></tbody>
+      </table>
+      <p class="detail" id="upload-empty" data-i18n="uploadLinks.empty" hidden>You have no upload links.</p>
     </section>
   </main>
   <script src="/static/nav.js"></script>
