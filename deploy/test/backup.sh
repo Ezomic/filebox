@@ -280,6 +280,39 @@ esac
 RESTIC
 sed -i "s#@T@#$T#; s#@STATE@#$STATE#" "$T/stubs/restic"
 chmod +x "$T/stubs/restic"
+
+# GNU timeout, as Debian has it, for the one form filebox-backup uses. The Rust coreutils on newer Ubuntu CI images do
+# not end the command with the asked signal, so the real one there would test a timeout the box never runs. Like GNU's,
+# it signals the command and then its whole process group, and a SIGKILL takes this process down too (exit 137).
+cat >"$T/stubs/timeout" <<'TIMEOUT'
+#!/usr/bin/env python3
+import os, signal, subprocess, sys
+args = sys.argv[1:]
+if len(args) < 4 or not args[0].startswith("--signal=") or not args[1].startswith("--kill-after="):
+    sys.exit("timeout stub: unexpected arguments: " + " ".join(args))
+sig = getattr(signal, "SIG" + args[0].split("=", 1)[1])
+grace, seconds, command = int(args[1].split("=", 1)[1]), int(args[2]), args[3:]
+def clean_start():
+    for s in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(s, signal.SIG_DFL)
+    signal.pthread_sigmask(signal.SIG_SETMASK, set())
+os.setpgid(0, 0)
+child = subprocess.Popen(command, preexec_fn=clean_start)
+try:
+    code = child.wait(timeout=seconds)
+    sys.exit(code if code >= 0 else 128 - code)
+except subprocess.TimeoutExpired:
+    pass
+child.send_signal(sig)
+signal.signal(sig, signal.SIG_IGN)
+os.killpg(0, sig)
+try:
+    child.wait(timeout=grace)
+    sys.exit(124)
+except subprocess.TimeoutExpired:
+    os.killpg(0, signal.SIGKILL)
+TIMEOUT
+chmod +x "$T/stubs/timeout"
 export PATH="$T/stubs:$PATH"
 
 fails=0
