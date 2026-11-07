@@ -79,63 +79,67 @@ func TestMonitorMailsTheAddressAndRemembersAcrossARestart(t *testing.T) {
 	disk.result = fine("disk")
 	rc.at = rc.at.Add(time.Hour)
 	restarted.Tick(context.Background())
+	if len(sender.Sent()) != 1 || restarted.Healthy() {
+		t.Fatalf("an alert stays open for an hour after the problem went: %s", subjects(sender.Sent()))
+	}
+	rc.at = rc.at.Add(ClearAfter)
+	restarted.Tick(context.Background())
 	if subjects(sender.Sent()[1:]) != "[filebox] Resolved: The data disk is full" || !restarted.Healthy() {
 		t.Fatalf("got %s", subjects(sender.Sent()))
 	}
 }
 
-func TestMonitorRetriesAFailedMailOnTheNextTick(t *testing.T) {
-	disk := &switchable{result: diskFull(96)}
-	sender := &mail.Fake{Err: mail.ErrUnavailable}
-	m, c := openMonitor(t, t.TempDir(), sender, disk.check)
-	_ = m.SetAddress("admin@example.com")
-
-	m.Tick(context.Background())
-	if len(sender.Sent()) != 0 || !m.Status().Open[0].Mailed.IsZero() {
-		t.Fatal("a failed mail must not count as sent")
-	}
-	sender.Err = nil
-	c.at = c.at.Add(10 * time.Minute)
-	m.Tick(context.Background())
-	if subjects(sender.Sent()) != "[filebox] Problem: The data disk is full" {
-		t.Fatalf("got %s", subjects(sender.Sent()))
-	}
-	if !m.Status().Open[0].Started.Equal(start) {
-		t.Fatal("the retry must keep when the problem started")
-	}
-}
-
-// stopAfter fails every send after the first n.
-type stopAfter struct {
+// refusing fails the emails whose subject it lists.
+type refusing struct {
 	mail.Fake
-	n int
+	refuse map[string]bool
+	tries  []string
 }
 
-func (s *stopAfter) Send(ctx context.Context, to, subject, text string) error {
-	if len(s.Sent()) >= s.n {
-		return mail.ErrRateLimited
+func (r *refusing) Send(ctx context.Context, to, subject, text string) error {
+	r.tries = append(r.tries, subject)
+	if r.refuse[subject] {
+		return mail.ErrRejected
 	}
 
-	return s.Fake.Send(ctx, to, subject, text)
+	return r.Fake.Send(ctx, to, subject, text)
 }
 
-func TestMonitorStopsAtTheFirstFailureAndSendsTheRestLater(t *testing.T) {
+func TestMonitorSendsEachMailOnItsOwnAndBacksOff(t *testing.T) {
 	smart := &switchable{result: Result{Source: "smart", Known: true, Problems: []Problem{
 		{Key: "a", Subject: "A"}, {Key: "b", Subject: "B"}, {Key: "c", Subject: "C"},
 	}}}
-	sender := &stopAfter{n: 1}
+	sender := &refusing{refuse: map[string]bool{"[filebox] Problem: A": true}}
 	m, c := openMonitor(t, t.TempDir(), sender, smart.check)
 	_ = m.SetAddress("admin@example.com")
 
 	m.Tick(context.Background())
-	if subjects(sender.Sent()) != "[filebox] Problem: A" {
-		t.Fatalf("got %s", subjects(sender.Sent()))
+	if subjects(sender.Sent()) != "[filebox] Problem: B | [filebox] Problem: C" {
+		t.Fatalf("one refused email must not hold back the others: %s", subjects(sender.Sent()))
 	}
-	sender.n = 10
-	c.at = c.at.Add(10 * time.Minute)
+	if open := m.Status().Open[0]; open.Key != "a" || !open.Mailed.IsZero() || open.Failures != 1 || !open.RetryAt.Equal(start.Add(firstRetry)) {
+		t.Fatalf("got %+v", open)
+	}
+
+	c.at = start.Add(5 * time.Minute)
 	m.Tick(context.Background())
-	if subjects(sender.Sent()) != "[filebox] Problem: A | [filebox] Problem: B | [filebox] Problem: C" {
-		t.Fatalf("got %s", subjects(sender.Sent()))
+	if len(sender.tries) != 3 {
+		t.Fatalf("tried again before the wait was over: %v", sender.tries)
+	}
+	c.at = start.Add(firstRetry)
+	m.Tick(context.Background())
+	if len(sender.tries) != 4 || m.Status().Open[0].RetryAt != c.at.Add(2*firstRetry) {
+		t.Fatalf("the second failure waits twice as long: %v %+v", sender.tries, m.Status().Open[0])
+	}
+
+	delete(sender.refuse, "[filebox] Problem: A")
+	c.at = c.at.Add(2 * firstRetry)
+	m.Tick(context.Background())
+	if subjects(sender.Sent()) != "[filebox] Problem: B | [filebox] Problem: C | [filebox] Problem: A" || m.Status().Open[0].Failures != 0 {
+		t.Fatalf("got %s %+v", subjects(sender.Sent()), m.Status().Open[0])
+	}
+	if !m.Status().Open[0].Started.Equal(start) {
+		t.Fatal("the retry must keep when the problem started")
 	}
 }
 
@@ -188,31 +192,70 @@ func TestMonitorSendsATestEmail(t *testing.T) {
 	}
 }
 
-func TestMonitorStartsOverFromADamagedFile(t *testing.T) {
+func TestMonitorStartsOverFromADamagedFileButKeepsTheAddress(t *testing.T) {
 	dir := t.TempDir()
+	disk := &switchable{result: diskFull(96)}
+	m, _ := openMonitor(t, dir, &mail.Fake{}, disk.check)
+	if err := m.SetAddress("admin@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	m.Tick(context.Background())
 	if err := os.WriteFile(filepath.Join(dir, stateFile), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m, _ := openMonitor(t, dir, nil)
-	if status := m.Status(); status.Address != "" || len(status.Open) != 0 {
-		t.Fatalf("got %+v", status)
+
+	reopened, _ := openMonitor(t, dir, &mail.Fake{})
+	if status := reopened.Status(); status.Address != "admin@example.com" || len(status.Open) != 0 {
+		t.Fatalf("a damaged state file only loses the state: %+v", status)
 	}
 	if _, err := os.Stat(filepath.Join(dir, stateFile+".bad")); err != nil {
 		t.Fatalf("the damaged file is kept aside: %v", err)
 	}
+
+	if err := os.WriteFile(filepath.Join(dir, settingsFile), []byte("nonsense"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if status := (func() Status { m, _ := openMonitor(t, dir, nil); return m.Status() })(); status.Address != "" {
+		t.Fatalf("a damaged settings file loses only the address: %+v", status)
+	}
 }
 
-func TestMonitorFileIsPrivate(t *testing.T) {
+func TestMonitorShowsTheChecksThatCouldNotLook(t *testing.T) {
+	disk := &switchable{result: Result{Source: "disk", Name: "how full the data disk is"}}
+	smart := &switchable{result: Result{Source: "smart", Name: "the SMART disk health"}}
+	m, c := openMonitor(t, t.TempDir(), &mail.Fake{}, disk.check, smart.check)
+	m.Tick(context.Background())
+	status := m.Status()
+	if len(status.Unchecked) != 2 || status.Unchecked[0].Name != "how full the data disk is" || !status.Unchecked[1].Since.Equal(start) {
+		t.Fatalf("got %+v", status.Unchecked)
+	}
+	if !m.Healthy() {
+		t.Fatal("not being able to look for a while is shown, but is no alert yet")
+	}
+
+	disk.result = fine("disk")
+	c.at = start.Add(UncheckedAfter)
+	m.Tick(context.Background())
+	status = m.Status()
+	if len(status.Unchecked) != 1 || len(status.Open) != 1 || status.Open[0].Key != "unchecked:smart" || m.Healthy() {
+		t.Fatalf("a day without looking is an alert: %+v", status)
+	}
+}
+
+func TestMonitorFilesArePrivate(t *testing.T) {
 	dir := t.TempDir()
 	m, _ := openMonitor(t, dir, nil)
 	if err := m.SetAddress("admin@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filepath.Join(dir, stateFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		t.Fatalf("mode %v", info.Mode())
+	m.Tick(context.Background())
+	for _, name := range []string{stateFile, settingsFile} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("%s: mode %v", name, info.Mode())
+		}
 	}
 }

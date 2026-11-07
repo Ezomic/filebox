@@ -21,16 +21,26 @@ const (
 	keepNewest      = 7
 )
 
+// What each check looks at, as the dashboard and an alert say it: "Could not check the SMART disk health".
+const (
+	diskName      = "how full the data disk is"
+	smartName     = "the SMART disk health"
+	btrfsName     = "the data disk and its mirror"
+	snapshotsName = "the earlier versions"
+	certName      = "the portal certificate"
+	restartName   = "how filebox last shut down"
+)
+
 // DiskCheck watches how full the data disk is.
 func DiskCheck(space system.DiskSpace) Check {
 	return func(time.Time) Result {
 		usage, err := space.Usage()
 		if err != nil {
 			log.Printf("alerts: read disk usage: %v", err)
-			return Result{Source: "disk"}
+			return Result{Source: "disk", Name: diskName}
 		}
 
-		return Result{Source: "disk", Known: true, Problems: diskProblems(usage.Normalize())}
+		return Result{Source: "disk", Name: diskName, Known: true, Problems: diskProblems(usage.Normalize())}
 	}
 }
 
@@ -64,20 +74,23 @@ func wholePercent(used, total uint64) uint64 {
 }
 
 // SmartCheck watches what the disks say about themselves: failing, or more reallocated sectors than before.
-func SmartCheck(smart system.Smart, counters *Counters) Check {
+func SmartCheck(smart system.Smart, counters *Counters, failing *FailingDisks) Check {
 	return func(now time.Time) Result {
 		disks, err := smart.Disks()
 		if err != nil {
 			log.Printf("alerts: read disk health: %v", err)
-			return Result{Source: "smart"}
+			return Result{Source: "smart", Name: smartName}
 		}
 		var problems []Problem
+		listed := map[string]bool{}
 		for _, disk := range disks {
-			problems = append(problems, failingProblems(disk)...)
+			listed[diskID(disk)] = true
+			problems = append(problems, failingProblems(disk, failing, now)...)
 			problems = append(problems, reallocatedProblems(disk, counters, now)...)
 		}
+		problems = append(problems, vanishedProblems(listed, failing, now)...)
 
-		return Result{Source: "smart", Known: true, Problems: problems}
+		return Result{Source: "smart", Name: smartName, Known: true, Problems: problems}
 	}
 }
 
@@ -105,22 +118,51 @@ func describe(disk system.DiskHealth) string {
 	return disk.Device + " (" + strings.Join(about, ", ") + ")"
 }
 
-// A disk that is asleep or does not answer keeps an open alert open.
-func failingProblems(disk system.DiskHealth) []Problem {
-	key := "smart-failing:" + diskID(disk)
+// A disk that is asleep keeps an open alert open, and counts as seen.
+func failingProblems(disk system.DiskHealth, failing *FailingDisks, now time.Time) []Problem {
+	id := diskID(disk)
+	key := "smart-failing:" + id
 	switch {
 	case disk.Healthy == nil:
+		failing.answered(id, now)
 		return []Problem{{Key: key, Easing: true}}
 	case *disk.Healthy:
+		failing.forget(id)
 		return nil
 	}
+	failing.saw(id, FailingDisk{Device: disk.Device, Model: disk.Model, Serial: disk.Serial, LastSeen: now})
 
 	return []Problem{{
 		Key:     key,
 		Subject: "Disk " + disk.Device + " is failing",
 		Detail:  "SMART on " + describe(disk) + " says the disk is failing. Make sure the files on it are backed up and replace it soon.",
-		Cleared: "SMART no longer reports " + disk.Device + " as failing, or the disk is no longer connected.",
+		Cleared: "SMART no longer reports " + disk.Device + " as failing.",
 	}}
+}
+
+// A failing disk that drops off the list keeps its alert, because a dead disk is no better than a failing one. After
+// GoneDiskAfter it is taken as replaced.
+func vanishedProblems(listed map[string]bool, failing *FailingDisks, now time.Time) []Problem {
+	var problems []Problem
+	for id, disk := range failing.all() {
+		if listed[id] {
+			continue
+		}
+		if now.Sub(disk.LastSeen) >= GoneDiskAfter {
+			failing.forget(id)
+			continue
+		}
+		about := system.DiskHealth{Device: disk.Device, Model: disk.Model, Serial: disk.Serial}
+		problems = append(problems, Problem{
+			Key:     "smart-failing:" + id,
+			Subject: "Disk " + disk.Device + " is failing",
+			Detail: "SMART said " + describe(about) + " is failing, and the disk no longer answers since " + when(disk.LastSeen) +
+				". It may have died or come loose. Make sure the files on it are backed up and replace it soon.",
+			Cleared: "Disk " + disk.Device + " has not been seen for 7 days, so if it was replaced there is nothing more to do.",
+		})
+	}
+
+	return problems
 }
 
 func reallocatedProblems(disk system.DiskHealth, counters *Counters, now time.Time) []Problem {
@@ -152,10 +194,10 @@ func MirrorCheck(read func() (system.BtrfsHealth, error), counters *Counters) Ch
 		health, err := read()
 		if err != nil {
 			log.Printf("alerts: read data disk health: %v", err)
-			return Result{Source: "btrfs"}
+			return Result{Source: "btrfs", Name: btrfsName}
 		}
 
-		return Result{Source: "btrfs", Known: true, Problems: btrfsProblems(health, counters, now)}
+		return Result{Source: "btrfs", Name: btrfsName, Known: true, Problems: btrfsProblems(health, counters, now)}
 	}
 }
 
@@ -265,18 +307,18 @@ func scrubProblems(scrub *system.BtrfsScrub) []Problem {
 func SnapshotCheck(read func() (system.SnapshotStatus, error)) Check {
 	return func(now time.Time) Result {
 		if read == nil {
-			return Result{Source: "snapshots", Known: true}
+			return Result{Source: "snapshots", Name: snapshotsName, Known: true}
 		}
 		status, err := read()
 		switch {
 		case errors.Is(err, system.ErrNoSnapshotStatus):
-			return Result{Source: "snapshots", Known: true}
+			return Result{Source: "snapshots", Name: snapshotsName, Known: true}
 		case err != nil:
 			log.Printf("alerts: read snapshot status: %v", err)
-			return Result{Source: "snapshots"}
+			return Result{Source: "snapshots", Name: snapshotsName}
 		}
 
-		return Result{Source: "snapshots", Known: true, Problems: snapshotProblems(status, now)}
+		return Result{Source: "snapshots", Name: snapshotsName, Known: true, Problems: snapshotProblems(status, now)}
 	}
 }
 
@@ -354,12 +396,12 @@ func prunedProblem(low system.SnapshotLowSpace) Problem {
 func CertCheck(expiry func() time.Time) Check {
 	return func(now time.Time) Result {
 		if expiry == nil {
-			return Result{Source: "cert", Known: true}
+			return Result{Source: "cert", Name: certName, Known: true}
 		}
 		expires := expiry()
 		left := expires.Sub(now)
 		if left >= certWarning {
-			return Result{Source: "cert", Known: true}
+			return Result{Source: "cert", Name: certName, Known: true}
 		}
 		subject := "The portal certificate has expired"
 		switch {
@@ -369,7 +411,7 @@ func CertCheck(expiry func() time.Time) Check {
 			subject = "The portal certificate expires within a day"
 		}
 
-		return Result{Source: "cert", Known: true, Problems: []Problem{{
+		return Result{Source: "cert", Name: certName, Known: true, Problems: []Problem{{
 			Key:     "portal-cert",
 			Subject: subject,
 			Detail: "The certificate of the web portal expires on " + when(expires) + ". It renews itself when 30 days are left, " +
@@ -385,13 +427,13 @@ func RestartCheck(read func() (system.Boot, error)) Check {
 		boot, err := read()
 		if err != nil {
 			log.Printf("alerts: read boot: %v", err)
-			return Result{Source: "restart"}
+			return Result{Source: "restart", Name: restartName}
 		}
 		if boot.CleanBefore == nil || *boot.CleanBefore || now.Sub(boot.Started) >= restartWindow {
-			return Result{Source: "restart", Known: true}
+			return Result{Source: "restart", Name: restartName, Known: true}
 		}
 
-		return Result{Source: "restart", Known: true, Problems: []Problem{{
+		return Result{Source: "restart", Name: restartName, Known: true, Problems: []Problem{{
 			Key:     "unclean-restart:" + boot.ID,
 			Subject: "Filebox restarted without a clean shutdown",
 			Detail: "Filebox started on " + when(boot.Started) + " after it stopped without shutting down, for example after a power " +

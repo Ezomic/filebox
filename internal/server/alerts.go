@@ -14,13 +14,22 @@ type problemView struct {
 	Subject string    `json:"subject"`
 	Detail  string    `json:"detail"`
 	Started time.Time `json:"started"`
+	// Gone is when the checks stopped reporting it, null while they do; the alert ends an hour later.
+	Gone *time.Time `json:"gone"`
+}
+
+type uncheckedView struct {
+	Name  string    `json:"name"`
+	Since time.Time `json:"since"`
 }
 
 type alertsView struct {
 	// Checked is null until the first check after the panel started.
 	Checked  *time.Time    `json:"checked"`
 	Problems []problemView `json:"problems"`
-	Address  string        `json:"address"`
+	// Unchecked lists what could not be checked on the last run.
+	Unchecked []uncheckedView `json:"unchecked"`
+	Address   string          `json:"address"`
 	// Mail is false when mail.json is missing, so no alert email can go out.
 	Mail bool `json:"mail"`
 }
@@ -30,7 +39,7 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) alertStatus(w http.ResponseWriter, _ *http.Request) {
-	view := alertsView{Problems: []problemView{}}
+	view := alertsView{Problems: []problemView{}, Unchecked: []uncheckedView{}}
 	if s.alerts == nil {
 		writeJSON(w, http.StatusOK, view)
 		return
@@ -38,7 +47,12 @@ func (s *Server) alertStatus(w http.ResponseWriter, _ *http.Request) {
 	status := s.alerts.Status()
 	view.Checked, view.Address, view.Mail = optionalTime(status.Checked), status.Address, status.Mail
 	for _, alert := range status.Open {
-		view.Problems = append(view.Problems, problemView{Subject: alert.Subject, Detail: alert.Detail, Started: alert.Started})
+		view.Problems = append(view.Problems, problemView{
+			Subject: alert.Subject, Detail: alert.Detail, Started: alert.Started, Gone: optionalTime(alert.Gone),
+		})
+	}
+	for _, check := range status.Unchecked {
+		view.Unchecked = append(view.Unchecked, uncheckedView{Name: check.Name, Since: check.Since})
 	}
 	writeJSON(w, http.StatusOK, view)
 }

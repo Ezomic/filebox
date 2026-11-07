@@ -35,12 +35,37 @@ func TestCounterRisesAndSettlesAfterTheWindow(t *testing.T) {
 	}
 }
 
-func TestCounterTakesALowerCountAsTheNewBaseline(t *testing.T) {
+func TestCounterIgnoresALowReadingThatDoesNotLast(t *testing.T) {
+	counter := observe(Counter{}, false, 3, start)
+	counter = observe(counter, true, 9, start.Add(time.Hour))
+	risen := counter
+	for i, reading := range []uint64{0, 0, 9, 0, 9} {
+		at := start.Add(time.Duration(2+i) * time.Hour)
+		counter = observe(counter, true, reading, at)
+		if counter.Count != 9 || counter.From != 3 || !counter.RoseAt.Equal(risen.RoseAt) || !counter.Rising(at) {
+			t.Fatalf("reading %d at %d: a flaky zero must not touch the rise: %+v", reading, i, counter)
+		}
+	}
+	if !counter.LowSince.IsZero() {
+		t.Fatalf("a normal reading ends the low spell: %+v", counter)
+	}
+	if counter = observe(counter, true, 10, start.Add(8*time.Hour)); counter.From != 3 || counter.Count != 10 {
+		t.Fatalf("a real rise after a flaky zero still counts from the baseline: %+v", counter)
+	}
+}
+
+func TestCounterTakesALowerCountAsTheNewBaselineAfterADay(t *testing.T) {
 	counter := observe(Counter{}, false, 0, start)
 	counter = observe(counter, true, 9, start.Add(time.Hour))
-	counter = observe(counter, true, 0, start.Add(2*time.Hour))
-	if counter.Count != 0 || counter.Rising(start.Add(2*time.Hour)) {
-		t.Fatalf("a reset or a replaced disk is no problem: %+v", counter)
+	low := start.Add(2 * time.Hour)
+	counter = observe(counter, true, 0, low)
+	counter = observe(counter, true, 1, low.Add(LowerAfter-time.Minute))
+	if counter.Count != 9 || !counter.LowSince.Equal(low) {
+		t.Fatalf("not lower long enough yet: %+v", counter)
+	}
+	counter = observe(counter, true, 1, low.Add(LowerAfter))
+	if counter != (Counter{Count: 1, From: 1}) || counter.Rising(low.Add(LowerAfter)) {
+		t.Fatalf("a reset or a replaced disk becomes the baseline: %+v", counter)
 	}
 }
 

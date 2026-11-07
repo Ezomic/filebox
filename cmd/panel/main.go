@@ -224,9 +224,13 @@ func openAlerts(dataDir string, sender mail.Sender, space system.DiskSpace, heal
 	if err != nil {
 		log.Fatalf("open alert counters: %v", err)
 	}
+	failing, err := alerts.OpenFailingDisks(dataDir)
+	if err != nil {
+		log.Fatalf("open failing disks: %v", err)
+	}
 	monitor, err := alerts.Open(dataDir, sender, []alerts.Check{
 		alerts.DiskCheck(space),
-		alerts.SmartCheck(health, counters),
+		alerts.SmartCheck(health, counters, failing),
 		alerts.MirrorCheck(health.Btrfs, counters),
 		alerts.SnapshotCheck(snapshots),
 		alerts.CertCheck(certExpiry),

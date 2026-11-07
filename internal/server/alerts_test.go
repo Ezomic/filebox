@@ -18,6 +18,7 @@ type alertHarness struct {
 	monitor *alerts.Monitor
 	sender  *mail.Fake
 	found   []alerts.Problem
+	blind   bool
 }
 
 func newAlertHarness(t *testing.T, sender *mail.Fake) *alertHarness {
@@ -28,7 +29,7 @@ func newAlertHarness(t *testing.T, sender *mail.Fake) *alertHarness {
 		s = sender
 	}
 	monitor, err := alerts.Open(t.TempDir(), s, []alerts.Check{func(time.Time) alerts.Result {
-		return alerts.Result{Source: "test", Known: true, Problems: h.found}
+		return alerts.Result{Source: "test", Name: "the test disk", Known: !h.blind, Problems: h.found}
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -69,6 +70,30 @@ func TestAlertsListTheOpenProblems(t *testing.T) {
 	}
 	if strings.Contains(h.do("GET", "/api/alerts", "", cookie).Body.String(), "disk-full") {
 		t.Fatal("internal keys stay inside the panel process")
+	}
+	if view.Problems[0].Gone != nil || view.Unchecked == nil || len(view.Unchecked) != 0 {
+		t.Fatalf("got %+v", view)
+	}
+}
+
+func TestAlertsListWhatCouldNotBeChecked(t *testing.T) {
+	h := newAlertHarness(t, &mail.Fake{})
+	cookie := h.signedIn(t)
+	h.found = []alerts.Problem{{Key: "disk-full", Subject: "The data disk is 96% full"}}
+	h.monitor.Tick(context.Background())
+
+	h.found = nil
+	h.monitor.Tick(context.Background())
+	view := decodeAlerts(t, h.do("GET", "/api/alerts", "", cookie).Body)
+	if len(view.Problems) != 1 || view.Problems[0].Gone == nil {
+		t.Fatalf("a problem that went away shows since when, until its hour is up: %+v", view.Problems)
+	}
+
+	h.blind = true
+	h.monitor.Tick(context.Background())
+	view = decodeAlerts(t, h.do("GET", "/api/alerts", "", cookie).Body)
+	if len(view.Unchecked) != 1 || view.Unchecked[0].Name != "the test disk" || view.Unchecked[0].Since.IsZero() {
+		t.Fatalf("got %+v", view.Unchecked)
 	}
 }
 

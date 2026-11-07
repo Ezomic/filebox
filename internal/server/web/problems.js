@@ -6,20 +6,31 @@
   const mailNote = document.getElementById('problems-mail');
   const when = (value) => new Date(value).toLocaleString();
 
-  function row(problem) {
+  function row(title, lines, className) {
     const node = document.createElement('div');
-    node.className = 'problem';
+    node.className = className;
     const subject = document.createElement('div');
     subject.className = 'name';
-    subject.textContent = problem.subject;
-    const detail = document.createElement('p');
-    detail.className = 'detail';
-    detail.textContent = problem.detail;
-    const since = document.createElement('div');
-    since.className = 'detail';
-    since.textContent = `Since ${when(problem.started)}`;
-    node.append(subject, detail, since);
+    subject.textContent = title;
+    node.append(subject);
+    for (const [text, tag] of lines) {
+      const line = document.createElement(tag);
+      line.className = 'detail';
+      line.textContent = text;
+      node.append(line);
+    }
     return node;
+  }
+
+  function problemRow(problem) {
+    const since = problem.gone
+      ? `Since ${when(problem.started)}. Not seen since ${when(problem.gone)}; it is over once it stays away for an hour.`
+      : `Since ${when(problem.started)}`;
+    return row(problem.subject, [[problem.detail, 'p'], [since, 'div']], 'problem');
+  }
+
+  function uncheckedRow(check) {
+    return row(`Could not check ${check.name}`, [[`Since ${when(check.since)}. After a day this becomes a problem of its own.`, 'div']], 'problem unchecked');
   }
 
   function summaryText(view) {
@@ -36,7 +47,7 @@
   }
 
   function render(view) {
-    rows.replaceChildren(...view.problems.map(row));
+    rows.replaceChildren(...view.problems.map(problemRow), ...view.unchecked.map(uncheckedRow));
     card.classList.toggle('open', view.problems.length > 0);
     summary.textContent = summaryText(view);
     mailNote.textContent = mailText(view);

@@ -320,6 +320,7 @@ pre.log {
 .problem { padding: 12px 0; border-top: 1px solid var(--border); }
 .problem:first-child { margin-top: 8px; }
 .problem .name { font-weight: 650; color: var(--danger); }
+.problem.unchecked .name { color: var(--warn); }
 .problem p.detail { margin: 4px 0; }
 #problems-mail { margin: 8px 0 0; }
 

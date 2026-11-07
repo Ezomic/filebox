@@ -32,6 +32,16 @@ func newCounters(t *testing.T) *Counters {
 	return counters
 }
 
+func newFailing(t *testing.T, dir string) *FailingDisks {
+	t.Helper()
+	failing, err := OpenFailingDisks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return failing
+}
+
 func TestDiskCheckOpensAt95AndEndsBelow90(t *testing.T) {
 	disk := system.NewFakeDisk(system.DiskUsage{})
 	check := DiskCheck(disk)
@@ -82,8 +92,8 @@ func TestSmartCheckReportsFailingDisks(t *testing.T) {
 		{Device: "/dev/sdb", Model: "ST1000", Serial: "B2", Healthy: ptr(false)},
 		{Device: "/dev/sdc", Healthy: nil},
 	}}
-	result := SmartCheck(smart, newCounters(t))(start)
-	if keys(result) != "smart-failing:B2, smart-failing:/dev/sdc (easing)" {
+	result := SmartCheck(smart, newCounters(t), newFailing(t, t.TempDir()))(start)
+	if result.Name != "the SMART disk health" || keys(result) != "smart-failing:B2, smart-failing:/dev/sdc (easing)" {
 		t.Fatalf("got %q", keys(result))
 	}
 	failing := result.Problems[0]
@@ -95,7 +105,7 @@ func TestSmartCheckReportsFailingDisks(t *testing.T) {
 	}
 
 	smart.Err = system.ErrSmartUnavailable
-	if SmartCheck(smart, newCounters(t))(start).Known {
+	if SmartCheck(smart, newCounters(t), newFailing(t, t.TempDir()))(start).Known {
 		t.Fatal("unreadable SMART must hold the alerts")
 	}
 }
@@ -104,7 +114,7 @@ func TestSmartCheckReportsAGrowingReallocatedCount(t *testing.T) {
 	disk := system.DiskHealth{Device: "/dev/sda", Serial: "A1", Healthy: ptr(true), Reallocated: ptr(uint64(8))}
 	smart := &system.FakeSmart{Value: []system.DiskHealth{disk}}
 	counters := newCounters(t)
-	check := SmartCheck(smart, counters)
+	check := SmartCheck(smart, counters, newFailing(t, t.TempDir()))
 
 	if result := check(start); keys(result) != "" {
 		t.Fatalf("the first reading is the baseline, whatever its value: %q", keys(result))
@@ -127,6 +137,67 @@ func TestSmartCheckReportsAGrowingReallocatedCount(t *testing.T) {
 	}
 	if result := check(rose.Add(RiseWindow)); keys(result) != "" {
 		t.Fatalf("a count that stays put for a week settles: %q", keys(result))
+	}
+}
+
+func TestSmartCheckIgnoresAFlakyZeroReading(t *testing.T) {
+	smart := &system.FakeSmart{Value: []system.DiskHealth{{Device: "/dev/sda", Serial: "A1", Healthy: ptr(true), Reallocated: ptr(uint64(8))}}}
+	check := SmartCheck(smart, newCounters(t), newFailing(t, t.TempDir()))
+	check(start)
+	smart.Value[0].Reallocated = ptr(uint64(12))
+	check(start.Add(time.Hour))
+
+	smart.Value[0].Reallocated = ptr(uint64(0))
+	if result := check(start.Add(2 * time.Hour)); keys(result) != "reallocated:A1" {
+		t.Fatalf("a zero reading must not end the rise: %q", keys(result))
+	}
+	smart.Value[0].Reallocated = ptr(uint64(12))
+	result := check(start.Add(3 * time.Hour))
+	if keys(result) != "reallocated:A1" || !strings.Contains(result.Problems[0].Detail, "went from 8 to 12, last on "+when(start.Add(time.Hour))) {
+		t.Fatalf("the next normal reading is no new rise from 0: %+v", result.Problems)
+	}
+}
+
+func TestSmartCheckKeepsAFailingDiskThatStopsAnswering(t *testing.T) {
+	dir := t.TempDir()
+	smart := &system.FakeSmart{Value: []system.DiskHealth{
+		{Device: "/dev/sda", Serial: "A1", Healthy: ptr(true)},
+		{Device: "/dev/sdb", Model: "ST1000", Serial: "B2", Healthy: ptr(false)},
+	}}
+	check := SmartCheck(smart, newCounters(t), newFailing(t, dir))
+	check(start)
+
+	smart.Value = smart.Value[:1]
+	away := start.Add(time.Hour)
+	restarted := SmartCheck(smart, newCounters(t), newFailing(t, dir))
+	result := restarted(away)
+	if keys(result) != "smart-failing:B2" || !strings.Contains(result.Problems[0].Detail, "no longer answers since "+when(start)) {
+		t.Fatalf("a failing disk that vanished keeps its alert, also after a restart: %+v", result.Problems)
+	}
+	if !strings.Contains(result.Problems[0].Cleared, "has not been seen for 7 days") {
+		t.Fatalf("got %q", result.Problems[0].Cleared)
+	}
+	if result := restarted(start.Add(GoneDiskAfter - time.Minute)); keys(result) != "smart-failing:B2" {
+		t.Fatalf("still within the week: %q", keys(result))
+	}
+
+	smart.Value = append(smart.Value, system.DiskHealth{Device: "/dev/sdb", Serial: "B2"})
+	restarted(start.Add(2 * 24 * time.Hour))
+	smart.Value = smart.Value[:1]
+	if result := restarted(start.Add(GoneDiskAfter + time.Hour)); keys(result) != "smart-failing:B2" {
+		t.Fatalf("a disk that answered while asleep was seen then: %q", keys(result))
+	}
+	if result := restarted(start.Add(2*24*time.Hour + GoneDiskAfter)); keys(result) != "" {
+		t.Fatalf("a week without the disk ends it: %q", keys(result))
+	}
+
+	smart.Value = []system.DiskHealth{{Device: "/dev/sdb", Serial: "B2", Healthy: ptr(false)}}
+	restarted(start.Add(30 * 24 * time.Hour))
+	smart.Value[0].Healthy = ptr(true)
+	restarted(start.Add(31 * 24 * time.Hour))
+	smart.Value = nil
+	if result := restarted(start.Add(32 * 24 * time.Hour)); keys(result) != "" {
+		t.Fatalf("a disk that passed again is no longer remembered as failing: %q", keys(result))
 	}
 }
 
@@ -192,9 +263,19 @@ func TestMirrorCheckReportsNewReadAndWriteErrors(t *testing.T) {
 		!strings.Contains(result.Problems[0].Detail, "device 2: 1520") {
 		t.Fatalf("got %+v", result.Problems)
 	}
+	devices = []system.BtrfsDevice{{ID: 1, Errors: 0}, {ID: 2, Errors: 0}}
+	if keys(check(start.Add(2*time.Hour))) != "io-errors" {
+		t.Fatal("a zero reading must not end the rise")
+	}
+	devices = []system.BtrfsDevice{{ID: 1, Errors: 2}, {ID: 2, Errors: 1520}}
+	if result := check(start.Add(3 * time.Hour)); keys(result) != "io-errors" || !strings.Contains(result.Problems[0].Detail, "1520 new read") {
+		t.Fatalf("the next normal reading is no new rise from 0: %+v", result.Problems)
+	}
+
 	devices = []system.BtrfsDevice{{ID: 1, Errors: 2}, {ID: 3}}
-	if keys(check(start.Add(2*time.Hour))) != "" {
-		t.Fatal("a replaced disk lowers the count and ends the rise")
+	check(start.Add(4 * time.Hour))
+	if keys(check(start.Add(4*time.Hour+LowerAfter))) != "" {
+		t.Fatal("a replaced disk lowers the count for good after a day and ends the rise")
 	}
 }
 
@@ -332,17 +413,19 @@ func TestNoTextUsesAnEmDash(t *testing.T) {
 	disk := system.NewFakeDisk(system.DiskUsage{Total: 100, Used: 99, Free: 1})
 	results := []Result{
 		DiskCheck(disk)(start),
-		SmartCheck(&system.FakeSmart{Value: []system.DiskHealth{{Device: "/dev/sda", Healthy: ptr(false)}}}, newCounters(t))(start),
+		SmartCheck(&system.FakeSmart{Value: []system.DiskHealth{{Device: "/dev/sda", Healthy: ptr(false)}}}, newCounters(t), newFailing(t, t.TempDir()))(start),
 		MirrorCheck(func() (system.BtrfsHealth, error) { return system.BtrfsHealth{State: system.BtrfsUnmounted}, nil }, newCounters(t))(start),
 		MirrorCheck(btrfsHealth([]system.BtrfsDevice{{ID: 2, Missing: true}}, &system.BtrfsScrub{Status: "finished", Errors: 1}), newCounters(t))(start),
 		SnapshotCheck(snapshotStatus(system.SnapshotStatus{Enabled: true, Daily: start, LowSpace: &system.SnapshotLowSpace{At: start, Deleted: 1}}, nil))(start),
 		CertCheck(func() time.Time { return start })(start),
 		RestartCheck(func() (system.Boot, error) { return system.Boot{ID: "x", Started: start, CleanBefore: ptr(false)}, nil })(start),
 	}
-	mails, state := Decide(State{}, results, start)
+	results = append(results, Result{Source: "unchecked-test", Name: "the test check"})
+	_, state := Decide(State{}, results, start.Add(-UncheckedAfter))
+	mails, state := Decide(state, results, start)
 	state = deliverAll(state, mails, start)
-	cleared, _ := Decide(state, nil, start.Add(time.Hour))
-	if len(mails) < 8 || len(cleared) != len(mails) {
+	cleared, _ := gone(state, nil, start.Add(time.Hour))
+	if len(mails) < 10 || len(cleared) != len(mails) {
 		t.Fatalf("got %d started and %d cleared mails", len(mails), len(cleared))
 	}
 	for _, mail := range append(mails, cleared...) {
