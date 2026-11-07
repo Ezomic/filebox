@@ -172,9 +172,21 @@ backup)
 		trap '' INT
 		sleep 60
 	elif [ -e "$STATE/slow" ]; then
-		trap 'kill $! 2>/dev/null; rm -f "$lock"; echo interrupted >>"$T/restic.log"; exit 130' INT
-		sleep 60 &
-		wait $!
+		# restic installs its own SIGINT handler even when it starts with SIGINT ignored or blocked, as it is on some CI
+		# runners. A bash trap cannot do that, so the waiting is done by python, exec'd so timeout signals it directly.
+		exec python3 -c '
+import os, signal, sys, time
+lock, log = sys.argv[1], sys.argv[2]
+def stop(*_):
+    os.remove(lock)
+    with open(log, "a") as f:
+        f.write("interrupted\n")
+    os._exit(130)
+signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
+signal.signal(signal.SIGINT, stop)
+time.sleep(60)
+sys.exit(1)
+' "$lock" "$T/restic.log"
 	fi
 	id=$(printf '%08x' $(($(ls "$repo/snapshots" | wc -l) + 1)))
 	tree=$repo/snapshots/$id/tree
@@ -280,9 +292,7 @@ run_backup() {
 	fi
 	: >"$STATE/mounts"
 	: >"$T/restic.log"
-	# CI runners start steps with SIGINT blocked, and a blocked signal survives exec, so the restic stub would never see
-	# the SIGINT that ends the window. systemd starts the unit with nothing blocked; run it that way here too.
-	python3 -c 'import os, signal, sys; signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT}); os.execvp(sys.argv[1], sys.argv[1:])' "$TOOL" run 2>&1
+	"$TOOL" run 2>&1
 }
 status_has() { grep -qE "$1" "$STATUS"; }
 in_backup() { [ -e "$REPO/snapshots/$(ls "$REPO/snapshots" | sort | tail -n 1)/tree$1" ]; }
