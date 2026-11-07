@@ -3,6 +3,7 @@ package system
 import (
 	"errors"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -258,13 +259,30 @@ func copyFolder(live, earlier Files, dir string, modified time.Time) error {
 	return live.SetModified(dir, modified)
 }
 
+// The half copy is deleted directly: a restore usually fails for lack of space, and then the trash cannot take it.
 func undoRestore(live Files, path string, created bool, trashID string) {
 	if created {
-		if partial, err := live.Trash(path); err == nil {
-			_ = live.PurgeTrash(partial.ID)
+		if err := live.RemoveAll(path); err != nil {
+			log.Printf("restore: could not delete the half restored copy: %v", withoutPath(err))
 		}
 	}
 	if trashID != "" {
-		_, _ = live.RestoreTrash(trashID)
+		if _, err := live.RestoreTrash(trashID); err != nil {
+			log.Printf("restore: could not put back the item it moved to the trash: %v", withoutPath(err))
+		}
 	}
+}
+
+// The panel and the portal share one journal, so a logged error must not carry a file name.
+func withoutPath(err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) {
+		return linkErr.Err
+	}
+
+	return err
 }

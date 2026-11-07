@@ -2,6 +2,7 @@ package system
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -301,6 +302,80 @@ func TestAFailedRestoreLeavesEverythingAsItWas(t *testing.T) {
 	}
 }
 
+// failingFiles fails like a disk that fills up during a restore: the Write of one path, and every Trash after the first.
+type failingFiles struct {
+	*FakeFiles
+	failWrite string
+	trashes   int
+}
+
+func (f *failingFiles) Write(path string, content io.Reader, overwrite bool) error {
+	if path == f.failWrite {
+		return ErrOverQuota
+	}
+
+	return f.FakeFiles.Write(path, content, overwrite)
+}
+
+func (f *failingFiles) Trash(path string) (TrashItem, error) {
+	f.trashes++
+	if f.trashes > 1 {
+		return TrashItem{}, ErrOverQuota
+	}
+
+	return f.FakeFiles.Trash(path)
+}
+
+func TestAFailedRestorePutsTheOriginalBackAtItsOwnPathWhenTheTrashIsFull(t *testing.T) {
+	live, earlier := &failingFiles{FakeFiles: NewFakeFiles(), failWrite: "photos/b.jpg"}, NewFakeFiles()
+	for _, files := range []Files{live, earlier} {
+		if err := files.Mkdir("photos"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(t, live, "photos/now.jpg", "current")
+	put(t, earlier, "photos/a.jpg", "a")
+	put(t, earlier, "photos/b.jpg", "b")
+
+	if _, err := RestoreVersion(live, earlier, "photos"); !errors.Is(err, ErrOverQuota) {
+		t.Fatalf("got %v", err)
+	}
+	if got := names(t, live, ""); !reflect.DeepEqual(got, []string{"photos"}) {
+		t.Fatalf("the original must be back at its own path, got %v", got)
+	}
+	if got := names(t, live, "photos"); !reflect.DeepEqual(got, []string{"now.jpg"}) {
+		t.Fatalf("got %v", got)
+	}
+	if items, _ := live.ListTrash(); len(items) != 0 {
+		t.Fatalf("the trash must be as before: %+v", items)
+	}
+}
+
+func TestRemoveAllDeletesATreeButNeverTheRootOrAHiddenFolder(t *testing.T) {
+	for _, factory := range filesFactories() {
+		t.Run(factory.name, func(t *testing.T) {
+			files := factory.make(t)
+			for _, dir := range []string{"a", "a/b"} {
+				if err := files.Mkdir(dir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			put(t, files, "a/b/c.txt", "x")
+			put(t, files, "keep.txt", "y")
+			for _, path := range []string{"", ".trash", "a/../.."} {
+				if err := files.RemoveAll(path); !errors.Is(err, ErrInvalidPath) {
+					t.Errorf("%q: got %v", path, err)
+				}
+			}
+			if err := files.RemoveAll("a"); err != nil {
+				t.Fatal(err)
+			}
+			if got := names(t, files, ""); !reflect.DeepEqual(got, []string{"keep.txt"}) {
+				t.Fatalf("got %v", got)
+			}
+		})
+	}
+}
 func TestRestoreVersionLeavesOutLinksAndNamesThePortalCannotUse(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("names ending in a dot and symlinks need a Unix filesystem")

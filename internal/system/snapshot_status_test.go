@@ -18,6 +18,7 @@ scope _family yes 17 2026-10-04T0030 2026-11-07T0030 7340032 -
 scope amy yes 23 2026-06-30T0030 2026-11-07T0030 - snapshot_failed
 scope bob no 0 - - 0 -
 scope cleo.deleted-20261101093000 gone 4 2026-10-20T0030 2026-10-31T0030 1024 -
+scope dave unchecked 2 2026-11-06T0030 2026-11-07T0030 - -
 something new 1 2 3
 `
 
@@ -32,7 +33,7 @@ func TestSnapshotStatusIsReadLineByLine(t *testing.T) {
 	if low := status.LowSpace; low == nil || low.Deleted != 3 || low.StillFull || !low.At.Equal(time.Unix(1793990000, 0)) {
 		t.Fatalf("lowspace %+v", low)
 	}
-	if len(status.Folders) != 4 {
+	if len(status.Folders) != 5 || status.Folders[4].Protection != "unchecked" {
 		t.Fatalf("folders %+v", status.Folders)
 	}
 	family, amy, bob, cleo := status.Folders[0], status.Folders[1], status.Folders[2], status.Folders[3]
@@ -96,7 +97,7 @@ func TestSnapshotStatusFileThatIsNotThereYet(t *testing.T) {
 	if err := os.WriteFile(path, []byte(goodSnapshotStatus), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if status, err := ReadSnapshotStatus(path); err != nil || len(status.Folders) != 4 {
+	if status, err := ReadSnapshotStatus(path); err != nil || len(status.Folders) != 5 {
 		t.Fatalf("got %+v %v", status, err)
 	}
 }

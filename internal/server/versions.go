@@ -127,6 +127,7 @@ func (h versionHandlers) download(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h versionHandlers) restore(w http.ResponseWriter, r *http.Request) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(restoreTimeout))
 	var body pathBody
 	if !decodeJSON(w, r, &body) {
 		return
@@ -144,8 +145,6 @@ func (h versionHandlers) restore(w http.ResponseWriter, r *http.Request) {
 	if h.refuseWhenFull(w) || h.refuseOverQuota(w, size) {
 		return
 	}
-
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(restoreTimeout))
 	restored, err := system.RestoreVersion(h.live, earlier, body.Path)
 	if err != nil {
 		fileError(w, "restore", "", err)

@@ -48,7 +48,8 @@ type SnapshotLowSpace struct {
 // ("name.deleted-<time>").
 type SnapshotFolder struct {
 	Name string
-	// Protection is "yes" for a subvolume that gets snapshots, "no" for a plain folder, "gone" for a deleted account.
+	// Protection is "yes" for a subvolume that gets snapshots, "no" for a plain folder, "gone" for a deleted account, and
+	// "unchecked" when the helper could not list the accounts.
 	Protection string
 	Count      int
 	// Oldest and Newest are zero when there are no snapshots.
@@ -171,7 +172,9 @@ func parseFolder(fields []string) (SnapshotFolder, error) {
 		return SnapshotFolder{}, errors.New("scope name")
 	}
 	folder := SnapshotFolder{Name: fields[0], Protection: fields[1]}
-	if folder.Protection != "yes" && folder.Protection != "no" && folder.Protection != "gone" {
+	switch folder.Protection {
+	case "yes", "no", "gone", "unchecked":
+	default:
 		return SnapshotFolder{}, errors.New("scope protection")
 	}
 	count, ok := parseCanonical(fields[2])
@@ -202,6 +205,11 @@ func parseFolder(fields []string) (SnapshotFolder, error) {
 	}
 
 	return folder, nil
+}
+
+// Deleted reports whether these are the earlier versions of a deleted account, moved aside under a name no account can have.
+func (f SnapshotFolder) Deleted() bool {
+	return deletedFolderPattern.MatchString(f.Name)
 }
 
 func snapshotFolderName(name string) bool {

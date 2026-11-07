@@ -72,6 +72,23 @@ func TestPanelShowsEarlierVersionsPerFolder(t *testing.T) {
 	}
 }
 
+func TestPanelOnlyListsFoldersMovedAsideOnADeleteAsDeleted(t *testing.T) {
+	status := "filebox-snapshot 1\nstate on\n" +
+		"scope amy unchecked 3 2026-11-05T0030 2026-11-07T0030 - -\n" +
+		"scope bob gone 2 2026-11-06T0030 2026-11-07T0030 - -\n" +
+		"scope zed gone 1 2026-11-07T0030 2026-11-07T0030 - -\n" +
+		"scope cleo.deleted-20261101093000 gone 4 2026-10-20T0030 2026-10-31T0030 - -\n"
+	h, cookie := newSnapshotPanel(t, parsedStatus(t, status))
+	var got []string
+	for _, folder := range panelSnapshots(t, h, cookie).Folders {
+		got = append(got, folder.Kind+":"+folder.Name+":"+folder.Protection)
+	}
+	want := "family:_family:unchecked user:amy:unchecked user:bob:gone deleted:cleo.deleted-20261101093000:gone"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("got %v, want %s", got, want)
+	}
+}
+
 func TestPanelSaysWhyEarlierVersionsAreOff(t *testing.T) {
 	h, cookie := newSnapshotPanel(t, parsedStatus(t, "filebox-snapshot 1\nstate off not_btrfs\nchecked 1794000000\n"))
 	view := panelSnapshots(t, h, cookie)

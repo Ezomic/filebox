@@ -18,8 +18,9 @@ func SweepAllUploads(base string, now time.Time, maxAge time.Duration) (int, err
 	return sweepEveryRoot(base, func(files Files) (int, error) { return files.SweepUploads(cutoff) })
 }
 
-// The earlier versions are never a root of their own (".snapshots" is no username), and a sweep of the data root
-// skips them too: they are read-only and hold every root many times over.
+// The earlier versions are never a root of their own (".snapshots" is no username). The data root is swept as a root,
+// and its skip keeps the thumbnail sweep's photo walk out of them; the trash and upload sweeps only read their own
+// hidden folder at the top of each root, so they never reach them either.
 func sweepEveryRoot(base string, sweep func(Files) (int, error)) (int, error) {
 	entries, err := os.ReadDir(base)
 	if err != nil {

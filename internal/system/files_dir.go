@@ -267,6 +267,18 @@ func (d *dirFiles) Remove(name string) error {
 	return nil
 }
 
+func (d *dirFiles) RemoveAll(name string) error {
+	name, err := cleanNonRoot(name)
+	if err != nil {
+		return err
+	}
+	if err := d.root.RemoveAll(name); err != nil {
+		return d.classify(name, err)
+	}
+
+	return nil
+}
+
 func (d *dirFiles) requireEmpty(name string) error {
 	dir, err := d.root.Open(name)
 	if err != nil {

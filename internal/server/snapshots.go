@@ -32,7 +32,7 @@ type snapshotFolderView struct {
 	Name string `json:"name"`
 	// Kind is "family", "user" or "deleted".
 	Kind string `json:"kind"`
-	// Protection is "yes", "no", "gone", or "unchecked" for an account the helper has not seen yet.
+	// Protection is "yes", "no", "gone", or "unchecked" for an account the helper has not seen or could not check.
 	Protection string     `json:"protection"`
 	Count      int        `json:"count"`
 	Oldest     *time.Time `json:"oldest"`
@@ -89,7 +89,7 @@ func newSnapshotsView(status system.SnapshotStatus, users []string) snapshotsVie
 		view.Folders = append(view.Folders, folderView(reported, name, "user"))
 	}
 	for _, folder := range status.Folders {
-		if folder.Protection == "gone" {
+		if folder.Deleted() {
 			view.Folders = append(view.Folders, folderView(reported, folder.Name, "deleted"))
 		}
 	}
