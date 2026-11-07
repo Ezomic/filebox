@@ -21,6 +21,8 @@ jobs:
       - run: go vet ./...
       - name: add-on installer script
         run: deploy/test/addons.sh
+      - name: snapshot helper script
+        run: deploy/test/snapshots.sh
       - run: go test -race ./...
       - name: fuzz (short)
         run: |

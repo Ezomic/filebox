@@ -1,0 +1,9 @@
+[Unit]
+Description=Check every hour whether the filebox earlier versions must make room
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

@@ -96,12 +96,75 @@ create_accounts() {
 	getent group systemd-journal >/dev/null && usermod -aG systemd-journal filebox
 
 	install -d -o root -g root -m 0755 /srv/sftp
-	# The shared Family folder sits beside the homes, so it is in nobody's quota or subvolume. Only the panel touches it
-	# (SFTP users are chrooted elsewhere), and the panel cannot create it itself because it cannot write to /srv/sftp.
+	# The shared Family folder sits beside the homes, so it is in nobody's quota. Only the panel touches it (SFTP users
+	# are chrooted elsewhere), and the panel cannot create it itself because it cannot write to /srv/sftp.
 	install -d -o filebox -g filebox -m 0770 /srv/sftp/_family
+	convert_family
 	install -d -o filebox -g filebox -m 0750 /var/lib/filebox
+	# filebox-snapshot writes its status here; root owned, so the panel can read it but never swap it.
+	install -d -o root -g filebox -m 0750 /var/lib/filebox-snapshot
 	install -d -o root -g root -m 0750 /etc/filebox
 	install -d -o root -g root -m 0755 /usr/local/libexec
+}
+
+# used*100 >= total*percent for the data disk, like the panel's storage levels.
+disk_at_least() {
+	local total free
+	read -r total free <<<"$(stat -f -c '%b %f' /srv/sftp)"
+	((total > 0 && (total - free) * 100 >= total * $1))
+}
+
+# Same columns for the old and the new family folder, so the copy can be checked before the old one goes.
+tree_listing() {
+	(cd "$1" && find . -mindepth 1 \( -type d -printf 'd %m %u %g %p\n' \) -o \( ! -type d -printf '%y %m %u %g %s %T@ %p\n' \) | sort)
+}
+
+restore_family() {
+	mv -T /srv/sftp/_family.pre-snapshots /srv/sftp/_family
+	chown filebox:filebox /srv/sftp/_family
+	chmod 0770 /srv/sftp/_family
+}
+
+# The family folder becomes a btrfs subvolume once, so filebox-snapshot can keep earlier versions of it. Like
+# filebox-user convert, the old folder is moved aside and locked, the new one is filled with reflinks (quick, and
+# almost no extra space), and the old one only goes once the copy checks out. Never on a nearly full disk.
+convert_family() {
+	local family=/srv/sftp/_family old=/srv/sftp/_family.pre-snapshots
+	if [ "$(stat -f -c %T /srv/sftp)" != btrfs ] || ! command -v btrfs >/dev/null || [ "$(stat -c %i "$family")" = 256 ]; then
+		return 0
+	fi
+	if [ -e "$old" ]; then
+		echo "setup.sh: $old is left from an earlier conversion of the family folder. Compare it with $family, remove it by hand and run setup again." >&2
+		return 0
+	fi
+	if disk_at_least 95; then
+		echo "setup.sh: WARNING: the disk is at least 95% full, so the family folder was not converted and has no earlier versions. Free some space and run filebox-update again." >&2
+		return 0
+	fi
+
+	log "Converting the family folder to a btrfs subvolume"
+	systemctl stop filebox-panel.service 2>/dev/null || true
+	mv -T "$family" "$old"
+	chown root:root "$old"
+	chmod 0700 "$old"
+	if ! btrfs subvolume create "$family" >/dev/null; then
+		restore_family
+		echo "setup.sh: WARNING: could not create the family subvolume, the family folder is unchanged" >&2
+		return 0
+	fi
+	if ! cp -a --reflink=always "$old/." "$family/"; then
+		btrfs subvolume delete "$family" >/dev/null || true
+		restore_family
+		echo "setup.sh: WARNING: could not copy the family folder, it is unchanged" >&2
+		return 0
+	fi
+	chown filebox:filebox "$family"
+	chmod 0770 "$family"
+	if [ "$(tree_listing "$old")" = "$(tree_listing "$family")" ]; then
+		rm -rf --one-file-system "$old"
+	else
+		echo "setup.sh: WARNING: the converted family folder does not match the old one, which is kept at $old (root only). Compare them, then remove it by hand." >&2
+	fi
 }
 
 configure_sshd() {
@@ -259,6 +322,7 @@ install_helpers() {
 	install -m 0750 -o root -g root "$SRC/filebox-dns-update" /usr/local/sbin/filebox-dns-update
 	install -m 0750 -o root -g root "$SRC/filebox-portal-cert" /usr/local/sbin/filebox-portal-cert
 	install -m 0750 -o root -g root "$SRC/filebox-update" /usr/local/sbin/filebox-update
+	install -m 0750 -o root -g root "$SRC/filebox-snapshot" /usr/local/sbin/filebox-snapshot
 	install -m 0755 -o root -g root "$SRC/filebox-panel-start" /usr/local/libexec/filebox-panel-start
 
 	local tmp
@@ -292,12 +356,17 @@ install_services() {
 	install -m 0644 -o root -g root "$SRC"/systemd/filebox-panel.service \
 		"$SRC"/systemd/filebox-dns.service "$SRC"/systemd/filebox-dns.timer \
 		"$SRC"/systemd/filebox-portal-cert.service "$SRC"/systemd/filebox-portal-cert.timer \
-		"$SRC"/systemd/filebox-scrub.service "$SRC"/systemd/filebox-scrub.timer /etc/systemd/system/
+		"$SRC"/systemd/filebox-scrub.service "$SRC"/systemd/filebox-scrub.timer \
+		"$SRC"/systemd/filebox-snapshot.service "$SRC"/systemd/filebox-snapshot.timer \
+		"$SRC"/systemd/filebox-snapshot-check.service "$SRC"/systemd/filebox-snapshot-check.timer /etc/systemd/system/
 	systemctl daemon-reload
-	systemctl enable filebox-panel.service filebox-dns.timer filebox-portal-cert.timer filebox-scrub.timer
+	systemctl enable filebox-panel.service filebox-dns.timer filebox-portal-cert.timer filebox-scrub.timer \
+		filebox-snapshot.timer filebox-snapshot-check.timer
 	# The panel cannot start until Tailscale has an address, so do not wait on it.
 	systemctl restart --no-block filebox-panel.service
-	systemctl restart filebox-dns.timer filebox-portal-cert.timer filebox-scrub.timer
+	systemctl restart filebox-dns.timer filebox-portal-cert.timer filebox-scrub.timer filebox-snapshot.timer filebox-snapshot-check.timer
+	# Writes the first status for the panel now; the first earlier versions are taken tonight.
+	systemctl start --no-block filebox-snapshot-check.service
 }
 
 # The add-ons asked for, one per line in /etc/filebox/addons. ADDONS (comma separated) adds to them.
