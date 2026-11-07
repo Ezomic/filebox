@@ -386,6 +386,7 @@ install_helpers() {
 	log "Installing the user helper and sudo rule"
 	install -m 0750 -o root -g filebox "$SRC/filebox-user" /usr/local/sbin/filebox-user
 	install -m 0750 -o root -g filebox "$SRC/filebox-smart" /usr/local/sbin/filebox-smart
+	install -m 0750 -o root -g filebox "$SRC/filebox-disk-health" /usr/local/sbin/filebox-disk-health
 	install -m 0750 -o root -g filebox "$SRC/filebox-verify" /usr/local/sbin/filebox-verify
 	install -m 0750 -o root -g root "$SRC/filebox-dns-update" /usr/local/sbin/filebox-dns-update
 	install -m 0750 -o root -g root "$SRC/filebox-portal-cert" /usr/local/sbin/filebox-portal-cert
@@ -409,7 +410,8 @@ filebox ALL=(root) NOPASSWD: /usr/local/sbin/filebox-user list, \
 	/usr/bin/systemctl restart ssh, \
 	/usr/bin/systemctl poweroff, \
 	/usr/bin/systemctl reboot, \
-	/usr/local/sbin/filebox-smart
+	/usr/local/sbin/filebox-smart, \
+	/usr/local/sbin/filebox-disk-health ""
 EOF
 	visudo -cf "$tmp" >/dev/null || die "generated sudoers rule is invalid"
 	install -m 0440 -o root -g root "$tmp" /etc/sudoers.d/filebox

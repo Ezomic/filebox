@@ -57,7 +57,7 @@ chmod +x "$T"/stubs/*
 fails=0
 check() { if eval "$2"; then echo "ok   - $1"; else echo "FAIL - $1"; fails=$((fails + 1)); fi; }
 health() { "$T/filebox-disk-health" "$@" 2>&1; }
-lines() { printf '%s\n' "$@"; }
+expect() { [ "$out" = "$(printf '%s\n' "$@")" ]; }
 
 disk() { # disk <devid> <missing 0|1> <write> <read> <flush>
 	mkdir -p "$DEVINFO/$1"
@@ -88,7 +88,6 @@ echo btrfs >"$STATE/fstab"
 disk 1 0 0 0 0
 disk 2 0 1 2 0
 scrubbed finished "no errors found"
-
 on() { expect "filebox-disk-health 1" "state on" "$@"; }
 clean_scrub="scrub finished $STARTED 0 0"
 
