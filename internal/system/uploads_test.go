@@ -612,6 +612,32 @@ func TestVisitorUploadsNeverOverwriteAndAreSweptOnTheirOwn(t *testing.T) {
 	})
 }
 
+func TestVisitorUploadMayStartBeforeItsFolderExists(t *testing.T) {
+	eachFiles(t, func(t *testing.T, files Files) {
+		put(t, files, "file.txt", "x")
+		if _, err := files.CreateVisitorUpload("file.txt/a.bin", 1); err == nil {
+			t.Fatal("a folder that is a file must still be refused")
+		}
+		if _, err := files.CreateUpload("later/a.bin", 1, false); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("the owner's own upload still needs its folder: %v", err)
+		}
+		visitor, err := files.CreateVisitorUpload("later/a.bin", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		appendAll(t, files, visitor.ID, 0, "a")
+		if err := files.FinishUpload(visitor.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("finishing needs the folder: %v", err)
+		}
+		if err := files.Mkdir("later"); err != nil {
+			t.Fatal(err)
+		}
+		if err := files.FinishUpload(visitor.ID); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func TestSweepAllVisitorUploadsWaitsADay(t *testing.T) {
 	base := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(base, "amy", "files"), 0o755); err != nil {

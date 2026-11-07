@@ -85,7 +85,7 @@ func (d *dirFiles) createUpload(meta uploadMeta) (UploadInfo, error) {
 	if meta.Size < 0 {
 		return UploadInfo{}, ErrInvalidPath
 	}
-	if err := d.checkParent(name); err != nil {
+	if err := d.checkParent(name); err != nil && !(meta.Visitor && errors.Is(err, ErrNotFound)) {
 		return UploadInfo{}, err
 	}
 	if err := d.checkWritable(name, meta.Overwrite); err != nil {

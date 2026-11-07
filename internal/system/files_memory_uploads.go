@@ -1,6 +1,7 @@
 package system
 
 import (
+	"errors"
 	"io"
 	"time"
 )
@@ -57,7 +58,7 @@ func (f *FakeFiles) createUpload(info UploadInfo) (UploadInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if err := f.writeAllowed(path, info.Overwrite); err != nil {
+	if err := f.writeAllowed(path, info.Overwrite); err != nil && !(info.Visitor && errors.Is(err, ErrNotFound)) {
 		return UploadInfo{}, err
 	}
 	info.ID, info.Path = id, path

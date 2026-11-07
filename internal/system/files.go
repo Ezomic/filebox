@@ -79,6 +79,7 @@ type Files interface {
 	SweepUploads(cutoff time.Time) (int, error)
 	// CreateVisitorUpload starts an upload for someone without an account. It never overwrites, and
 	// SweepVisitorUploads deletes it much sooner than SweepUploads would, since nobody comes back to resume it.
+	// Its folder need not exist yet, so a visitor's folder is only made once a file is finished into it.
 	CreateVisitorUpload(path string, size int64) (UploadInfo, error)
 	SweepVisitorUploads(cutoff time.Time) (int, error)
 
