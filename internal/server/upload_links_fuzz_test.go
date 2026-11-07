@@ -28,7 +28,7 @@ func FuzzUploadLinkRoutesStayConfined(f *testing.F) {
 		h.write(t, "amy", "outside.txt", []byte("amy-outside-share"))
 		_ = os.Symlink(filepath.Join(h.base, "bob", "files"), filepath.Join(h.base, "amy", "files", "docs", "to-bob"))
 		_ = os.Symlink("../outside.txt", filepath.Join(h.base, "amy", "files", "docs", "up-link.txt"))
-		h.smallLink(t, "amy", "drop-box", "docs", 1<<20)
+		h.smallLink(t, "amy", "drop-box", "docs", 1<<30)
 		before := snapshot(t, h.base)
 
 		var recs []*httptest.ResponseRecorder

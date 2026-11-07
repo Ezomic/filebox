@@ -267,9 +267,22 @@ func (p *Portal) setShareExpiry(w http.ResponseWriter, r *http.Request, user str
 }
 
 func (p *Portal) revokeShare(w http.ResponseWriter, r *http.Request, user string) {
-	if p.shareChanged(w, p.shares.Revoke(user, normalizeShareName(r.PathValue("name")))) {
+	if p.revoke(w, user, normalizeShareName(r.PathValue("name"))) {
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// revoke takes a link away. The unfinished uploads of an upload link are remembered, so their visitors hear why.
+func (p *Portal) revoke(w http.ResponseWriter, owner, name string) bool {
+	link, found := p.shares.Get(name)
+	if !p.shareChanged(w, p.shares.Revoke(owner, name)) {
+		return false
+	}
+	if found && link.IsUploadLink() {
+		p.receive.rememberClosed(link, p.now())
+	}
+
+	return true
 }
 
 // A link that is not the caller's answers the same as one that does not exist.
@@ -301,7 +314,7 @@ func (p *Portal) adminListShares(w http.ResponseWriter, _ *http.Request, _ strin
 
 func (p *Portal) adminRevokeShare(w http.ResponseWriter, r *http.Request, admin string) {
 	name := normalizeShareName(r.PathValue("name"))
-	if !p.shareChanged(w, p.shares.Revoke("", name)) {
+	if !p.revoke(w, "", name) {
 		return
 	}
 	log.Printf("portal: admin revoke share by=%s ip=%s", logName(admin), ipKey(r))

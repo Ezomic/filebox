@@ -69,7 +69,7 @@ func (p *Portal) serveShare(w http.ResponseWriter, r *http.Request) bool {
 		return p.tooManyShareRequests(w)
 	}
 	defer p.shareMiss.end(ip)
-	if !p.shareFlood.reserve(ip) {
+	if !p.continuesUpload(r, name, action) && !p.shareFlood.reserve(ip) {
 		return p.tooManyShareRequests(w)
 	}
 	if !p.answerShare(w, r, name, action) {
@@ -90,7 +90,7 @@ func (p *Portal) tooManyShareRequests(w http.ResponseWriter) bool {
 func (p *Portal) answerShare(w http.ResponseWriter, r *http.Request, name, action string) bool {
 	share, found := p.shares.Get(name)
 	if !found || share.Expired(p.now()) {
-		return false
+		return p.answerClosedUpload(w, r, name, action, share, found)
 	}
 	if share.IsUploadLink() {
 		return p.answerUploadLink(w, r, share, action)

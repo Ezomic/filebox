@@ -389,6 +389,7 @@
   "error.upload_link_target_invalid": "Kies een map in je eigen bestanden.",
   "error.upload_link_cap_invalid": "Kies hoeveel de link kan ontvangen.",
   "error.upload_link_full": "Deze link kan geen bestanden meer ontvangen, de maximale grootte is bereikt.",
+  "error.upload_link_closed": "Deze link is gesloten terwijl je bestand werd verstuurd.",
   "error.share_expiry_invalid": "Kies hoe lang de link werkt.",
   "error.share_not_found": "Die link bestaat niet meer.",
   "error.share_save_failed": "Kon de link niet opslaan.",

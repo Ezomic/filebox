@@ -87,4 +87,5 @@ const (
 	codeUploadLinkTarget = "upload_link_target_invalid"
 	codeUploadLinkCap    = "upload_link_cap_invalid"
 	codeUploadLinkFull   = "upload_link_full"
+	codeUploadLinkClosed = "upload_link_closed"
 )

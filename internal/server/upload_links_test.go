@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -448,24 +449,26 @@ func TestVisitorCannotTouchUploadsItDidNotStartThroughThisLink(t *testing.T) {
 	}
 }
 
-func TestUploadLinkCapCountsUnfinishedUploads(t *testing.T) {
-	h := newShareHarness(t)
+func TestUploadLinkCapCountsUnfinishedUploadsAndAMegabytePerFile(t *testing.T) {
+	h := newShareHarnessWith(t, func(deps *PortalDeps) { deps.MaxUpload = 8 << 20 })
 	h.seed(t)
-	h.smallLink(t, "amy", "small-link", "docs", 100)
+	h.smallLink(t, "amy", "small-link", "docs", 5<<20)
 
-	first := h.mustStart(t, "small-link", "a.bin", 60, "", "")
-	if rec := h.guestStart(nextGuest(), "small-link", startBody("b.bin", 50, "", "")); rec.Code != http.StatusInsufficientStorage || !strings.Contains(rec.Body.String(), codeUploadLinkFull) {
+	first := h.mustStart(t, "small-link", "a.bin", 3<<20, "", "")
+	if rec := h.guestStart(nextGuest(), "small-link", startBody("b.bin", 3<<20, "", "")); rec.Code != http.StatusInsufficientStorage || !strings.Contains(rec.Body.String(), codeUploadLinkFull) {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
 	}
-	h.mustStart(t, "small-link", "b.bin", 40, "", "")
-	if rec := h.guestChunk(nextGuest(), "small-link", first.ID, 0, 60, strings.Repeat("a", 60)); rec.Code != http.StatusOK {
+	h.mustStart(t, "small-link", "tiny.txt", 1, "", "")
+	data := strings.Repeat("a", 3<<20)
+	if rec := h.guestChunk(nextGuest(), "small-link", first.ID, 0, len(data), data); rec.Code != http.StatusOK {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
 	}
 	if rec := h.guestFinish(nextGuest(), "small-link", first.ID); rec.Code != http.StatusNoContent {
 		t.Fatalf("got %d", rec.Code)
 	}
-	if rec := h.guestStart(nextGuest(), "small-link", startBody("c.bin", 1, "", "")); rec.Code != http.StatusInsufficientStorage {
-		t.Fatalf("received and unfinished files fill the cap, got %d", rec.Code)
+	h.mustStart(t, "small-link", "empty.txt", 0, "", "")
+	if rec := h.guestStart(nextGuest(), "small-link", startBody("one-byte.txt", 1, "", "")); rec.Code != http.StatusInsufficientStorage {
+		t.Fatalf("3 MB received and two tiny files at a megabyte each fill 5 MB, got %d", rec.Code)
 	}
 
 	files, err := system.OpenUserFiles(h.base, "amy")
@@ -473,21 +476,359 @@ func TestUploadLinkCapCountsUnfinishedUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closerOf(files)()
-	if n, err := files.SweepVisitorUploads(time.Now().Add(time.Minute)); err != nil || n != 1 {
+	if n, err := files.SweepVisitorUploads(time.Now().Add(time.Minute)); err != nil || n != 2 {
 		t.Fatalf("swept %d %v", n, err)
 	}
-	last := h.mustStart(t, "small-link", "c.bin", 40, "", "")
-	if link, _ := h.shares.Get("small-link"); len(link.Pending) != 1 || link.Pending[last.ID] != 40 || link.ReceivedBytes != 60 {
+	last := h.mustStart(t, "small-link", "c.bin", 2<<20, "", "")
+	link, _ := h.shares.Get("small-link")
+	if len(link.Pending) != 1 || link.Pending[last.ID].Size != 2<<20 || link.ReceivedBytes != 3<<20 || link.Charged != 3<<20 {
 		t.Fatalf("a swept upload frees its share of the cap: %+v", link)
+	}
+}
+
+func TestAFloodOfEmptyStartsStaysBounded(t *testing.T) {
+	h := newShareHarness(t)
+	h.seed(t)
+	h.smallLink(t, "amy", "flooded", "docs", 20<<30)
+	before, _ := os.ReadDir(filepath.Join(h.base, "amy", "files", "docs"))
+
+	accepted := 0
+	for i := range maxPendingPerLink + 20 {
+		rec := h.guestStart(nextGuest(), "flooded", startBody("x.txt", 0, fmt.Sprintf("stranger %d", i), ""))
+		switch {
+		case rec.Code == http.StatusCreated:
+			accepted++
+		case rec.Code != http.StatusInsufficientStorage || !strings.Contains(rec.Body.String(), codeUploadLinkFull):
+			t.Fatalf("start %d got %d %s", i, rec.Code, rec.Body)
+		}
+	}
+	link, _ := h.shares.Get("flooded")
+	if accepted != maxPendingPerLink || len(link.Pending) != maxPendingPerLink || len(link.Visits) != maxPendingPerLink {
+		t.Fatalf("accepted %d, pending %d, visits %d", accepted, len(link.Pending), len(link.Visits))
+	}
+	if after, _ := os.ReadDir(filepath.Join(h.base, "amy", "files", "docs")); len(after) != len(before) {
+		t.Fatalf("unfinished visits must leave no folders, docs went from %d to %d entries", len(before), len(after))
+	}
+	if stored, err := os.ReadFile(filepath.Join(h.dataDir, "uploadlinks.json")); err != nil || len(stored) > 64<<10 {
+		t.Fatalf("the stored link must stay small, it is %d bytes (%v)", len(stored), err)
+	}
+}
+
+func TestUploadLinkFilesAndVisitorFoldersAreCapped(t *testing.T) {
+	h := newShareHarness(t)
+	h.seed(t)
+	h.smallLink(t, "amy", "busy", "docs", 20<<30)
+	visits := map[string]auth.Visit{}
+	for i := range maxVisitsPerLink {
+		visits[fmt.Sprintf("visit-%d", i)] = auth.Visit{Folder: fmt.Sprintf("docs/guest %d", i), Made: i%2 == 0}
+	}
+	if _, err := h.shares.UpdateUploadLink("busy", func(link *auth.Share) error {
+		link.Visits, link.Received = visits, maxFilesPerLink-2
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	named := h.mustStart(t, "busy", "a.txt", 1, "Newcomer", "")
+	if link, _ := h.shares.Get("busy"); len(link.Visits) != maxVisitsPerLink/2+1 || named.Visit == "" {
+		t.Fatalf("visits that never got a file make way for new ones, have %d", len(link.Visits))
+	}
+	h.mustStart(t, "busy", "b.txt", 1, "", "")
+	if rec := h.guestStart(nextGuest(), "busy", startBody("c.txt", 1, "", "")); rec.Code != http.StatusInsufficientStorage {
+		t.Fatalf("received and unfinished files stop at %d, got %d", maxFilesPerLink, rec.Code)
+	}
+
+	h.smallLink(t, "amy", "crowded", "docs", 20<<30)
+	made := map[string]auth.Visit{}
+	for i := range maxVisitsPerLink {
+		made[fmt.Sprintf("visit-%d", i)] = auth.Visit{Folder: fmt.Sprintf("docs/crowd %d", i), Made: true}
+	}
+	if _, err := h.shares.UpdateUploadLink("crowded", func(link *auth.Share) error {
+		link.Visits = made
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := h.guestStart(nextGuest(), "crowded", startBody("d.txt", 1, "One too many", "")); rec.Code != http.StatusInsufficientStorage {
+		t.Fatalf("a link holds at most %d visitor folders, got %d", maxVisitsPerLink, rec.Code)
+	}
+	h.mustStart(t, "crowded", "e.txt", 1, "", "")
+}
+
+func TestAVisitorFolderIsMadeOnlyForAFinishedFile(t *testing.T) {
+	h := newShareHarness(t)
+	h.seed(t)
+	link := h.mustUploadLink(t, h.amy, "docs")
+	docs := filepath.Join(h.base, "amy", "files", "docs")
+
+	started := h.mustStart(t, link.Name, "a.txt", 1, "Anna", "")
+	if _, err := os.Stat(filepath.Join(docs, "Anna")); err == nil {
+		t.Fatal("the folder must wait for a finished file")
+	}
+	again := h.mustStart(t, link.Name, "a.txt", 1, "Anna", "")
+	if rec := h.guestChunk(nextGuest(), link.Name, again.ID, 0, 1, "2"); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body)
+	}
+	if rec := h.guestFinish(nextGuest(), link.Name, again.ID); rec.Code != http.StatusNoContent {
+		t.Fatal(rec.Body)
+	}
+	if got := h.read(t, "amy", "docs/Anna (2)/a.txt"); got != "2" {
+		t.Fatalf("got %q", got)
+	}
+	if rec := h.guestChunk(nextGuest(), link.Name, started.ID, 0, 1, "1"); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body)
+	}
+	if rec := h.guestFinish(nextGuest(), link.Name, started.ID); rec.Code != http.StatusNoContent {
+		t.Fatal(rec.Body)
+	}
+	if got := h.read(t, "amy", "docs/Anna/a.txt"); got != "1" {
+		t.Fatalf("a reserved name stays the first visitor's, got %q", got)
+	}
+
+	h.mustStart(t, link.Name, "never.txt", 1, "Ghost", "")
+	files, err := system.OpenUserFiles(h.base, "amy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closerOf(files)()
+	if _, err := files.SweepVisitorUploads(time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(docs, "Ghost")); err == nil {
+		t.Fatal("an upload that never finished leaves no folder")
+	}
+}
+
+func TestFinishCountsTheFileBeforeItLandsAndTakesItBackOnFailure(t *testing.T) {
+	h := newShareHarness(t)
+	h.seed(t)
+	link := h.mustUploadLink(t, h.amy, "docs")
+
+	started := h.mustStart(t, link.Name, "a.txt", 1, "Anna", "")
+	if rec := h.guestChunk(nextGuest(), link.Name, started.ID, 0, 1, "x"); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body)
+	}
+	blocker := filepath.Join(h.dataDir, "uploadlinks.json.tmp")
+	if err := os.Mkdir(blocker, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if rec := h.guestFinish(nextGuest(), link.Name, started.ID); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a file that cannot be counted must not land, got %d %s", rec.Code, rec.Body)
+	}
+	if _, err := os.Stat(filepath.Join(h.base, "amy", "files", "docs", "Anna")); err == nil {
+		t.Fatal("neither the file nor its folder may be there")
+	}
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	if rec := h.guestFinish(nextGuest(), link.Name, started.ID); rec.Code != http.StatusNoContent {
+		t.Fatalf("the visitor can finish once the count saves, got %d %s", rec.Code, rec.Body)
+	}
+	if got := h.read(t, "amy", "docs/Anna/a.txt"); got != "x" {
+		t.Fatalf("got %q", got)
+	}
+
+	clash := h.mustStart(t, link.Name, "b.txt", 1, "", "")
+	h.guestChunk(nextGuest(), link.Name, clash.ID, 0, 1, "y")
+	h.write(t, "amy", "docs/b.txt", []byte("owner"))
+	if rec := h.guestFinish(nextGuest(), link.Name, clash.ID); rec.Code != http.StatusConflict {
+		t.Fatalf("got %d %s", rec.Code, rec.Body)
+	}
+	stored, _ := h.shares.Get(link.Name)
+	if stored.Received != 1 || stored.ReceivedBytes != 1 || stored.Charged != minUploadCharge {
+		t.Fatalf("a file that did not land is taken back off the count: %+v", stored)
+	}
+	if _, pending := stored.Pending[clash.ID]; !pending {
+		t.Fatal("the upload stays pending")
+	}
+	if got := h.read(t, "amy", "docs/b.txt"); got != "owner" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestARepeatedStartGivesBackTheSameUpload(t *testing.T) {
+	h := newShareHarness(t)
+	h.seed(t)
+	link := h.mustUploadLink(t, h.amy, "docs")
+
+	body := `{"name":"a.txt","size":3,"sender":"Anna","key":"0123456789abcdef"}`
+	var first, second guestUpload
+	for _, into := range []*guestUpload{&first, &second} {
+		rec := h.guestStart(nextGuest(), link.Name, body)
+		if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), into) != nil {
+			t.Fatalf("got %d %s", rec.Code, rec.Body)
+		}
+	}
+	if first.ID != second.ID || first.Name != second.Name || first.Visit != second.Visit {
+		t.Fatalf("got %+v and %+v", first, second)
+	}
+	if stored, _ := h.shares.Get(link.Name); len(stored.Pending) != 1 || len(stored.Visits) != 1 {
+		t.Fatalf("a repeated start makes nothing new: %+v", stored)
+	}
+	h.guestChunk(nextGuest(), link.Name, first.ID, 0, 3, "ab")
+	var resumed struct {
+		Offset int `json:"offset"`
+	}
+	if rec := h.guestStart(nextGuest(), link.Name, body); json.Unmarshal(rec.Body.Bytes(), &resumed) != nil || resumed.Offset != 2 {
+		t.Fatalf("the repeated start tells where the upload stands: %s", rec.Body)
+	}
+	other := h.mustStart(t, link.Name, "a.txt", 3, "", "")
+	if other.ID == first.ID {
+		t.Fatal("another key is another upload")
+	}
+	if rec := h.guestStart(nextGuest(), link.Name, `{"name":"a.txt","size":1,"key":"`+strings.Repeat("k", maxUploadKey+1)+`"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("an overlong key is refused, got %d", rec.Code)
+	}
+}
+
+func TestAVisitSurvivesARestart(t *testing.T) {
+	h := newShareHarness(t)
+	h.seed(t)
+	link := h.mustUploadLink(t, h.amy, "docs")
+	first := h.send(t, link.Name, "a.txt", "a", "Anna", "")
+
+	restarted := NewPortal(PortalDeps{
+		Users:     h.users,
+		OpenFiles: func(user string) (system.Files, error) { return system.OpenUserFiles(h.base, user) },
+		MaxUpload: 1 << 20,
+		Shares:    h.shares,
+	})
+	restarted.now = h.now
+	h.portal = restarted
+	h.send(t, link.Name, "b.txt", "b", "Anna", first.Visit)
+	if got := h.read(t, "amy", "docs/Anna/b.txt"); got != "b" {
+		t.Fatalf("one visitor's files stay together across a restart, got %q", got)
+	}
+}
+
+func TestAVisitorLearnsWhenTheLinkClosedDuringTheirUpload(t *testing.T) {
+	h := newShareHarness(t)
+	h.seed(t)
+	var expiring uploadLinkView
+	if rec := h.createUploadLink(h.amy, `{"path":"docs","expires":"1d"}`); rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &expiring) != nil {
+		t.Fatal(rec.Body)
+	}
+	revoked := h.mustUploadLink(t, h.amy, "docs")
+	beforeChunks := h.mustStart(t, expiring.Name, "a.bin", 4, "", "")
+	beforeFinish := h.mustStart(t, revoked.Name, "b.bin", 2, "", "")
+	if rec := h.guestChunk(nextGuest(), revoked.Name, beforeFinish.ID, 0, 2, "bb"); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body)
+	}
+
+	h.advance(25 * time.Hour)
+	if rec := h.do("DELETE", "/api/shares/"+revoked.Name, "", "192.0.2.10", h.amy); rec.Code != http.StatusNoContent {
+		t.Fatal(rec.Body)
+	}
+	for label, rec := range map[string]*httptest.ResponseRecorder{
+		"chunk after expiry":      h.guestChunk(nextGuest(), expiring.Name, beforeChunks.ID, 0, 4, "aaaa"),
+		"finish after expiry":     h.guestFinish(nextGuest(), expiring.Name, beforeChunks.ID),
+		"finish after revocation": h.guestFinish(nextGuest(), revoked.Name, beforeFinish.ID),
+		"chunk after revocation":  h.guestChunk(nextGuest(), revoked.Name, beforeFinish.ID, 2, 4, "bb"),
+	} {
+		if rec.Code != http.StatusGone || !strings.Contains(rec.Body.String(), codeUploadLinkClosed) {
+			t.Errorf("%s got %d %s", label, rec.Code, rec.Body)
+		}
+	}
+
+	unknown := h.guestCall(nextGuest(), "GET", "/never-existed", "")
+	for label, rec := range map[string]*httptest.ResponseRecorder{
+		"another id on the expired link": h.guestFinish(nextGuest(), expiring.Name, strings.Repeat("ab", 16)),
+		"another id on the revoked link": h.guestChunk(nextGuest(), revoked.Name, strings.Repeat("cd", 16), 0, 1, "x"),
+		"an id of the other link":        h.guestFinish(nextGuest(), revoked.Name, beforeChunks.ID),
+		"the page of the expired link":   h.guestCall(nextGuest(), "GET", "/"+expiring.Name, ""),
+		"a start on the revoked link":    h.guestStart(nextGuest(), revoked.Name, startBody("c.bin", 1, "", "")),
+	} {
+		sameResponse(t, label, unknown, rec)
+	}
+	if _, err := os.Stat(filepath.Join(h.base, "amy", "files", "docs", "b.bin")); err == nil {
+		t.Fatal("nothing lands after the link closed")
+	}
+}
+
+func TestOneHouseholdCanSendHundredsOfFilesFromOneAddress(t *testing.T) {
+	h := newShareHarness(t)
+	h.seed(t)
+	h.smallLink(t, "amy", "party", "docs", 20<<30)
+	home := "198.51.100.70"
+	for i := range shareFloodLimit - 20 {
+		start := h.guestStart(home, "party", startBody(fmt.Sprintf("IMG_%04d.jpg", i), 2, "", ""))
+		var started guestUpload
+		if start.Code != http.StatusCreated || json.Unmarshal(start.Body.Bytes(), &started) != nil {
+			t.Fatalf("file %d start got %d", i, start.Code)
+		}
+		for offset := range 2 {
+			if rec := h.guestChunk(home, "party", started.ID, offset, 2, "j"); rec.Code != http.StatusOK {
+				t.Fatalf("file %d chunk got %d", i, rec.Code)
+			}
+		}
+		if rec := h.guestFinish(home, "party", started.ID); rec.Code != http.StatusNoContent {
+			t.Fatalf("file %d finish got %d", i, rec.Code)
+		}
+	}
+	if link, _ := h.shares.Get("party"); link.Received != shareFloodLimit-20 {
+		t.Fatalf("got %d files", link.Received)
+	}
+}
+
+func TestVisitorNamesLoseInvisibleFormatCharacters(t *testing.T) {
+	h := newShareHarness(t)
+	h.seed(t)
+	link := h.mustUploadLink(t, h.amy, "docs")
+	for raw, want := range map[string]string{
+		"photo\u202egpj.exe": "photogpj.exe",
+		"inv\u200boice.pdf":  "invoice.pdf",
+		"\ufeffnotes.txt":    "notes.txt",
+		"a\u2066b\u2069.txt": "ab.txt",
+	} {
+		if got := h.send(t, link.Name, raw, "x", "", ""); got.Name != want {
+			t.Errorf("%q was stored as %q, want %q", raw, got.Name, want)
+		}
+	}
+	h.send(t, link.Name, "x.txt", "x", "Anna\u202e\u200d", "")
+	if got := h.read(t, "amy", "docs/Anna/x.txt"); got != "x" {
+		t.Fatalf("got %q", got)
+	}
+	if rec := h.guestStart(nextGuest(), link.Name, startBody("\u202e\u200b", 1, "", "")); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a name of only format characters is refused, got %d", rec.Code)
+	}
+}
+
+func TestTheFamilyFolderIsNeverATarget(t *testing.T) {
+	family := t.TempDir()
+	h := newShareHarnessWith(t, func(deps *PortalDeps) {
+		deps.OpenFamily = func() (system.Files, error) { return system.NewDirFiles(family) }
+	})
+	if err := os.MkdirAll(filepath.Join(h.base, system.FamilyDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, folder := range []string{
+		"_family", "../_family", "../../_family", "/_family", "_family/", "Family", "family", "../../" + system.FamilyDir + "/x", "..\\..\\_family",
+		"%2e%2e/%2e%2e/_family", "docs/../../_family", "C:/_family", "./_family", "../../../_family", "api/family",
+	} {
+		if rec := h.createUploadLink(h.amy, `{"path":`+quote(folder)+`}`); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%q must be refused, got %d %s", folder, rec.Code, rec.Body)
+		}
+	}
+
+	h.mkdir(t, "amy", "Family")
+	own := h.mustUploadLink(t, h.amy, "Family")
+	h.send(t, own.Name, "into-own.txt", "mine", "", "")
+	if got := h.read(t, "amy", "Family/into-own.txt"); got != "mine" {
+		t.Fatalf("amy's own folder called Family is hers, got %q", got)
+	}
+	for _, root := range []string{filepath.Join(h.base, system.FamilyDir), family} {
+		if entries, _ := os.ReadDir(root); len(entries) != 0 {
+			t.Fatalf("nothing may reach the family folder %s: %v", root, entries)
+		}
 	}
 }
 
 func TestUploadLinkCapAndNamesHoldUnderConcurrentStarts(t *testing.T) {
 	h := newShareHarness(t)
 	h.seed(t)
-	h.smallLink(t, "amy", "busy-link", "docs", 100)
-	h.smallLink(t, "amy", "same-name", "docs/sub", 1<<20)
-	h.smallLink(t, "amy", "same-place", "docs/sub", 1<<20)
+	h.smallLink(t, "amy", "busy-link", "docs", 3<<20)
+	h.smallLink(t, "amy", "same-name", "docs/sub", 100<<20)
+	h.smallLink(t, "amy", "same-place", "docs/sub", 100<<20)
 
 	var accepted atomic.Int32
 	var mu sync.Mutex
@@ -524,7 +865,7 @@ func TestUploadLinkCapAndNamesHoldUnderConcurrentStarts(t *testing.T) {
 	}
 	wg.Wait()
 	if accepted.Load() != 3 {
-		t.Fatalf("a cap of 100 takes three files of 30, took %d", accepted.Load())
+		t.Fatalf("a cap of 3 MB takes three small files, took %d", accepted.Load())
 	}
 	for name, target := range ids {
 		link, id, _ := strings.Cut(target, "/")
@@ -619,6 +960,7 @@ func TestUnavailableUploadLinksAnswerLikeUnknownOnes(t *testing.T) {
 		t.Fatalf("got %d %v", unknown.Code, unknown.Header())
 	}
 	inflight["never-existed"] = guestUpload{ID: strings.Repeat("ab", 16)}
+	closed := map[string]bool{expiring.Name: true, revoked.Name: true}
 	names := []string{expiring.Name, revoked.Name, renamed.Name, deleted.Name, swapped.Name, cleos.Name, "never-existed"}
 	for _, name := range names {
 		id := inflight[name].ID
@@ -628,7 +970,14 @@ func TestUnavailableUploadLinksAnswerLikeUnknownOnes(t *testing.T) {
 			"start":  h.guestStart(nextGuest(), name, startBody("new.bin", 1, "Anna", "")),
 			"chunk":  h.guestChunk(nextGuest(), name, id, 0, 3, "abc"),
 			"finish": h.guestFinish(nextGuest(), name, id),
+			"guess":  h.guestFinish(nextGuest(), name, strings.Repeat("cd", 16)),
 		} {
+			if closed[name] && (label == "chunk" || label == "finish") {
+				if got.Code != http.StatusGone {
+					t.Errorf("%s %s: the holder of an upload of a closed link hears so, got %d", name, label, got.Code)
+				}
+				continue
+			}
 			sameResponse(t, name+" "+label, unknown, got)
 		}
 	}
@@ -686,9 +1035,11 @@ func TestDeletingAnAccountRemovesItsUploadLinks(t *testing.T) {
 
 type mailHarness struct {
 	*shareHarness
-	sender *mail.Fake
-	waits  []time.Duration
-	runs   []func()
+	sender   *mail.Fake
+	contacts *auth.Contacts
+	deps     PortalDeps
+	waits    []time.Duration
+	runs     []func()
 }
 
 func newMailHarness(t *testing.T) *mailHarness {
@@ -698,22 +1049,45 @@ func newMailHarness(t *testing.T) *mailHarness {
 		t.Fatal(err)
 	}
 	sender := &mail.Fake{}
-	h := &mailHarness{sender: sender}
+	h := &mailHarness{sender: sender, contacts: contacts}
 	h.shareHarness = newShareHarnessWith(t, func(deps *PortalDeps) {
 		deps.Contacts, deps.Mail, deps.PortalURL = contacts, sender, testPortalURL
+		h.deps = *deps
 	})
-	h.portal.receive.notices.after = func(wait time.Duration, run func()) {
+	h.record(h.portal)
+	h.confirm(t, "amy")
+
+	return h
+}
+
+func (h *mailHarness) record(portal *Portal) {
+	portal.receive.notices.after = func(wait time.Duration, run func()) {
 		h.waits = append(h.waits, wait)
 		h.runs = append(h.runs, run)
 	}
-	if err := contacts.Set("amy", "amy@example.com"); err != nil {
+}
+
+func (h *mailHarness) confirm(t *testing.T, user string) {
+	t.Helper()
+	if err := h.contacts.Set(user, user+"@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := contacts.Confirm("amy", "amy@example.com"); !ok || err != nil {
+	if ok, err := h.contacts.Confirm(user, user+"@example.com"); !ok || err != nil {
 		t.Fatalf("confirm %v %v", ok, err)
 	}
+}
 
-	return h
+// restart starts a new portal on the same stores, as the panel does after an update.
+func (h *mailHarness) restart() {
+	portal := NewPortal(h.deps)
+	portal.now = h.now
+	h.record(portal)
+	h.portal = portal
+	portal.ResumeUploadSummaries()
+}
+
+func (h *mailHarness) runLast() {
+	h.runs[len(h.runs)-1]()
 }
 
 func TestUploadLinkSummaryMailIsHourlyAndNamesNoFiles(t *testing.T) {
@@ -752,6 +1126,9 @@ func TestUploadLinkSummaryMailIsHourlyAndNamesNoFiles(t *testing.T) {
 	if sent := h.sender.Sent(); len(sent) != 2 || sent[1].Subject != "2 files arrived in docs" {
 		t.Fatalf("got %+v", sent)
 	}
+	if stored, _ := h.shares.Get(link.Name); stored.Unreported != 0 || !stored.Reported.Equal(h.now()) {
+		t.Fatalf("a sent summary is written down: %+v", stored)
+	}
 	for _, message := range h.sender.Sent() {
 		for _, leak := range []string{"secret-name", "Vera", "later", link.Name} {
 			if strings.Contains(message.Subject, leak) || strings.Contains(message.Text, leak) {
@@ -769,6 +1146,7 @@ func TestUploadLinkSummaryMailFollowsTheOwnersLanguage(t *testing.T) {
 		t.Fatal(rec.Body)
 	}
 	h.send(t, link.Name, "foto.jpg", "x", "", "")
+	h.advance(uploadMailSettle)
 	h.runs[0]()
 	want := mail.Message{
 		To:      "amy@example.com",
@@ -781,14 +1159,37 @@ func TestUploadLinkSummaryMailFollowsTheOwnersLanguage(t *testing.T) {
 	}
 }
 
+// The file browser reads its #path with decodeURIComponent, which turns %2F back into a slash.
+func TestUploadLinkSummaryLinksANestedFolder(t *testing.T) {
+	h := newMailHarness(t)
+	h.mkdir(t, "amy", "Party photos/2025")
+	link := h.mustUploadLink(t, h.amy, "Party photos/2025")
+	h.send(t, link.Name, "a.jpg", "x", "", "")
+	h.advance(uploadMailSettle)
+	h.runs[0]()
+	if sent := h.sender.Sent(); len(sent) != 1 || !strings.Contains(sent[0].Text, testPortalURL+"/#Party%20photos%2F2025\n") || sent[0].Subject != "1 file arrived in 2025" {
+		t.Fatalf("got %+v", sent)
+	}
+}
+
 func TestUploadLinkSummaryNeedsMailAndAConfirmedAddress(t *testing.T) {
 	h := newMailHarness(t)
 	h.mkdir(t, "bob", "inbox")
 	bobs := h.mustUploadLink(t, h.bob, "inbox")
 	h.send(t, bobs.Name, "a.txt", "x", "", "")
+	h.advance(uploadMailSettle)
 	h.runs[0]()
 	if sent := h.sender.Sent(); len(sent) != 0 {
 		t.Fatalf("bob has no confirmed address, got %+v", sent)
+	}
+	if stored, _ := h.shares.Get(bobs.Name); stored.Unreported != 1 || len(h.waits) != 2 || h.waits[1] != uploadMailGap {
+		t.Fatalf("the count waits for the next slot: %+v %v", stored, h.waits)
+	}
+	h.confirm(t, "bob")
+	h.advance(uploadMailGap)
+	h.runLast()
+	if sent := h.sender.Sent(); len(sent) != 1 || sent[0].To != "bob@example.com" || sent[0].Subject != "1 file arrived in inbox" {
+		t.Fatalf("got %+v", sent)
 	}
 
 	quiet := newShareHarness(t)
@@ -796,4 +1197,65 @@ func TestUploadLinkSummaryNeedsMailAndAConfirmedAddress(t *testing.T) {
 	quiet.mkdir(t, "amy", "inbox")
 	link := quiet.mustUploadLink(t, quiet.amy, "inbox")
 	quiet.send(t, link.Name, "a.txt", "x", "", "")
+	quiet.portal.ResumeUploadSummaries()
+}
+
+func TestAFailedSummaryKeepsItsCountForTheNextHour(t *testing.T) {
+	h := newMailHarness(t)
+	h.seed(t)
+	link := h.mustUploadLink(t, h.amy, "docs")
+	h.sender.Err = errors.New("mail service down")
+	h.send(t, link.Name, "a.txt", "x", "", "")
+	h.send(t, link.Name, "b.txt", "x", "", "")
+	h.advance(uploadMailSettle)
+	h.runs[0]()
+	if stored, _ := h.shares.Get(link.Name); stored.Unreported != 2 || !stored.Reported.IsZero() || len(h.waits) != 2 || h.waits[1] != uploadMailGap {
+		t.Fatalf("a failed send keeps the count and tries again in an hour: %+v %v", stored, h.waits)
+	}
+
+	h.sender.Err = nil
+	h.send(t, link.Name, "c.txt", "x", "", "")
+	h.advance(uploadMailGap)
+	h.runLast()
+	h.send(t, link.Name, "d.txt", "x", "", "")
+	h.advance(uploadMailGap)
+	h.runLast()
+	sent := h.sender.Sent()
+	if len(sent) != 2 || sent[0].Subject != "3 files arrived in docs" || sent[1].Subject != "1 file arrived in docs" {
+		t.Fatalf("got %+v", sent)
+	}
+}
+
+func TestARestartNeitherDropsNorRepeatsASummary(t *testing.T) {
+	h := newMailHarness(t)
+	h.seed(t)
+	link := h.mustUploadLink(t, h.amy, "docs")
+	h.send(t, link.Name, "a.txt", "x", "", "")
+	h.send(t, link.Name, "b.txt", "x", "", "")
+
+	h.restart()
+	if len(h.waits) != 2 || h.waits[1] != uploadMailSettle {
+		t.Fatalf("the restarted portal plans the summary it was waiting for: %v", h.waits)
+	}
+	h.advance(uploadMailSettle)
+	h.runLast()
+	if sent := h.sender.Sent(); len(sent) != 1 || sent[0].Subject != "2 files arrived in docs" {
+		t.Fatalf("got %+v", sent)
+	}
+
+	h.send(t, link.Name, "c.txt", "x", "", "")
+	h.restart()
+	if h.waits[len(h.waits)-1] != uploadMailGap {
+		t.Fatalf("after a restart the hour still counts from the last summary: %v", h.waits)
+	}
+	h.advance(uploadMailSettle)
+	h.runLast()
+	if sent := h.sender.Sent(); len(sent) != 1 {
+		t.Fatalf("an early wake-up must not send a second summary within the hour: %+v", sent)
+	}
+	h.advance(uploadMailGap)
+	h.runLast()
+	if sent := h.sender.Sent(); len(sent) != 2 || sent[1].Subject != "1 file arrived in docs" {
+		t.Fatalf("got %+v", sent)
+	}
 }

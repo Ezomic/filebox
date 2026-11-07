@@ -14,10 +14,24 @@ const BUSY_WAIT_MS = 60000;
 const waiting = [];
 let visit = '';
 let sending = false;
-let gone = false;
+let stopped = false;
 let sentCount = 0;
 
-class LinkGone extends Error {}
+class LinkGone extends Error {
+  constructor(reason) {
+    super('link gone');
+    this.reason = reason;
+  }
+}
+
+function randomKey() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+// A link that closed during an upload says so to whoever holds that upload. Anything else gone is just not available.
+function gone(status, body) {
+  return new LinkGone(status === 410 ? i18n.failure(body, 'share.unavailable') : null);
+}
 
 function el(tag, text, className) {
   const node = document.createElement(tag);
@@ -32,10 +46,11 @@ function visitorFailure(body, fallbackKey) {
   return i18n.failure(body, fallbackKey);
 }
 
-function showGone() {
-  gone = true;
+function showGone(reason) {
+  stopped = true;
   card.hidden = true;
-  i18n.msg(statusBox, () => t('share.unavailable'));
+  if (reason) i18n.report(statusBox, reason);
+  else i18n.msg(statusBox, () => t('share.unavailable'));
 }
 
 async function whenNotBusy(task) {
@@ -69,17 +84,18 @@ function showProgress(row, file, sent) {
   i18n.msg(row.state, () => t('receive.progress', { sent: i18n.size(sent), size: i18n.size(file.size) }));
 }
 
-async function startUpload(file) {
-  const payload = { name: file.name, size: file.size, sender: senderInput.value.trim(), visit };
+// The key stays the same for every try of one file, so a start that is sent again finds the upload it already made.
+async function startUpload(file, key) {
+  const payload = { name: file.name, size: file.size, sender: senderInput.value.trim(), visit, key };
   const { status, body } = await whenNotBusy(() => withRetry(() => call('POST', `${linkBase}/uploads`, payload)));
-  if (status === 404) throw new LinkGone();
+  if (status === 404) throw gone(status, body);
   if (status !== 201) throw visitorFailure(body, 'upload.startFailed');
   if (typeof body.visit === 'string' && body.visit !== '') visit = body.visit;
-  return body.id;
+  return { id: body.id, offset: typeof body.offset === 'number' ? body.offset : 0 };
 }
 
-async function sendChunks(file, id, row) {
-  let offset = 0;
+async function sendChunks(file, id, row, start) {
+  let offset = start;
   let stalls = 0;
   while (offset < file.size) {
     const from = offset;
@@ -94,8 +110,8 @@ async function sendChunks(file, id, row) {
       stalls = body.offset === from ? stalls + 1 : 0;
       if (stalls >= 3) throw visitorFailure(body, 'upload.failed');
       offset = body.offset;
-    } else if (status === 404) {
-      throw new LinkGone();
+    } else if (status === 404 || status === 410) {
+      throw gone(status, body);
     } else {
       throw visitorFailure(body, 'upload.failed');
     }
@@ -110,7 +126,7 @@ async function finishUpload(id) {
     try {
       const { status, body } = await whenNotBusy(() => call('POST', `${linkBase}/uploads/${id}/finish`));
       if (status === 204 || (status === 404 && interrupted)) return;
-      if (status === 404) throw new LinkGone();
+      if (status === 404 || status === 410) throw gone(status, body);
       throw visitorFailure(body, 'upload.incomplete');
     } catch (error) {
       if (!(error instanceof NetworkError) || attempt >= MAX_RETRIES) throw error;
@@ -121,11 +137,11 @@ async function finishUpload(id) {
   }
 }
 
-async function sendFile(file, row) {
+async function sendFile(file, key, row) {
   uploadHooks.note = (producer) => i18n.msg(row.state, producer);
   showProgress(row, file, 0);
-  const id = await startUpload(file);
-  await sendChunks(file, id, row);
+  const { id, offset } = await startUpload(file, key);
+  await sendChunks(file, id, row, offset);
   await finishUpload(id);
   row.bar.value = 100;
   i18n.msg(row.state, () => t('receive.sent'));
@@ -135,15 +151,15 @@ async function sendWaiting() {
   if (sending) return;
   sending = true;
   senderInput.disabled = true;
-  while (waiting.length > 0 && !gone) {
-    const { file, row } = waiting.shift();
+  while (waiting.length > 0 && !stopped) {
+    const { file, key, row } = waiting.shift();
     try {
-      await sendFile(file, row);
+      await sendFile(file, key, row);
       sentCount += 1;
       i18n.msg(summary, () => t('receive.done', { count: sentCount }));
     } catch (error) {
       if (error instanceof LinkGone) {
-        showGone();
+        showGone(error.reason);
         break;
       }
       row.state.className = 'error';
@@ -154,8 +170,8 @@ async function sendWaiting() {
 }
 
 function addFiles(files) {
-  if (gone) return;
-  files.forEach((file) => waiting.push({ file, row: fileRow(file) }));
+  if (stopped) return;
+  files.forEach((file) => waiting.push({ file, key: randomKey(), row: fileRow(file) }));
   sendWaiting();
 }
 

@@ -389,6 +389,7 @@
   "error.upload_link_target_invalid": "Choose a folder in your own files.",
   "error.upload_link_cap_invalid": "Choose how much the link can take.",
   "error.upload_link_full": "This link cannot take more files, its size cap is reached.",
+  "error.upload_link_closed": "This link closed while your file was uploading.",
   "error.share_expiry_invalid": "Choose how long the link works.",
   "error.share_not_found": "That link no longer exists.",
   "error.share_save_failed": "Could not save the link.",

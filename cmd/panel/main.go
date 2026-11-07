@@ -90,6 +90,7 @@ func main() {
 	portalDeps.Shares = shares
 	enableEmail(&portalDeps, *dataDir)
 	portal := server.NewPortal(portalDeps)
+	portal.ResumeUploadSummaries()
 
 	deps := server.Deps{
 		Host:       system.NewHost(*disk),
