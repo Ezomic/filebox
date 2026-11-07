@@ -6,6 +6,8 @@ const slugMax = 24;
 let channelsById = new Map();
 let shares = [];
 let suggestedSlug = '';
+// The list is rebuilt every few seconds, so an open delete confirmation is redrawn from this.
+let confirmingDelete = null;
 
 async function api(method, path, payload) {
   const options = { method };
@@ -56,11 +58,13 @@ function channelRow(channel) {
   info.append(el('div', channel.name, 'name'), el('div', `${channel.id} · ${describe(channel)}`, 'detail'));
   const actions = el('td', undefined, 'row-actions');
   row.append(info, el('td', stateText(channel), channel.status.ready || !channel.enabled ? 'detail' : 'detail stale'), actions);
-  showActions(actions, channel);
+  if (channel.id === confirmingDelete) showDeleteConfirm(actions, channel);
+  else showActions(actions, channel);
   return row;
 }
 
 function showActions(cell, channel) {
+  if (confirmingDelete === channel.id) confirmingDelete = null;
   cell.replaceChildren(
     button('Restart', async () => {
       try {
@@ -75,6 +79,7 @@ function showActions(cell, channel) {
 }
 
 function showDeleteConfirm(cell, channel) {
+  confirmingDelete = channel.id;
   const message = el('span', undefined, 'error');
   const links = shares.filter((share) => share.channel === channel.id).length;
   const warning = links === 0 ? '' : ` Its ${links === 1 ? 'share link stops' : `${links} share links stop`} working.`;
@@ -103,6 +108,7 @@ async function load() {
     const channels = await api('GET', '/api/tv/channels');
     showError('');
     channelsById = new Map(channels.map((channel) => [channel.id, channel]));
+    if (!channels.some((channel) => channel.id === confirmingDelete)) confirmingDelete = null;
     rows.replaceChildren(...channels.map(channelRow));
     byId('empty').hidden = channels.length > 0;
     showChannelChoices(channels);
