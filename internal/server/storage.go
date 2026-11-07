@@ -189,16 +189,22 @@ func (s *Server) storage(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, diskView{Used: disk.Used, Total: disk.Total, Free: disk.Free, Percent: percentOf(disk.Used, disk.Total), Level: disk.Level()})
 }
 
-// A full disk refuses new uploads only. Reads, deletes and the trash keep working so space can be freed.
-func (a fileHandlers) refuseWhenFull(w http.ResponseWriter) bool {
-	disk, err := a.space.usage()
+// full reports whether new data must be refused. A disk that cannot be measured is never treated as full.
+func (p *storageProbe) full() bool {
+	disk, err := p.usage()
 	if err != nil {
 		if !errors.Is(err, system.ErrNoDisk) {
-			log.Printf("upload: read disk usage: %v", err)
+			log.Printf("read disk usage: %v", err)
 		}
 		return false
 	}
-	if !disk.Full() {
+
+	return disk.Full()
+}
+
+// A full disk refuses new uploads only. Reads, deletes and the trash keep working so space can be freed.
+func (a fileHandlers) refuseWhenFull(w http.ResponseWriter) bool {
+	if !a.space.full() {
 		return false
 	}
 	writeJSON(w, http.StatusInsufficientStorage, map[string]any{"error": diskFullMessage, "code": codeDiskFull, "diskFull": true})

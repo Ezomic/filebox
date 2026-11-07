@@ -35,9 +35,18 @@
       <p class="error" id="add-error" role="alert"></p>
       <button type="submit">Add user</button>
     </form>
+    <section class="card stacked">
+      <div class="label">Earlier versions (snapshots)</div>
+      <p class="detail" id="snapshot-summary">Loading...</p>
+      <table id="snapshots">
+        <tbody id="snapshot-rows"></tbody>
+      </table>
+      <p class="detail" id="snapshot-held" hidden>The space shown is what only one earlier version keeps. Space that several of them share is not counted, so the real total can be higher.</p>
+    </section>
   </main>
   <script src="/static/diskalert.js"></script>
   <script src="/static/users.js"></script>
+  <script src="/static/snapshots.js"></script>
   <script src="/static/tvlink.js"></script>
 </body>
 </html>

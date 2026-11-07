@@ -77,6 +77,9 @@ const (
 	codeShareExpiryInvalid   = "share_expiry_invalid"
 	codeShareNotFound        = "share_not_found"
 	codeShareSaveFailed      = "share_save_failed"
+	codeVersionsUnavailable  = "versions_unavailable"
+	codeRestoreOverQuota     = "restore_over_quota"
+	codeRestoreDiskFull      = "restore_disk_full"
 )
 
 func writeCoded(w http.ResponseWriter, status int, code, message string) {

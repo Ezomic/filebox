@@ -37,6 +37,7 @@ func main() {
 	portalKey := flag.String("portal-key", "", "PEM private key for the portal")
 	streamboxURL := flag.String("streambox-url", "", "loopback URL of the streambox add-on, empty when it is not installed")
 	streamboxEnv := flag.String("streambox-env", "/etc/streambox/streambox.env", "streambox settings file with its tokens")
+	snapshotStatus := flag.String("snapshot-status", "/var/lib/filebox-snapshot/status", "status file filebox-snapshot writes for the earlier versions")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -73,15 +74,17 @@ func main() {
 	space := system.NewDiskSpace(*disk)
 	thumbs := server.NewThumbs(system.NewThumbnailer())
 	portalDeps := server.PortalDeps{
-		Verifier:   system.NewVerifier(),
-		Users:      users,
-		Roles:      store,
-		OpenFiles:  system.UserFilesOpener(*filesDir),
-		OpenFamily: system.FamilyFilesOpener(*filesDir),
-		MaxUpload:  *maxUpload,
-		Disk:       space,
-		TV:         tv,
-		Thumbs:     thumbs,
+		Verifier:           system.NewVerifier(),
+		Users:              users,
+		Roles:              store,
+		OpenFiles:          system.UserFilesOpener(*filesDir),
+		OpenFamily:         system.FamilyFilesOpener(*filesDir),
+		OpenVersions:       system.UserVersionsOpener(*filesDir),
+		OpenFamilyVersions: system.FamilyVersionsOpener(*filesDir),
+		MaxUpload:          *maxUpload,
+		Disk:               space,
+		TV:                 tv,
+		Thumbs:             thumbs,
 	}
 	shares, err := auth.OpenShares(*dataDir)
 	if err != nil {
@@ -104,6 +107,7 @@ func main() {
 		OnUserChanged: portal.EndSessions,
 		Version:       version,
 		TV:            tv,
+		Snapshots:     func() (system.SnapshotStatus, error) { return system.ReadSnapshotStatus(*snapshotStatus) },
 	}
 	var portalCerts *tlsutil.Reloader
 	if *portalListen != "" {
