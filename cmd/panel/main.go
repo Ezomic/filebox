@@ -131,7 +131,7 @@ func main() {
 
 	stop, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	go system.RunUploadSweeper(stop, *filesDir, 24*time.Hour, time.Now)
+	go system.RunUploadSweeper(stop, *filesDir, time.Hour, time.Now)
 	go system.RunTrashSweeper(stop, *filesDir, 24*time.Hour, time.Now)
 	go system.RunThumbSweeper(stop, *filesDir, 24*time.Hour, time.Now)
 	failed := make(chan error, len(servers))

@@ -20,6 +20,7 @@ type uploadMeta struct {
 	Path      string `json:"path"`
 	Size      int64  `json:"size"`
 	Overwrite bool   `json:"overwrite"`
+	Visitor   bool   `json:"visitor,omitempty"`
 }
 
 // The portal opens a new dirFiles per request, so upload locks are shared per root and id instead of living on the value.
@@ -69,17 +70,25 @@ func (d *dirFiles) partPath(id string) string { return UploadsDir + "/" + id + "
 func (d *dirFiles) metaPath(id string) string { return UploadsDir + "/" + id + ".json" }
 
 func (d *dirFiles) CreateUpload(name string, size int64, overwrite bool) (UploadInfo, error) {
-	name, err := cleanNonRoot(name)
+	return d.createUpload(uploadMeta{Path: name, Size: size, Overwrite: overwrite})
+}
+
+func (d *dirFiles) CreateVisitorUpload(name string, size int64) (UploadInfo, error) {
+	return d.createUpload(uploadMeta{Path: name, Size: size, Visitor: true})
+}
+
+func (d *dirFiles) createUpload(meta uploadMeta) (UploadInfo, error) {
+	name, err := cleanNonRoot(meta.Path)
 	if err != nil {
 		return UploadInfo{}, err
 	}
-	if size < 0 {
+	if meta.Size < 0 {
 		return UploadInfo{}, ErrInvalidPath
 	}
 	if err := d.checkParent(name); err != nil {
 		return UploadInfo{}, err
 	}
-	if err := d.checkWritable(name, overwrite); err != nil {
+	if err := d.checkWritable(name, meta.Overwrite); err != nil {
 		return UploadInfo{}, err
 	}
 	if err := d.root.Mkdir(UploadsDir, 0o775); err != nil && !errors.Is(err, fs.ErrExist) {
@@ -99,13 +108,14 @@ func (d *dirFiles) CreateUpload(name string, size int64, overwrite bool) (Upload
 
 		return UploadInfo{}, err
 	}
-	if err := d.writeMeta(id, uploadMeta{Path: name, Size: size, Overwrite: overwrite}); err != nil {
+	meta.Path = name
+	if err := d.writeMeta(id, meta); err != nil {
 		_ = d.root.Remove(d.partPath(id))
 
 		return UploadInfo{}, quotaError(err)
 	}
 
-	return UploadInfo{ID: id, Path: name, Size: size, Overwrite: overwrite}, nil
+	return UploadInfo{ID: id, Path: name, Size: meta.Size, Overwrite: meta.Overwrite, Visitor: meta.Visitor}, nil
 }
 
 func (d *dirFiles) writeMeta(id string, meta uploadMeta) error {
@@ -139,7 +149,7 @@ func (d *dirFiles) loadUpload(id string) (UploadInfo, error) {
 		return UploadInfo{}, notFoundOr(err)
 	}
 
-	return UploadInfo{ID: id, Path: meta.Path, Size: meta.Size, Offset: stat.Size(), Overwrite: meta.Overwrite}, nil
+	return UploadInfo{ID: id, Path: meta.Path, Size: meta.Size, Offset: stat.Size(), Overwrite: meta.Overwrite, Visitor: meta.Visitor}, nil
 }
 
 func notFoundOr(err error) error {
@@ -251,6 +261,19 @@ func (d *dirFiles) syncPart(id string) error {
 var uploadFilePattern = regexp.MustCompile(`^([0-9a-f]{32})\.(part|json)$`)
 
 func (d *dirFiles) SweepUploads(cutoff time.Time) (int, error) {
+	return d.sweepUploads(cutoff, func(string) bool { return true })
+}
+
+func (d *dirFiles) SweepVisitorUploads(cutoff time.Time) (int, error) {
+	return d.sweepUploads(cutoff, func(id string) bool {
+		var meta uploadMeta
+		data, err := d.root.ReadFile(d.metaPath(id))
+
+		return err == nil && json.Unmarshal(data, &meta) == nil && meta.Visitor
+	})
+}
+
+func (d *dirFiles) sweepUploads(cutoff time.Time, sweepable func(id string) bool) (int, error) {
 	dir, err := d.root.Open(UploadsDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
@@ -282,7 +305,7 @@ func (d *dirFiles) SweepUploads(cutoff time.Time) (int, error) {
 			continue
 		}
 		unlock := lockUpload(d.root.Name() + "\x00" + id)
-		if stat, err := d.root.Stat(d.partPath(id)); err == nil && !stat.ModTime().Before(cutoff) {
+		if stat, err := d.root.Stat(d.partPath(id)); (err == nil && !stat.ModTime().Before(cutoff)) || !sweepable(id) {
 			unlock()
 			continue
 		}

@@ -58,7 +58,22 @@ func sweepRoot(root string, sweep func(Files) (int, error)) (int, error) {
 
 // RunUploadSweeper sweeps once straight away and then every interval until ctx ends.
 func RunUploadSweeper(ctx context.Context, base string, interval time.Duration, now func() time.Time) {
-	runSweeper(ctx, interval, "partial uploads", func() (int, error) { return SweepAllUploads(base, now(), UploadMaxAge) })
+	runSweeper(ctx, interval, "partial uploads", func() (int, error) {
+		at := now()
+		swept, err := SweepAllUploads(base, at, UploadMaxAge)
+		visitors, visitorErr := SweepAllVisitorUploads(base, at)
+
+		return swept + visitors, errors.Join(err, visitorErr)
+	})
+}
+
+// VisitorUploadMaxAge is how long an unfinished upload through an upload link may sit idle.
+const VisitorUploadMaxAge = 24 * time.Hour
+
+func SweepAllVisitorUploads(base string, now time.Time) (int, error) {
+	cutoff := now.Add(-VisitorUploadMaxAge)
+
+	return sweepEveryRoot(base, func(files Files) (int, error) { return files.SweepVisitorUploads(cutoff) })
 }
 
 func runSweeper(ctx context.Context, interval time.Duration, what string, sweep func() (int, error)) {

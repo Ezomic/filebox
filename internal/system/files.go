@@ -50,6 +50,7 @@ type UploadInfo struct {
 	Size      int64
 	Offset    int64
 	Overwrite bool
+	Visitor   bool
 }
 
 type File interface {
@@ -76,6 +77,10 @@ type Files interface {
 	FinishUpload(id string) error
 	// SweepUploads deletes partial uploads that were last written before cutoff and reports how many.
 	SweepUploads(cutoff time.Time) (int, error)
+	// CreateVisitorUpload starts an upload for someone without an account. It never overwrites, and
+	// SweepVisitorUploads deletes it much sooner than SweepUploads would, since nobody comes back to resume it.
+	CreateVisitorUpload(path string, size int64) (UploadInfo, error)
+	SweepVisitorUploads(cutoff time.Time) (int, error)
 
 	// Trash moves a file or a whole folder into the hidden trash as one item. Nothing is copied or followed.
 	Trash(path string) (TrashItem, error)
