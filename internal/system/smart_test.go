@@ -29,6 +29,27 @@ func TestParseSmartLines(t *testing.T) {
 	}
 }
 
+func TestParseSmartLinesReadsTheSerialAndReallocatedSectors(t *testing.T) {
+	line := `{"device":{"name":"/dev/sda"},"serial_number":"WD-WCAYUJ123456","smart_status":{"passed":true},` +
+		`"ata_smart_attributes":{"table":[{"id":1,"raw":{"value":7}},{"id":5,"raw":{"value":12}},{"id":197,"raw":{"value":3}}]}}
+{"device":{"name":"/dev/nvme0"},"serial_number":"S4EVNF0M","smart_status":{"passed":true},"nvme_smart_health_information_log":{"media_errors":0}}
+{"device":{"name":"/dev/sdb"},"ata_smart_attributes":{"table":[{"id":5,"raw":{"value":-1}}]}}
+`
+	disks := parseSmartLines(line)
+	if len(disks) != 3 {
+		t.Fatalf("got %+v", disks)
+	}
+	if disks[0].Serial != "WD-WCAYUJ123456" || disks[0].Reallocated == nil || *disks[0].Reallocated != 12 {
+		t.Fatalf("sda: %+v", disks[0])
+	}
+	if disks[1].Serial != "S4EVNF0M" || disks[1].Reallocated != nil {
+		t.Fatalf("an NVMe disk has no reallocated sector count: %+v", disks[1])
+	}
+	if disks[2].Reallocated != nil {
+		t.Fatalf("a nonsense count is no count: %+v", disks[2])
+	}
+}
+
 func TestParseSmartLinesEmptyIsNotNil(t *testing.T) {
 	if disks := parseSmartLines(""); disks == nil || len(disks) != 0 {
 		t.Fatalf("got %#v", disks)
