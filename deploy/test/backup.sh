@@ -456,6 +456,11 @@ for bad in "path $T/etc/passwd" "path $BASE/amy/files/../../cleo/files" "path $B
 done >"$T/accepted"
 check "paths outside the backup, bad names, IDs and folders are refused" '[ ! -s "$T/accepted" ]'
 
+echo "--- starting over with a new destination"
+/bin/rm "$SECRETS/env"
+out=$(printf '2\n%s\n' "$T/usb-disk/backup" | "$TOOL" setup 2>&1)
+check "the new repository starts without the old one's results" '[ -f "$T/usb-disk/backup/config" ] && status_has "^destination local -$" && ! status_has "^(run|latest|size|check) "'
+
 echo "--- arguments"
 check "an unknown command is refused" '! "$TOOL" prune >/dev/null 2>&1 && ! "$RESTORE" everything >/dev/null 2>&1'
 check "extra arguments are refused" '! "$TOOL" run now >/dev/null 2>&1'

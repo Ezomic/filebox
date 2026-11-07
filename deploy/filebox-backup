@@ -648,7 +648,7 @@ cmd_setup() {
 		die "could not create the repository. If that folder already holds a backup, choose another one; to restore from it, see Offsite backup in the filebox guide."
 	fi
 	write_settings
-	load_previous
+	# A new repository: nothing an earlier destination reported counts for it.
 	STATE=on
 	write_status
 	cat <<TEXT
