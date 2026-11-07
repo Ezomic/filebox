@@ -28,6 +28,7 @@ readonly LOCK=/run/filebox-backup.lock
 readonly USER_TOOL=/usr/local/sbin/filebox-user
 readonly HOST_NS=/proc/1/ns/mnt
 readonly OWN_NS=/proc/self/ns/mnt
+readonly ROOT_FS=/
 readonly DATA=$RUN_DIR/data
 readonly STATUS=$STATE_DIR/status
 readonly SETTINGS=$SECRETS/env
@@ -45,13 +46,17 @@ readonly FRESH=86400
 readonly CHECK_EVERY=2592000
 readonly CHECK_TIME=3600
 readonly CHECK_SUBSET=5%
+readonly MEASURE_EVERY=604800
 readonly STORAGE_BOX_PORT=23
 
 STATE=on
+SETUP=""
 RUN=""
 LATEST=""
 SIZE=""
 CHECK=""
+CHECK_ERRORS=""
+UNREADABLE=""
 RESULT=""
 ADDED=-
 STARTED=0
@@ -100,7 +105,8 @@ load_settings() {
 	[ -n "${RESTIC_REPOSITORY:-}" ] && [ -f "$PASSWORD_FILE" ]
 }
 
-# sftp:user@host:path, or sftp://user@host:port/path. Sets SFTP_USER, SFTP_HOST and SFTP_PORT.
+# sftp:user@host:path, or sftp://user@host:port/path. Sets SFTP_USER, SFTP_HOST and SFTP_PORT. The user is required,
+# or ssh would log in as root, and neither may start with a dash, which ssh would read as an option.
 parse_sftp() {
 	local rest=${1#sftp:} authority url=0
 	SFTP_USER="" SFTP_PORT=22
@@ -121,18 +127,13 @@ parse_sftp() {
 	fi
 	SFTP_HOST=${SFTP_HOST#[}
 	SFTP_HOST=${SFTP_HOST%]}
-	[[ $SFTP_HOST =~ ^[A-Za-z0-9.:-]+$ && $SFTP_PORT =~ ^[0-9]{1,5}$ ]] || return 1
-	[ -z "$SFTP_USER" ] || [[ $SFTP_USER =~ ^[A-Za-z0-9._-]+$ ]]
+	[[ $SFTP_HOST =~ ^[A-Za-z0-9:][A-Za-z0-9.:-]*$ && $SFTP_PORT =~ ^[0-9]{1,5}$ && $SFTP_USER =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]
 }
 
 # restic runs this instead of its own ssh call, so the box's ssh settings, agent and known hosts play no part.
 sftp_command() {
 	local command="ssh -F none -i $SSH_KEY -o IdentitiesOnly=yes -o UserKnownHostsFile=$KNOWN_HOSTS -o StrictHostKeyChecking=yes"
-	command+=" -o BatchMode=yes -o ServerAliveInterval=60 -p $SFTP_PORT"
-	if [ -n "$SFTP_USER" ]; then
-		command+=" -l $SFTP_USER"
-	fi
-	echo "$command $SFTP_HOST -s sftp"
+	echo "$command -o BatchMode=yes -o ServerAliveInterval=60 -p $SFTP_PORT -l $SFTP_USER $SFTP_HOST -s sftp"
 }
 
 # restic keeps its index in memory; a low GOGC trades some CPU for less memory on an old PC. The cache and restic's
@@ -142,12 +143,30 @@ prepare_restic() {
 	export RESTIC_PASSWORD_FILE=$PASSWORD_FILE RESTIC_CACHE_DIR=$CACHE TMPDIR=$CACHE/tmp GOGC=20
 	RESTIC_OPTS=()
 	if [[ $RESTIC_REPOSITORY == sftp:* ]]; then
-		parse_sftp "$RESTIC_REPOSITORY" || die "could not read the user, host and port from the repository URL"
+		parse_sftp "$RESTIC_REPOSITORY" || die "the repository URL needs a user and a host, such as sftp://user@host:23/filebox"
 		RESTIC_OPTS=(-o "sftp.command=$(sftp_command)")
 	fi
 }
 
-# What the panel may show of the destination: the kind of storage and its host name, never a user, path or key.
+# The device of a path that may not exist yet: that of its nearest existing parent.
+device_of() {
+	local path=$1
+	while [ ! -e "$path" ]; do
+		path=$(dirname "$path")
+	done
+	stat -c %d -- "$path"
+}
+
+# A repository in a local folder must be on a disk of its own. On the system or data disk it is no backup at all, and
+# when its own disk is not mounted, the folder would fill the system disk instead.
+separate_disk() {
+	local device
+	device=$(device_of "$1")
+	[ "$device" != "$(device_of "$ROOT_FS")" ] && [ "$device" != "$(device_of "$BASE")" ]
+}
+
+# What the panel may show of the destination: the kind of storage and its host name, never a user, path or key. The
+# user part ends at the last @, since a password may hold a / of its own, and only a plain host name gets through.
 destination() {
 	local repository=$RESTIC_REPOSITORY kind=${RESTIC_REPOSITORY%%:*} host=-
 	case $repository in
@@ -159,15 +178,17 @@ destination() {
 	rest:* | s3:*)
 		host=${repository#*:}
 		host=${host#*://}
-		host=${host%%/*}
 		host=${host##*@}
-		host=${host%:[0-9]*}
+		host=${host%%/*}
+		if [[ $host =~ ^(.*):[0-9]+$ ]]; then
+			host=${BASH_REMATCH[1]}
+		fi
 		;;
 	/*) kind=local ;;
 	b2:* | azure:* | gs:* | swift:* | rclone:*) ;;
 	*) kind=other ;;
 	esac
-	if ! [[ $host =~ ^[A-Za-z0-9.:_-]{1,253}$ ]]; then
+	if ! [[ $host =~ ^[A-Za-z0-9.-]{1,253}$ ]]; then
 		host=-
 	fi
 	echo "$kind $host"
@@ -180,8 +201,14 @@ status_lines() {
 	if [ "$STATE" = on ]; then
 		echo "destination $(destination)"
 	fi
+	if [ -n "$SETUP" ]; then
+		echo "setup $SETUP"
+	fi
 	if [ -n "$RUN" ]; then
 		echo "run $RUN"
+	fi
+	if [ -n "$UNREADABLE" ]; then
+		echo "unreadable $UNREADABLE"
 	fi
 	if [ -n "$LATEST" ]; then
 		echo "latest $LATEST"
@@ -191,6 +218,9 @@ status_lines() {
 	fi
 	if [ -n "$CHECK" ]; then
 		echo "check $CHECK"
+	fi
+	if [ -n "$CHECK_ERRORS" ]; then
+		echo "checkerror $CHECK_ERRORS"
 	fi
 }
 
@@ -206,12 +236,21 @@ write_status() {
 	fi
 }
 
-# What earlier runs found: the last run, the newest backup, the repository size and the last monthly check.
+# What earlier runs found: when setup ran, the last run, the nights in a row with unreadable files, the newest backup,
+# the repository size, the last monthly check and the nights in a row it could not run.
 load_previous() {
 	local kind a b c d
 	[ -f "$STATUS" ] || return 0
 	while read -r kind a b c d _; do
 		case $kind in
+		setup)
+			if [[ $a =~ ^[0-9]+$ ]]; then SETUP=$a; fi
+			;;
+		unreadable | checkerror)
+			if [[ $a =~ ^[0-9]+$ && $b =~ ^[1-9][0-9]*$ ]]; then
+				if [ "$kind" = unreadable ]; then UNREADABLE="$a $b"; else CHECK_ERRORS="$a $b"; fi
+			fi
+			;;
 		run)
 			if [[ $a =~ ^[0-9]+$ && $b =~ ^[0-9]+$ && $c =~ ^(ok|stopped|incomplete|backup_failed|prune_failed|prepare_failed)$ &&
 				$d =~ ^([0-9]+|-)$ ]]; then
@@ -252,6 +291,10 @@ fresh_snapshot() {
 	echo "$DATA/.snapshots/$scope/$newest"
 }
 
+# filebox-user create always makes the files folder and setup.sh the family folder, so a folder with neither an earlier
+# version nor a live folder is something wrong, and returns 1. Mounting a snapshot does not get in the way of deleting
+# old ones: only each folder's newest is mounted, the daily prune at 00:30 is over before this run starts, and the
+# hourly prune on a full disk keeps every folder's newest 7.
 view_folder() {
 	local scope=$1 live=$2 target=$3 source
 	if source=$(fresh_snapshot "$scope"); then
@@ -260,18 +303,20 @@ view_folder() {
 		source=$live
 		FROM_LIVE=$((FROM_LIVE + 1))
 	else
-		log "$scope has no files folder, so it is not in tonight's backup"
-		return 0
+		log "$scope has neither an earlier version from tonight nor a files folder"
+		return 1
 	fi
-	mkdir -p "$target"
-	mount --bind -o ro "$source" "$target"
+	mkdir -p "$target" || die "could not prepare the folder to read for $scope"
+	mount --bind -o ro "$source" "$target" || die "could not mount the folder of $scope"
 }
 
 # In this run's own mount namespace /srv/sftp becomes an empty tmpfs, with each folder to back up mounted read-only at
 # its usual place. restic finds its previous backup by path, so with the same paths every night it only reads the files
 # that changed, whether tonight's copy comes from a snapshot or the live folder. Nothing outside this run sees the mounts.
+# A backup without some folders would still count as complete, and the old backups that hold those folders would expire
+# one by one. So a missing folder, or no accounts at all, fails the run instead.
 prepare_view() {
-	local list name
+	local list name missing=0
 	local -a users=()
 	private_namespace || die "refusing to mount anything outside a private mount namespace"
 	if ! list=$("$USER_TOOL" list); then
@@ -283,17 +328,28 @@ prepare_view() {
 			users+=("$name")
 		fi
 	done
+	if [ ${#users[@]} -eq 0 ]; then
+		log "the account list is empty"
+		return 1
+	fi
+	if [[ $RESTIC_REPOSITORY == /* ]] && ! separate_disk "$RESTIC_REPOSITORY"; then
+		log "the repository folder is on the system or data disk, so it is not a backup; mount its own disk there"
+		return 1
+	fi
 	mount --make-rprivate /
 	install -d -m 0700 "$RUN_DIR" "$DATA"
 	mount --bind "$BASE" "$DATA"
 	mount -t tmpfs -o mode=0755,size=16m filebox-backup "$BASE"
 	# The homes in the tmpfs get the mode of the real ones, as the backup records them.
 	umask 022
-	view_folder "$FAMILY" "$DATA/$FAMILY" "$BASE/$FAMILY"
+	view_folder "$FAMILY" "$DATA/$FAMILY" "$BASE/$FAMILY" || missing=1
 	for name in "${users[@]}"; do
-		view_folder "$name" "$DATA/$name/files" "$BASE/$name/files"
+		view_folder "$name" "$DATA/$name/files" "$BASE/$name/files" || missing=1
 	done
 	umask 077
+	if [ "$missing" -eq 1 ]; then
+		return 1
+	fi
 	log "reading $FROM_SNAPSHOTS folders from tonight's earlier versions and $FROM_LIVE from the live folders"
 }
 
@@ -315,6 +371,17 @@ timed() {
 # timeout kills itself along with restic when it has to use SIGKILL, so that ends in 137 instead of 124.
 out_of_time() {
 	[ "$1" -eq 124 ] || { [ "$1" -eq 137 ] && [ "$(left)" -le 0 ]; }
+}
+
+# One more night in a row, as "<first night> <nights>".
+streak() {
+	local since count
+	if [ -z "$1" ]; then
+		echo "$STARTED 1"
+	else
+		read -r since count <<<"$1"
+		echo "$since $((count + 1))"
+	fi
 }
 
 # restic unlock only removes stale locks: older than 30 minutes, or left by a process on this host that is gone.
@@ -341,6 +408,13 @@ back_up() {
 		RESULT=incomplete
 	else
 		RESULT=backup_failed
+	fi
+	# A file that changes or goes away while it is read can cause this once, so the alert waits for nights in a row. A
+	# night that made no backup says nothing either way.
+	if [ "$RESULT" = incomplete ]; then
+		UNREADABLE=$(streak "$UNREADABLE")
+	elif [ "$RESULT" = ok ]; then
+		UNREADABLE=""
 	fi
 	if [ "$RESULT" = ok ] || [ "$RESULT" = incomplete ]; then
 		ADDED=$(grep '"message_type":"summary"' "$out" | tail -n 1 | jq -r '.data_added' 2>/dev/null) || true
@@ -387,6 +461,13 @@ refresh_latest() {
 	fi
 }
 
+# Measuring walks through every backup kept, so it runs once a week, and on the first complete backup of a destination.
+measure_due() {
+	[ "$PRUNED" -eq 1 ] || return 1
+	[ -n "$SIZE" ] || return 0
+	(($(date +%s) - ${SIZE%% *} >= MEASURE_EVERY))
+}
+
 measure() {
 	local out bytes
 	[ "$(left)" -gt 0 ] || return 0
@@ -400,28 +481,43 @@ measure() {
 	fi
 }
 
-# Monthly once there is a complete backup, and again the next night after a failed check, when an hour of the window is
-# left. A night without the destination fails the backup already; it says nothing about the stored data.
+# Monthly once there is a complete backup, and again the next night after a check that failed or could not run, when an
+# hour of the window is left. A night without the destination fails the backup already; it says nothing about the data.
 check_due() {
 	local at result
 	[ -n "$LATEST" ] && [ "$RESULT" != backup_failed ] && [ "$RESULT" != prepare_failed ] || return 1
 	[ "$(left)" -ge "$CHECK_TIME" ] || return 1
-	[ -n "$CHECK" ] || return 0
+	[ -z "$CHECK_ERRORS" ] && [ -n "$CHECK" ] || return 0
 	read -r at result <<<"$CHECK"
 	[ "$result" = failed ] || (($(date +%s) - at >= CHECK_EVERY))
 }
 
+# restic ends with "repository contains errors" when it found damaged or missing data, but also when it could not
+# download a pack or lost the connection on the way. Only a check that got the data it asked for, of a repository that
+# can still be reached right after, counts as finding damage.
+damaged() {
+	grep -q "repository contains errors" "$1" || return 1
+	! grep -qiE "failed to download|connection|ssh: |broken pipe|timed out|timeout|no route to host" "$1" || return 1
+	timed cat config >/dev/null 2>&1
+}
+
 check_repository() {
-	local code=0
+	local out code=0
+	out=$(mktemp)
 	log "reading $CHECK_SUBSET of the stored data back"
-	timed check --read-data-subset "$CHECK_SUBSET" || code=$?
+	timed check --read-data-subset "$CHECK_SUBSET" >"$out" 2>&1 || code=$?
+	cat "$out" >&2
 	if [ "$code" -eq 0 ]; then
-		CHECK="$(date +%s) ok"
+		CHECK="$(date +%s) ok" CHECK_ERRORS=""
 	elif out_of_time "$code"; then
 		log "the check did not finish tonight; the next run tries again"
+	elif damaged "$out"; then
+		CHECK="$(date +%s) failed" CHECK_ERRORS=""
 	else
-		CHECK="$(date +%s) failed"
+		CHECK_ERRORS=$(streak "$CHECK_ERRORS")
+		log "the check could not run to the end, which says nothing about the data; the next run tries again"
 	fi
+	rm -f "$out"
 }
 
 # Every way out of a run reports it, so the panel never keeps showing an earlier night.
@@ -476,7 +572,7 @@ cmd_run() {
 		prune
 	fi
 	refresh_latest
-	if [ "$PRUNED" -eq 1 ]; then
+	if measure_due; then
 		measure
 	fi
 	if check_due; then
@@ -538,7 +634,11 @@ ask_repository() {
 		ask_secret "B2_ACCOUNT_KEY"
 		setting B2_ACCOUNT_KEY "$ANSWER"
 		;;
-	sftp:* | rest:* | /*) ;;
+	/*)
+		separate_disk "$REPOSITORY" ||
+			die "$REPOSITORY is on the system or data disk, so it would be no backup. Use a folder on a disk of its own."
+		;;
+	sftp:* | rest:*) ;;
 	*)
 		echo "Enter the settings restic needs for it, one NAME=value per line, and an empty line to finish."
 		while ask "Setting" && [ -n "$ANSWER" ]; do
@@ -554,7 +654,8 @@ ask_destination() {
 	cat <<'TEXT'
 Where should the backup go?
   1) A Hetzner Storage Box
-  2) Another restic repository: a URL such as sftp:, s3:, b2: or rest:, or a local folder
+  2) Another restic repository: a URL such as sftp:, s3:, b2: or rest:, or a folder on a disk of its own
+     (not on the system or data disk: that would be no backup)
 TEXT
 	ask "Choose 1 or 2" 1
 	case $ANSWER in
@@ -600,7 +701,7 @@ add_ssh_key() {
 }
 
 prepare_ssh() {
-	parse_sftp "$REPOSITORY" || die "could not read the user, host and port from $REPOSITORY"
+	parse_sftp "$REPOSITORY" || die "the repository URL needs a user and a host, such as sftp://user@host:23/filebox"
 	if [ ! -f "$SSH_KEY" ]; then
 		ssh-keygen -q -t ed25519 -N '' -C "filebox-backup@$(hostname)" -f "$SSH_KEY" || die "could not create the SSH key"
 	fi
@@ -648,8 +749,10 @@ cmd_setup() {
 		die "could not create the repository. If that folder already holds a backup, choose another one; to restore from it, see Offsite backup in the filebox guide."
 	fi
 	write_settings
-	# A new repository: nothing an earlier destination reported counts for it.
+	# A new repository: nothing an earlier destination reported counts for it. The time of setup starts the 14 days the
+	# first backup may take.
 	STATE=on
+	SETUP=$(date +%s)
 	write_status
 	cat <<TEXT
 

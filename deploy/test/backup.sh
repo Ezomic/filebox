@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Runs deploy/filebox-backup and deploy/filebox-restore in a sandbox: the real shell logic, with restic, mount, unshare,
-# ssh and the ownership commands stubbed. The restic stub keeps its "repository" as plain folders: a backup copies what
-# the recorded mounts make visible at each path and drops whatever the --exclude patterns match, a restore copies back.
-# So this tests what the helpers ask restic to do and which files that puts in a backup; restic itself is not run.
+# ssh, stat and the ownership commands stubbed. restic itself is never run. Its stub keeps a "repository" of plain
+# folders: a backup copies what the recorded mounts make visible and drops what the --exclude patterns match, read with
+# this stub's own simple reading of them (a leading / anchors, * stays within one path part), and a restore copies one
+# path back. So this tests what the helpers ask restic to do and what they make of its answers. Whether the real restic
+# reads the patterns, locks, includes and exit codes the same way is not tested here.
 # Run from anywhere: deploy/test/backup.sh (needs jq, like the box).
 set -uo pipefail
 
@@ -82,6 +84,13 @@ case "$*" in
 esac'
 stub filebox-user '[ ! -e @STATE@/list_fail ] && [ "$1" = list ] && cat @STATE@/users'
 mv "$T/stubs/filebox-user" "$T/usr/local/sbin/filebox-user"
+# The usb-disk folder is a disk of its own, until the flag file says it is not mounted.
+stub stat '
+if [ "$1 $2" = "-c %d" ] && [[ ${*: -1} == @T@/usb-disk* ]] && [ ! -e @STATE@/usb_unmounted ]; then
+	echo 4242
+	exit 0
+fi
+exec /usr/bin/stat "$@"'
 stub ssh-keygen '
 echo "ssh-keygen $*" >>@T@/calls.log
 case $1 in
@@ -215,27 +224,44 @@ snapshots)
 stats)
 	echo '{"total_size":'"$(du -sb "$repo" | cut -f1)"',"snapshots_count":1}'
 	;;
+cat)
+	[ "$1" = config ] || fail "unexpected restic cat $1"
+	[ ! -e "$STATE/unreachable" ] || fail "unable to open repository: ssh: connect to host: no route to host"
+	cat "$repo/config"
+	;;
 check)
-	[ ! -e "$STATE/check_fail" ] || fail "pack 1234abcd: not referenced in any index"
+	if [ -e "$STATE/check_damaged" ]; then
+		echo "Pack ID does not match, want 1234abcd, got 9876fedc"
+		fail "repository contains errors"
+	fi
+	if [ -e "$STATE/check_cut" ]; then
+		echo "pack 1234abcd failed to download: ssh: connection lost"
+		fail "repository contains errors"
+	fi
 	echo "no errors were found"
 	;;
 restore)
 	id=$1
 	shift
+	includes=()
 	while [ $# -gt 0 ]; do
 		case $1 in
 		--host) shift 2 ;;
 		--target) target=$2 && shift 2 ;;
-		--include) include=$(printf '%s' "$2" | sed 's/\\\(.\)/\1/g') && shift 2 ;;
+		--include) includes+=("$(printf '%s' "$2" | sed 's/\\\(.\)/\1/g')") && shift 2 ;;
 		*) fail "unknown flag $1" ;;
 		esac
 	done
+	printf '%s\n' "${includes[@]}" >"$T/restore.includes"
 	if [ "$id" = latest ]; then id=$(newest); fi
 	[ -d "$repo/snapshots/$id" ] || fail "no matching ID found for prefix $id"
-	if [ -e "$repo/snapshots/$id/tree$include" ]; then
-		mkdir -p "$target$(dirname "$include")"
-		cp -a "$repo/snapshots/$id/tree$include" "$target$include"
-	fi
+	for include in "${includes[@]}"; do
+		include=${include%/\*\*}
+		if [ -e "$repo/snapshots/$id/tree$include" ] && [ ! -e "$target$include" ]; then
+			mkdir -p "$target$(dirname "$include")"
+			cp -a "$repo/snapshots/$id/tree$include" "$target$include"
+		fi
+	done
 	;;
 *) fail "unexpected restic $command" ;;
 esac
@@ -263,7 +289,7 @@ called() { grep -q -- "$1" "$T/restic.log"; }
 
 TONIGHT=$(date -d '-30 minutes' +%Y-%m-%dT%H%M)
 OLDER=$(date -d '-3 days' +%Y-%m-%dT%H%M)
-printf 'amy\nbob\ncleo\neve\n' >"$STATE/users"
+printf 'amy\nbob\ncleo\n' >"$STATE/users"
 mkdir -p "$BASE/amy/files/docs" "$BASE/amy/files/.trash" "$SNAP/amy/$OLDER/docs" "$SNAP/amy/$TONIGHT/docs"
 echo "written after midnight" >"$BASE/amy/files/docs/new.txt"
 echo older >"$SNAP/amy/$OLDER/docs/report.txt"
@@ -303,7 +329,23 @@ out=$(printf '2\ns3:https://s3.example.com/family-bucket\nAKIAEXAMPLE\nsecret-va
 check "it creates the repository" '[[ $out == *"The backup is set up"* ]] && grep -q "^RESTIC_REPOSITORY=s3:https://s3.example.com/family-bucket$" "$SECRETS/env"'
 check "the keys are kept for the nightly runs and given to restic" 'grep -qx "AWS_ACCESS_KEY_ID=AKIAEXAMPLE" "$SECRETS/env" && grep -qx "AWS_SECRET_ACCESS_KEY=secret-value" "$SECRETS/env" && grep -qx "AWS_SECRET_ACCESS_KEY=secret-value" "$T/restic.env"'
 check "the status names the host only" 'status_has "^destination s3 s3.example.com$" && ! grep -q "family-bucket\|AKIA\|secret" "$STATUS"'
+check "the time of setup is recorded" 'status_has "^setup [0-9]+$"'
 /bin/rm -f "$SECRETS/env" "$SECRETS/password"
+
+echo "--- a password with a slash in a REST URL never reaches the panel"
+out=$(printf '2\nrest:https://family:pa/ss@backup.example.com:8000/box\n' | "$TOOL" setup 2>&1)
+check "only the host is shown" 'status_has "^destination rest backup.example.com$" && ! grep -q "pa/ss\|family:\|:pa\|ss@" "$STATUS"'
+/bin/rm -f "$SECRETS/env" "$SECRETS/password"
+
+echo "--- SFTP URLs without a user, or with a host that looks like an option, are refused"
+for url in "sftp:backup.example.com:/filebox" "sftp://backup.example.com:23/filebox" "sftp://u1@-oProxyCommand=evil:23/x" "sftp://-V@host/x"; do
+	out=$(printf '2\n%s\n' "$url" | "$TOOL" setup 2>&1) && echo "accepted: $url"
+done >"$T/accepted"
+check "none of them is set up" '[ ! -s "$T/accepted" ] && [ ! -e "$SECRETS/env" ] && ! grep -q -- "-oProxyCommand\|-V" "$T/calls.log"'
+
+echo "--- a local folder on the system or data disk is refused"
+out=$(printf '2\n%s\n' "$T/var/backups/restic" | "$TOOL" setup 2>&1)
+check "it says why and creates nothing" '[[ $out == *"system or data disk"* ]] && [ ! -e "$SECRETS/env" ] && [ ! -e "$T/var/backups/restic" ]'
 
 echo "--- setup that cannot create the repository"
 touch "$STATE/init_fail"
@@ -353,7 +395,7 @@ bind $BASE $T/run/filebox-backup/data
 tmpfs $BASE" ]'
 check "amy and the family folder are read from tonight's earlier versions" 'grep -qx "bind-ro $T/run/filebox-backup/data/.snapshots/amy/$TONIGHT $BASE/amy/files" "$STATE/mounts" && grep -qx "bind-ro $T/run/filebox-backup/data/.snapshots/_family/$TONIGHT $BASE/_family" "$STATE/mounts"'
 check "bob has no earlier versions and cleo only a stale one, so their live folders are read" 'grep -qx "bind-ro $T/run/filebox-backup/data/bob/files $BASE/bob/files" "$STATE/mounts" && grep -qx "bind-ro $T/run/filebox-backup/data/cleo/files $BASE/cleo/files" "$STATE/mounts"'
-check "deleted accounts and folders of no account are not mounted" '! grep -q "dave\|zed" "$STATE/mounts" && [[ $out == *"eve has no files folder"* ]]'
+check "deleted accounts and folders of no account are not mounted" '! grep -q "dave\|zed" "$STATE/mounts"'
 check "the backup always names the same three paths" 'grep -q "restic backup --quiet --json --host filebox .* $T/etc/filebox $BASE $T/var/lib/filebox$" "$T/restic.log"'
 
 echo "--- a run whose restic ignores the stop is killed, and the next night clears its lock"
@@ -378,25 +420,66 @@ check "archived homes, earlier versions and stray folders are not" '! in_backup 
 check "the panel data and /etc/filebox are in, the backup secrets are not" 'in_backup "$T/var/lib/filebox/roles.json" && in_backup "$T/etc/filebox/addons" && ! in_backup "$SECRETS"'
 check "restic got the stable paths over SFTP with its own key" 'grep -q "sftp.command=ssh -F none -i $SECRETS/ssh_key" "$T/restic.options"'
 
-echo "--- the next night does not check again"
-out=$(run_backup)
-check "no check a day after the last one" 'status_has "^run [0-9]+ [0-9]+ ok [0-9]+$" && ! called check && status_has "^check [0-9]+ ok$"'
+month_old_check() { sed -i "s/^check [0-9]* \(ok\|failed\)$/check $(($(date +%s) - 31 * 86400)) \1/" "$STATUS"; }
 
-echo "--- the monthly check"
-sed -i "s/^check [0-9]* ok$/check $(($(date +%s) - 31 * 86400)) ok/" "$STATUS"
-touch "$STATE/check_fail"
+echo "--- the next night neither checks nor measures again"
 out=$(run_backup)
-/bin/rm "$STATE/check_fail"
-check "a month later it runs, and a failure is recorded" 'called check && status_has "^check [0-9]+ failed$" && status_has "^run [0-9]+ [0-9]+ ok [0-9]+$"'
+check "no check and no size a day after the last ones" 'status_has "^run [0-9]+ [0-9]+ ok [0-9]+$" && ! called check && ! called stats && status_has "^check [0-9]+ ok$"'
+
+echo "--- the size is measured once a week"
+sed -i "s/^size [0-9]* \([0-9]*\)$/size $(($(date +%s) - 8 * 86400)) \1/" "$STATUS"
+measured=$(grep "^size " "$STATUS")
+out=$(run_backup)
+check "a week later it is measured again" 'called "stats --mode raw-data --json" && status_has "^size [0-9]+ [0-9]+$" && ! grep -qx "$measured" "$STATUS"'
+
+echo "--- the monthly check finds damage"
+month_old_check
+touch "$STATE/check_damaged"
+out=$(run_backup)
+/bin/rm "$STATE/check_damaged"
+check "a month later it runs, and the damage is recorded" 'called check && status_has "^check [0-9]+ failed$" && ! status_has "^checkerror" && status_has "^run [0-9]+ [0-9]+ ok [0-9]+$"'
 out=$(run_backup)
 check "after a failure it runs again the next night" 'called check && status_has "^check [0-9]+ ok$"'
 
-echo "--- files that could not be read"
+echo "--- the monthly check cannot run to the end"
+month_old_check
+touch "$STATE/check_cut"
+out=$(run_backup)
+check "a pack that could not be downloaded is no damage" 'called check && status_has "^checkerror [0-9]+ 1$" && status_has "^check [0-9]+ ok$"'
+since=$(sed -n "s/^checkerror \([0-9]*\) 1$/\1/p" "$STATUS")
+out=$(run_backup)
+out=$(run_backup)
+check "it is tried every night and counted" 'called check && status_has "^checkerror $since 3$" && status_has "^check [0-9]+ ok$"'
+/bin/rm "$STATE/check_cut"
+touch "$STATE/check_damaged" "$STATE/unreachable"
+out=$(run_backup)
+/bin/rm "$STATE/check_damaged" "$STATE/unreachable"
+check "errors from a repository that cannot be reached right after are no damage either" 'status_has "^checkerror $since 4$" && status_has "^check [0-9]+ ok$"'
+out=$(run_backup)
+check "a check that runs to the end clears the count" 'status_has "^check [0-9]+ ok$" && ! status_has "^checkerror"'
+
+echo "--- files that could not be read, night after night"
 touch "$STATE/incomplete"
 out=$(run_backup)
 code=$?
+check "the run is incomplete, fails, still prunes, and counts the night" '[ "$code" != 0 ] && status_has "^run [0-9]+ [0-9]+ incomplete [0-9]+$" && called forget && status_has "^unreadable [0-9]+ 1$"'
+since=$(sed -n "s/^unreadable \([0-9]*\) 1$/\1/p" "$STATUS")
+out=$(run_backup)
 /bin/rm "$STATE/incomplete"
-check "the run is incomplete, fails, and still prunes" '[ "$code" != 0 ] && status_has "^run [0-9]+ [0-9]+ incomplete [0-9]+$" && called forget'
+check "the next such night counts on" 'status_has "^unreadable $since 2$"'
+
+echo "--- the backup itself fails"
+latest=$(grep "^latest " "$STATUS")
+month_old_check
+touch "$STATE/backup_fail"
+out=$(run_backup)
+code=$?
+/bin/rm "$STATE/backup_fail"
+check "it fails and is reported" '[ "$code" != 0 ] && status_has "^run [0-9]+ [0-9]+ backup_failed -$"'
+check "nothing is pruned, the due check waits, and the newest backup is kept" '! called forget && ! called check && grep -qx "$latest" "$STATUS"'
+check "a night without a backup leaves the count of unreadable nights alone" 'status_has "^unreadable $since 2$"'
+out=$(run_backup)
+check "a backup that reads every file ends the count" 'status_has "^run [0-9]+ [0-9]+ ok [0-9]+$" && ! status_has "^unreadable"'
 
 echo "--- removing old backups fails"
 touch "$STATE/prune_fail"
@@ -404,21 +487,25 @@ out=$(run_backup)
 /bin/rm "$STATE/prune_fail"
 check "it is reported" 'status_has "^run [0-9]+ [0-9]+ prune_failed [0-9]+$"'
 
-echo "--- the backup itself fails"
-latest=$(grep "^latest " "$STATUS")
-sed -i "s/^check [0-9]* ok$/check $(($(date +%s) - 31 * 86400)) ok/" "$STATUS"
-touch "$STATE/backup_fail"
-out=$(run_backup)
-code=$?
-/bin/rm "$STATE/backup_fail"
-check "it fails and is reported" '[ "$code" != 0 ] && status_has "^run [0-9]+ [0-9]+ backup_failed -$"'
-check "nothing is pruned, the due check waits, and the newest backup is kept" '! called forget && ! called check && grep -qx "$latest" "$STATUS"'
-
 echo "--- the accounts cannot be listed"
 touch "$STATE/list_fail"
 out=$(run_backup)
 /bin/rm "$STATE/list_fail"
 check "nothing is mounted or backed up" 'status_has "^run [0-9]+ [0-9]+ prepare_failed -$" && ! grep -q tmpfs "$STATE/mounts" && ! called backup'
+
+echo "--- an empty account list"
+mv "$STATE/users" "$STATE/users.saved"
+: >"$STATE/users"
+out=$(run_backup)
+code=$?
+check "fails the run instead of backing up the family folder alone" '[ "$code" != 0 ] && [[ $out == *"account list is empty"* ]] && status_has "^run [0-9]+ [0-9]+ prepare_failed -$" && ! called backup'
+
+echo "--- an account with neither an earlier version nor a files folder"
+printf 'amy\nbob\ncleo\neve\n' >"$STATE/users"
+out=$(run_backup)
+code=$?
+mv "$STATE/users.saved" "$STATE/users"
+check "fails the run and names the account" '[ "$code" != 0 ] && [[ $out == *"eve has neither"* ]] && status_has "^run [0-9]+ [0-9]+ prepare_failed -$" && ! called backup'
 
 echo "--- a run while a restore holds the lock"
 before=$(cat "$STATUS")
@@ -438,6 +525,8 @@ echo "$out" | sed 's/^/    /'
 dest=$(sed -n 's/^Restored .* to //p' <<<"$out")
 check "a person's files go to a new folder that only root can open" '[ "$code" = 0 ] && [[ $dest == "$BASE/.restored/"*-amy ]] && [ "$(stat -c %a "$BASE/.restored")" = 700 ]'
 check "with what they had tonight, and nothing else" '[ "$(cat "$dest/docs/report.txt")" = tonight ] && [ ! -e "$dest/.trash" ] && [ ! -e "$dest.partial" ]'
+check "restic is asked for the folder and for everything below it" '[ "$(cat "$T/restore.includes")" = "$BASE/amy/files
+$BASE/amy/files/**" ]'
 check "the live files are untouched" '[ "$(cat "$BASE/amy/files/docs/new.txt")" = "written after midnight" ]'
 out=$("$RESTORE" family 00000003 --to "$T/out-family" 2>&1)
 check "the family folder from a chosen backup, to a chosen folder" '[ "$(cat "$T/out-family/photos/beach.jpg")" = beach ]'
@@ -456,10 +545,15 @@ for bad in "path $T/etc/passwd" "path $BASE/amy/files/../../cleo/files" "path $B
 done >"$T/accepted"
 check "paths outside the backup, bad names, IDs and folders are refused" '[ ! -s "$T/accepted" ]'
 
-echo "--- starting over with a new destination"
+echo "--- starting over with a folder on a disk of its own"
 /bin/rm "$SECRETS/env"
+mkdir -p "$T/usb-disk"
 out=$(printf '2\n%s\n' "$T/usb-disk/backup" | "$TOOL" setup 2>&1)
-check "the new repository starts without the old one's results" '[ -f "$T/usb-disk/backup/config" ] && status_has "^destination local -$" && ! status_has "^(run|latest|size|check) "'
+check "the new repository starts without the old one's results" '[ -f "$T/usb-disk/backup/config" ] && status_has "^destination local -$" && status_has "^setup [0-9]+$" && ! status_has "^(run|latest|size|check|checkerror|unreadable) "'
+touch "$STATE/usb_unmounted"
+out=$(run_backup)
+/bin/rm "$STATE/usb_unmounted"
+check "a night when that disk is not mounted fails before anything is written" '[[ $out == *"system or data disk"* ]] && status_has "^run [0-9]+ [0-9]+ prepare_failed -$" && ! called backup && [ ! -s "$STATE/mounts" ]'
 
 echo "--- arguments"
 check "an unknown command is refused" '! "$TOOL" prune >/dev/null 2>&1 && ! "$RESTORE" everything >/dev/null 2>&1'

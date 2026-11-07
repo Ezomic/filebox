@@ -86,7 +86,8 @@ literal() {
 # restore <path in the backup> <label> <inside>: the folder's contents go straight into the new folder, or with
 # inside=1 the item itself goes into it under its own name.
 restore() {
-	local source=$1 label=$2 inside=$3 dest work path
+	local source=$1 label=$2 inside=$3 dest work path pattern
+	pattern=$(literal "$source")
 	if [ -n "$TO" ]; then
 		dest=$TO
 	else
@@ -101,7 +102,8 @@ restore() {
 	flock -n 9 || die "the nightly backup or another restore is busy. Wait, or stop the backup: sudo systemctl stop filebox-backup"
 	mkdir -m 0700 "$work"
 	echo "Restoring $source from backup $SNAPSHOT..."
-	if ! "$BACKUP_TOOL" restic restore "$SNAPSHOT" --host "$HOST_TAG" --target "$work" --include "$(literal "$source")"; then
+	# The item and everything below it, whichever way this restic version matches a folder against what is inside it.
+	if ! "$BACKUP_TOOL" restic restore "$SNAPSHOT" --host "$HOST_TAG" --target "$work" --include "$pattern" --include "$pattern/**"; then
 		die "restic could not restore everything; what it did restore is in $work"
 	fi
 	if [ ! -e "$work$source" ] && [ ! -L "$work$source" ]; then
