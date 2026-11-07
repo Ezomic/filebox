@@ -280,7 +280,9 @@ run_backup() {
 	fi
 	: >"$STATE/mounts"
 	: >"$T/restic.log"
-	"$TOOL" run 2>&1
+	# CI runners start steps with SIGINT blocked, and a blocked signal survives exec, so the restic stub would never see
+	# the SIGINT that ends the window. systemd starts the unit with nothing blocked; run it that way here too.
+	python3 -c 'import os, signal, sys; signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT}); os.execvp(sys.argv[1], sys.argv[1:])' "$TOOL" run 2>&1
 }
 status_has() { grep -qE "$1" "$STATUS"; }
 in_backup() { [ -e "$REPO/snapshots/$(ls "$REPO/snapshots" | sort | tail -n 1)/tree$1" ]; }
