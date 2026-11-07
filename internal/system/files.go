@@ -67,6 +67,8 @@ type Files interface {
 	Stat(path string) (FileInfo, error)
 	// Lstat describes the entry itself, never what a symlink points at: Symlink is set and IsDir is false for a link.
 	Lstat(path string) (FileInfo, error)
+	// SetModified sets the modification time, so a restored earlier version keeps the time it had.
+	SetModified(path string, modified time.Time) error
 
 	CreateUpload(path string, size int64, overwrite bool) (UploadInfo, error)
 	UploadStatus(id string) (UploadInfo, error)

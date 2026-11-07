@@ -63,7 +63,7 @@ func (d *dirFiles) walkPhotos(dir string, depth int, photos *[]Photo) error {
 
 	for _, entry := range entries {
 		name := entry.Name()
-		if hiddenName(name) || entry.Type()&fs.ModeSymlink != 0 {
+		if hiddenName(name) || entry.Type()&fs.ModeSymlink != 0 || (dir == "" && name == d.skip) {
 			continue
 		}
 		full := path.Join(dir, name)
