@@ -25,6 +25,8 @@ jobs:
         run: deploy/test/snapshots.sh
       - name: disk health helper script
         run: deploy/test/health.sh
+      - name: offsite backup and restore helper scripts
+        run: deploy/test/backup.sh
       - run: go test -race ./...
       - name: fuzz (short)
         run: |

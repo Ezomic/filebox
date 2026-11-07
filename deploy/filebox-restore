@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# Restores from the offsite backup that filebox-backup keeps, always into a new folder and never over the live files.
+# Installed as /usr/local/sbin/filebox-restore by the backup add-on. Run as root:
+#   filebox-restore list                                    list the backups, oldest first
+#   filebox-restore user <name> [<backup>] [--to <folder>]  one account's files, also of an account deleted since
+#   filebox-restore family [<backup>] [--to <folder>]       the family folder
+#   filebox-restore path <path> [<backup>] [--to <folder>]  one file or folder, by the path it had on this box, such as
+#                                                           /srv/sftp/amy/files/Photos or /var/lib/filebox
+# <backup> is an ID from "list", or latest (the default). Without --to the result goes to a new folder in
+# /srv/sftp/.restored that only root can open; --to names a folder that must not exist yet. It prints where it went.
+set -euo pipefail
+
+export LC_ALL=C
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+umask 077
+
+readonly BASE=/srv/sftp
+readonly PANEL_DATA=/var/lib/filebox
+readonly CONFIG=/etc/filebox
+readonly LOCK=/run/filebox-backup.lock
+readonly BACKUP_TOOL=/usr/local/sbin/filebox-backup
+readonly RESTORED=$BASE/.restored
+readonly FAMILY=_family
+readonly HOST_TAG=filebox
+readonly NAME_RE='^[a-z][a-z0-9_-]{2,31}$'
+readonly ID_RE='^([0-9a-f]{8,64}|latest)$'
+
+SNAPSHOT=latest
+TO=""
+
+die() {
+	echo "filebox-restore: $*" >&2
+	exit 1
+}
+
+usage() {
+	die "usage: filebox-restore list | user <name> | family | path <path>, then optionally a backup ID and --to <new folder>"
+}
+
+# The backup ID and --to, in any order after what to restore.
+parse_options() {
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--to)
+			[ $# -ge 2 ] || usage
+			TO=$2
+			shift 2
+			;;
+		*)
+			[[ $1 =~ $ID_RE ]] || die "unknown backup: $1 (pick an ID from: filebox-restore list)"
+			SNAPSHOT=$1
+			shift
+			;;
+		esac
+	done
+	if [ -n "$TO" ]; then
+		[[ $TO == /* && $TO != */ ]] || die "--to needs an absolute path, such as /root/restored"
+		[ -d "${TO%/*}/" ] || die "the folder ${TO%/*} does not exist"
+	fi
+}
+
+# Only what the backup holds: an account's files folder, the family folder, the panel data and /etc/filebox.
+backed_up_path() {
+	local path=$1 rest name
+	[[ $path == /* && $path != */ && $path != *//* && $path != *[[:cntrl:]]* ]] || return 1
+	case /$path/ in
+	*/../* | */./*) return 1 ;;
+	esac
+	case $path in
+	"$PANEL_DATA" | "$PANEL_DATA"/* | "$CONFIG" | "$CONFIG"/* | "$BASE/$FAMILY" | "$BASE/$FAMILY"/*) return 0 ;;
+	"$BASE"/*)
+		rest=${path#"$BASE"/}
+		name=${rest%%/*}
+		rest=${rest#"$name"}
+		[[ $name =~ $NAME_RE ]] && [[ $rest == /files || $rest == /files/* ]]
+		;;
+	*) return 1 ;;
+	esac
+}
+
+# restic reads --include as a pattern, so the characters it treats as wildcards are escaped.
+literal() {
+	sed 's/[][*?\\]/\\&/g' <<<"$1"
+}
+
+# restore <path in the backup> <label> <inside>: the folder's contents go straight into the new folder, or with
+# inside=1 the item itself goes into it under its own name.
+restore() {
+	local source=$1 label=$2 inside=$3 dest work path
+	if [ -n "$TO" ]; then
+		dest=$TO
+	else
+		install -d -m 0700 "$RESTORED"
+		dest=$RESTORED/$(date +%Y-%m-%dT%H%M%S)-$label
+	fi
+	work=$dest.partial
+	for path in "$dest" "$work"; do
+		[ ! -e "$path" ] && [ ! -L "$path" ] || die "$path already exists; a restore only goes into a new folder"
+	done
+	exec 9>"$LOCK"
+	flock -n 9 || die "the nightly backup or another restore is busy. Wait, or stop the backup: sudo systemctl stop filebox-backup"
+	mkdir -m 0700 "$work"
+	echo "Restoring $source from backup $SNAPSHOT..."
+	if ! "$BACKUP_TOOL" restic restore "$SNAPSHOT" --host "$HOST_TAG" --target "$work" --include "$(literal "$source")"; then
+		die "restic could not restore everything; what it did restore is in $work"
+	fi
+	if [ ! -e "$work$source" ] && [ ! -L "$work$source" ]; then
+		rm -rf --one-file-system "$work"
+		die "$source is not in backup $SNAPSHOT"
+	fi
+	if [ "$inside" -eq 1 ]; then
+		mkdir -m 0700 "$dest"
+		mv -- "$work$source" "$dest/"
+		dest=$dest/${source##*/}
+	else
+		mv -T -- "$work$source" "$dest"
+	fi
+	rm -rf --one-file-system "$work"
+	echo "Restored $source from backup $SNAPSHOT to $dest"
+}
+
+main() {
+	[ "$(id -u)" -eq 0 ] || die "must run as root"
+	[ $# -ge 1 ] || usage
+	local what=$1 subject=""
+	shift
+	case $what in
+	list)
+		[ $# -eq 0 ] || usage
+		exec "$BACKUP_TOOL" restic snapshots --host "$HOST_TAG" --compact
+		;;
+	user | path)
+		[ $# -ge 1 ] || usage
+		subject=$1
+		shift
+		;;
+	family) ;;
+	*) usage ;;
+	esac
+	parse_options "$@"
+	case $what in
+	user)
+		[[ $subject =~ $NAME_RE ]] || die "not an account name: $subject"
+		restore "$BASE/$subject/files" "$subject" 0
+		;;
+	family) restore "$BASE/$FAMILY" family 0 ;;
+	path)
+		backed_up_path "$subject" || die "$subject is not something the backup holds: use a path in an account's files, the family folder, $PANEL_DATA or $CONFIG"
+		restore "$subject" path 1
+		;;
+	esac
+}
+
+main "$@"

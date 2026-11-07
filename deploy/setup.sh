@@ -3,6 +3,7 @@
 # Tailscale, the admin panel, the DNS updater and the public user portal. Run as root; safe to re-run.
 #   ./setup.sh /path/to/filebox-panel
 #   ADDONS=streambox ./setup.sh /path/to/filebox-panel     also install the TV streaming add-on
+#   ADDONS=backup ./setup.sh /path/to/filebox-panel        also install the offsite backup add-on
 # The chosen add-ons are remembered in /etc/filebox/addons, so filebox-update keeps them up to date.
 #
 # Get the binary from the latest GitHub release and check it before running:
@@ -16,7 +17,7 @@ PANEL_PORT=8443
 PORTAL_PORT=443
 STREAMBOX_PORT=8090
 STREAMBOX_RELEASES=${STREAMBOX_RELEASES:-https://github.com/Ezomic/streambox/releases}
-KNOWN_ADDONS="streambox"
+KNOWN_ADDONS="streambox backup"
 # Admin SSH stays on port 22 and is reachable from these networks until you
 # have confirmed Tailscale access works (tailnet traffic is always allowed). A
 # firewall that dropped port 22 before you could test the tailnet would lock
@@ -537,11 +538,33 @@ ENV
 	systemctl restart --no-block filebox-panel.service
 }
 
+# Installs restic from Debian, the backup and restore helpers and the nightly timer. The destination and its secrets
+# come later from "filebox-backup setup", so an update never touches them. Like install_streambox it returns non-zero
+# on any problem instead of exiting.
+install_backup() {
+	log "Installing the backup add-on"
+	apt-get install -y -qq --no-install-recommends restic || return 1
+	install -m 0750 -o root -g root "$SRC/filebox-backup" /usr/local/sbin/filebox-backup || return 1
+	install -m 0750 -o root -g root "$SRC/filebox-restore" /usr/local/sbin/filebox-restore || return 1
+	# The destination, its password and keys: root only, the panel never sees them.
+	install -d -o root -g root -m 0700 /etc/filebox/backup || return 1
+	# filebox-backup writes its status here; root owned, so the panel can read it but never swap it.
+	install -d -o root -g filebox -m 0750 /var/lib/filebox-backup || return 1
+	install -m 0644 -o root -g root "$SRC/systemd/filebox-backup.service" "$SRC/systemd/filebox-backup.timer" \
+		/etc/systemd/system/ || return 1
+	systemctl daemon-reload || return 1
+	systemctl enable filebox-backup.timer || return 1
+	systemctl restart filebox-backup.timer || return 1
+	# The panel shows its backup section when it finds /var/lib/filebox-backup as it starts.
+	systemctl restart --no-block filebox-panel.service
+}
+
 install_addons() {
+	local name
 	resolve_addons
-	if has_addon streambox; then
-		install_streambox || echo "setup.sh: the streambox add-on was NOT installed; filebox itself is fine. Fix the cause above and re-run: filebox-update" >&2
-	fi
+	for name in $ADDON_LIST; do
+		"install_$name" || echo "setup.sh: the $name add-on was NOT installed; filebox itself is fine. Fix the cause above and re-run: filebox-update" >&2
+	done
 }
 
 print_next_steps() {
@@ -584,6 +607,13 @@ EOF
 TV add-on (streambox): open the panel's TV page to add channels. Copy video files for looped channels to
 /srv/streambox/media. Family members find their playlist link under TV in the web portal.
 TV
+	fi
+	if has_addon backup; then
+		cat <<BACKUP
+
+Offsite backup add-on: choose the destination and get the backup password (store it in your password manager):
+     filebox-backup setup
+BACKUP
 	fi
 }
 

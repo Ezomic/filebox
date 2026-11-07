@@ -1,0 +1,694 @@
+#!/usr/bin/env bash
+# Keeps an encrypted copy of the family's files offsite with restic. Installed as /usr/local/sbin/filebox-backup by the
+# backup add-on (ADDONS=backup in setup.sh) and run as root, never by the panel:
+#   filebox-backup setup          ask for the destination, create the repository and print its password once
+#   filebox-backup run            the nightly backup, started by filebox-backup.timer at 01:00
+#   filebox-backup restic <args>  run restic against the configured backup; filebox-restore uses it
+# Backed up: every active account's files and the family folder, read from tonight's earlier versions (filebox-snapshot)
+# where there are some and from the live folders otherwise, plus /var/lib/filebox and /etc/filebox. Left out: the web
+# Trash, unfinished uploads, thumbnails, the archived homes of deleted accounts and the backup's own secrets. A run
+# stops after 6 hours and the next night carries on. After a backup it keeps 7 daily, 4 weekly and 12 monthly backups,
+# and once a month it reads 5% of the stored data back. Secrets stay in /etc/filebox/backup, root only. The admin panel
+# reads /var/lib/filebox-backup/status: the destination host, times, sizes and results, never a file name or a secret.
+set -euo pipefail
+
+export LC_ALL=C
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+umask 077
+unset RESTIC_REPOSITORY RESTIC_REPOSITORY_FILE RESTIC_PASSWORD RESTIC_PASSWORD_COMMAND RESTIC_PASSWORD_FILE
+
+readonly BASE=/srv/sftp
+readonly PANEL_DATA=/var/lib/filebox
+readonly CONFIG=/etc/filebox
+readonly SECRETS=/etc/filebox/backup
+readonly STATE_DIR=/var/lib/filebox-backup
+readonly CACHE=/var/cache/filebox-backup
+readonly RUN_DIR=/run/filebox-backup
+readonly LOCK=/run/filebox-backup.lock
+readonly USER_TOOL=/usr/local/sbin/filebox-user
+readonly HOST_NS=/proc/1/ns/mnt
+readonly OWN_NS=/proc/self/ns/mnt
+readonly DATA=$RUN_DIR/data
+readonly STATUS=$STATE_DIR/status
+readonly SETTINGS=$SECRETS/env
+readonly PASSWORD_FILE=$SECRETS/password
+readonly SSH_KEY=$SECRETS/ssh_key
+readonly KNOWN_HOSTS=$SECRETS/known_hosts
+readonly FAMILY=_family
+readonly PANEL_GROUP=filebox
+readonly HOST_TAG=filebox
+readonly NAME_RE='^[a-z][a-z0-9_-]{2,31}$'
+readonly STAMP_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T([01][0-9]|2[0-3])[0-5][0-9]$'
+readonly WINDOW=21600
+readonly STOP_GRACE=300
+readonly FRESH=86400
+readonly CHECK_EVERY=2592000
+readonly CHECK_TIME=3600
+readonly CHECK_SUBSET=5%
+readonly STORAGE_BOX_PORT=23
+
+STATE=on
+RUN=""
+LATEST=""
+SIZE=""
+CHECK=""
+RESULT=""
+ADDED=-
+STARTED=0
+DEADLINE=0
+PRUNED=0
+FROM_SNAPSHOTS=0
+FROM_LIVE=0
+SFTP_USER=""
+SFTP_HOST=""
+SFTP_PORT=22
+REPOSITORY=""
+STORAGE_BOX=0
+ANSWER=""
+RESTIC_OPTS=()
+EXTRA=()
+
+log() {
+	echo "filebox-backup: $*" >&2
+}
+
+die() {
+	log "$*"
+	exit 1
+}
+
+usage() {
+	die "usage: filebox-backup setup|run|restic <args>"
+}
+
+require_root() {
+	[ "$(id -u)" -eq 0 ] || die "must run as root"
+}
+
+# KEY=value lines. Nothing in the file runs as shell code.
+load_settings() {
+	local line key
+	[ -f "$SETTINGS" ] || return 1
+	while IFS= read -r line || [ -n "$line" ]; do
+		if [[ $line =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]]; then
+			key=${BASH_REMATCH[1]}
+			if [ "$key" != PATH ] && [[ $key != LD_* ]]; then
+				export "$key=${BASH_REMATCH[2]}"
+			fi
+		fi
+	done <"$SETTINGS"
+	[ -n "${RESTIC_REPOSITORY:-}" ] && [ -f "$PASSWORD_FILE" ]
+}
+
+# sftp:user@host:path, or sftp://user@host:port/path. Sets SFTP_USER, SFTP_HOST and SFTP_PORT.
+parse_sftp() {
+	local rest=${1#sftp:} authority url=0
+	SFTP_USER="" SFTP_PORT=22
+	if [[ $rest == //* ]]; then
+		url=1
+		rest=${rest#//}
+		authority=${rest%%/*}
+	else
+		authority=${rest%%:*}
+	fi
+	if [[ $authority == *@* ]]; then
+		SFTP_USER=${authority%@*}
+		authority=${authority##*@}
+	fi
+	SFTP_HOST=$authority
+	if [ "$url" -eq 1 ] && [[ $authority =~ ^(.+):([0-9]+)$ ]]; then
+		SFTP_HOST=${BASH_REMATCH[1]} SFTP_PORT=${BASH_REMATCH[2]}
+	fi
+	SFTP_HOST=${SFTP_HOST#[}
+	SFTP_HOST=${SFTP_HOST%]}
+	[[ $SFTP_HOST =~ ^[A-Za-z0-9.:-]+$ && $SFTP_PORT =~ ^[0-9]{1,5}$ ]] || return 1
+	[ -z "$SFTP_USER" ] || [[ $SFTP_USER =~ ^[A-Za-z0-9._-]+$ ]]
+}
+
+# restic runs this instead of its own ssh call, so the box's ssh settings, agent and known hosts play no part.
+sftp_command() {
+	local command="ssh -F none -i $SSH_KEY -o IdentitiesOnly=yes -o UserKnownHostsFile=$KNOWN_HOSTS -o StrictHostKeyChecking=yes"
+	command+=" -o BatchMode=yes -o ServerAliveInterval=60 -p $SFTP_PORT"
+	if [ -n "$SFTP_USER" ]; then
+		command+=" -l $SFTP_USER"
+	fi
+	echo "$command $SFTP_HOST -s sftp"
+}
+
+# restic keeps its index in memory; a low GOGC trades some CPU for less memory on an old PC. The cache and restic's
+# temporary files stay on disk: /tmp can be a RAM disk.
+prepare_restic() {
+	install -d -m 0700 "$CACHE" "$CACHE/tmp"
+	export RESTIC_PASSWORD_FILE=$PASSWORD_FILE RESTIC_CACHE_DIR=$CACHE TMPDIR=$CACHE/tmp GOGC=20
+	RESTIC_OPTS=()
+	if [[ $RESTIC_REPOSITORY == sftp:* ]]; then
+		parse_sftp "$RESTIC_REPOSITORY" || die "could not read the user, host and port from the repository URL"
+		RESTIC_OPTS=(-o "sftp.command=$(sftp_command)")
+	fi
+}
+
+# What the panel may show of the destination: the kind of storage and its host name, never a user, path or key.
+destination() {
+	local repository=$RESTIC_REPOSITORY kind=${RESTIC_REPOSITORY%%:*} host=-
+	case $repository in
+	sftp:*)
+		if parse_sftp "$repository"; then
+			host=$SFTP_HOST
+		fi
+		;;
+	rest:* | s3:*)
+		host=${repository#*:}
+		host=${host#*://}
+		host=${host%%/*}
+		host=${host##*@}
+		host=${host%:[0-9]*}
+		;;
+	/*) kind=local ;;
+	b2:* | azure:* | gs:* | swift:* | rclone:*) ;;
+	*) kind=other ;;
+	esac
+	if ! [[ $host =~ ^[A-Za-z0-9.:_-]{1,253}$ ]]; then
+		host=-
+	fi
+	echo "$kind $host"
+}
+
+status_lines() {
+	echo "filebox-backup 1"
+	echo "checked $(date +%s)"
+	echo "state $STATE"
+	if [ "$STATE" = on ]; then
+		echo "destination $(destination)"
+	fi
+	if [ -n "$RUN" ]; then
+		echo "run $RUN"
+	fi
+	if [ -n "$LATEST" ]; then
+		echo "latest $LATEST"
+	fi
+	if [ -n "$SIZE" ]; then
+		echo "size $SIZE"
+	fi
+	if [ -n "$CHECK" ]; then
+		echo "check $CHECK"
+	fi
+}
+
+# The status directory belongs to root, so the panel can read the file but nobody else can swap it underneath.
+write_status() {
+	local content tmp
+	content=$(status_lines)
+	install -d -o root -g "$PANEL_GROUP" -m 0750 "$STATE_DIR"
+	tmp=$(mktemp "$STATUS.XXXXXX")
+	if ! printf '%s\n' "$content" >"$tmp" || ! chown "root:$PANEL_GROUP" "$tmp" || ! chmod 0640 "$tmp" || ! mv -f "$tmp" "$STATUS"; then
+		rm -f "$tmp"
+		die "could not write $STATUS"
+	fi
+}
+
+# What earlier runs found: the last run, the newest backup, the repository size and the last monthly check.
+load_previous() {
+	local kind a b c d
+	[ -f "$STATUS" ] || return 0
+	while read -r kind a b c d _; do
+		case $kind in
+		run)
+			if [[ $a =~ ^[0-9]+$ && $b =~ ^[0-9]+$ && $c =~ ^(ok|stopped|incomplete|backup_failed|prune_failed|prepare_failed)$ &&
+				$d =~ ^([0-9]+|-)$ ]]; then
+				RUN="$a $b $c $d"
+			fi
+			;;
+		latest)
+			if [[ $a =~ ^[0-9]+$ ]]; then LATEST=$a; fi
+			;;
+		size)
+			if [[ $a =~ ^[0-9]+$ && $b =~ ^[0-9]+$ ]]; then SIZE="$a $b"; fi
+			;;
+		check)
+			if [[ $a =~ ^[0-9]+$ && $b =~ ^(ok|failed)$ ]]; then CHECK="$a $b"; fi
+			;;
+		esac
+	done <"$STATUS"
+}
+
+private_namespace() {
+	local own host
+	own=$(readlink "$OWN_NS") && host=$(readlink "$HOST_NS") && [ -n "$own" ] && [ -n "$host" ] && [ "$own" != "$host" ]
+}
+
+# The newest earlier version of a folder, if filebox-snapshot took it within the last day. An older one would make the
+# offsite copy lag behind without anyone noticing, so the live folder is read instead.
+fresh_snapshot() {
+	local scope=$1 path name newest="" taken
+	for path in "$DATA/.snapshots/$scope"/*; do
+		name=${path##*/}
+		if [[ $name =~ $STAMP_RE ]] && [ -d "$path" ] && [ ! -L "$path" ] && [[ $name > $newest ]]; then
+			newest=$name
+		fi
+	done
+	[ -n "$newest" ] || return 1
+	taken=$(date -d "${newest:0:10} ${newest:11:2}:${newest:13:2}" +%s 2>/dev/null) || return 1
+	(($(date +%s) - taken < FRESH)) || return 1
+	echo "$DATA/.snapshots/$scope/$newest"
+}
+
+view_folder() {
+	local scope=$1 live=$2 target=$3 source
+	if source=$(fresh_snapshot "$scope"); then
+		FROM_SNAPSHOTS=$((FROM_SNAPSHOTS + 1))
+	elif [ -d "$live" ] && [ ! -L "$live" ]; then
+		source=$live
+		FROM_LIVE=$((FROM_LIVE + 1))
+	else
+		log "$scope has no files folder, so it is not in tonight's backup"
+		return 0
+	fi
+	mkdir -p "$target"
+	mount --bind -o ro "$source" "$target"
+}
+
+# In this run's own mount namespace /srv/sftp becomes an empty tmpfs, with each folder to back up mounted read-only at
+# its usual place. restic finds its previous backup by path, so with the same paths every night it only reads the files
+# that changed, whether tonight's copy comes from a snapshot or the live folder. Nothing outside this run sees the mounts.
+prepare_view() {
+	local list name
+	local -a users=()
+	private_namespace || die "refusing to mount anything outside a private mount namespace"
+	if ! list=$("$USER_TOOL" list); then
+		log "could not list the accounts"
+		return 1
+	fi
+	for name in $list; do
+		if [[ $name =~ $NAME_RE ]]; then
+			users+=("$name")
+		fi
+	done
+	mount --make-rprivate /
+	install -d -m 0700 "$RUN_DIR" "$DATA"
+	mount --bind "$BASE" "$DATA"
+	mount -t tmpfs -o mode=0755,size=16m filebox-backup "$BASE"
+	# The homes in the tmpfs get the mode of the real ones, as the backup records them.
+	umask 022
+	view_folder "$FAMILY" "$DATA/$FAMILY" "$BASE/$FAMILY"
+	for name in "${users[@]}"; do
+		view_folder "$name" "$DATA/$name/files" "$BASE/$name/files"
+	done
+	umask 077
+	log "reading $FROM_SNAPSHOTS folders from tonight's earlier versions and $FROM_LIVE from the live folders"
+}
+
+left() {
+	echo $((DEADLINE - $(date +%s)))
+}
+
+# restic until the end of tonight's window. Then it gets SIGINT, stops cleanly and removes its lock, and this returns
+# 124. A restic that does not stop is killed STOP_GRACE seconds later; the next run clears the lock it leaves.
+timed() {
+	local seconds
+	seconds=$(left)
+	if [ "$seconds" -le 0 ]; then
+		return 124
+	fi
+	timeout --signal=INT --kill-after="$STOP_GRACE" "$seconds" restic "${RESTIC_OPTS[@]}" "$@"
+}
+
+# timeout kills itself along with restic when it has to use SIGKILL, so that ends in 137 instead of 124.
+out_of_time() {
+	[ "$1" -eq 124 ] || { [ "$1" -eq 137 ] && [ "$(left)" -le 0 ]; }
+}
+
+# restic unlock only removes stale locks: older than 30 minutes, or left by a process on this host that is gone.
+unlock_stale() {
+	timed unlock || log "could not check the repository for stale locks"
+}
+
+# .trash, .uploads and .thumbs are TrashDir, UploadsDir and ThumbsDir in internal/system, at the top of every files root.
+back_up() {
+	local out code=0 root hidden
+	local -a excludes=(--exclude "$SECRETS")
+	for root in "$BASE/*/files" "$BASE/$FAMILY"; do
+		for hidden in .trash .uploads .thumbs; do
+			excludes+=(--exclude "$root/$hidden")
+		done
+	done
+	out=$(mktemp)
+	timed backup --quiet --json --host "$HOST_TAG" "${excludes[@]}" "$CONFIG" "$BASE" "$PANEL_DATA" >"$out" || code=$?
+	if out_of_time "$code"; then
+		RESULT=stopped
+	elif [ "$code" -eq 0 ]; then
+		RESULT=ok
+	elif [ "$code" -eq 3 ]; then
+		RESULT=incomplete
+	else
+		RESULT=backup_failed
+	fi
+	if [ "$RESULT" = ok ] || [ "$RESULT" = incomplete ]; then
+		ADDED=$(grep '"message_type":"summary"' "$out" | tail -n 1 | jq -r '.data_added' 2>/dev/null) || true
+		if ! [[ $ADDED =~ ^[0-9]+$ ]]; then
+			ADDED=-
+		fi
+	fi
+	rm -f "$out"
+	case $RESULT in
+	ok) log "backup finished, $ADDED bytes added" ;;
+	incomplete) log "backup finished, but some files could not be read (see the restic errors above)" ;;
+	stopped) log "stopped at the end of tonight's window; the next run carries on" ;;
+	*) log "backup failed (restic exit status $code)" ;;
+	esac
+}
+
+prune() {
+	local code=0
+	timed forget --prune --host "$HOST_TAG" --keep-daily 7 --keep-weekly 4 --keep-monthly 12 || code=$?
+	if [ "$code" -eq 0 ]; then
+		PRUNED=1
+	elif out_of_time "$code"; then
+		log "removing old backups did not finish tonight; the next run carries on"
+	else
+		RESULT=prune_failed
+	fi
+}
+
+# The repository is the authority on when the last complete backup was made, also after the status file was lost.
+refresh_latest() {
+	local out time at newest=0
+	[ "$(left)" -gt 0 ] || return 0
+	if ! out=$(timed snapshots --json --host "$HOST_TAG"); then
+		log "could not list the backups"
+		return 0
+	fi
+	while IFS= read -r time; do
+		if at=$(date -d "$time" +%s 2>/dev/null) && [ "$at" -gt "$newest" ]; then
+			newest=$at
+		fi
+	done < <(jq -r '.[].time' <<<"$out" 2>/dev/null)
+	if [ "$newest" -gt 0 ]; then
+		LATEST=$newest
+	fi
+}
+
+measure() {
+	local out bytes
+	[ "$(left)" -gt 0 ] || return 0
+	if ! out=$(timed stats --mode raw-data --json); then
+		log "could not measure the repository"
+		return 0
+	fi
+	bytes=$(jq -r '.total_size' <<<"$out" 2>/dev/null) || return 0
+	if [[ $bytes =~ ^[0-9]+$ ]]; then
+		SIZE="$(date +%s) $bytes"
+	fi
+}
+
+# Monthly once there is a complete backup, and again the next night after a failed check, when an hour of the window is
+# left. A night without the destination fails the backup already; it says nothing about the stored data.
+check_due() {
+	local at result
+	[ -n "$LATEST" ] && [ "$RESULT" != backup_failed ] && [ "$RESULT" != prepare_failed ] || return 1
+	[ "$(left)" -ge "$CHECK_TIME" ] || return 1
+	[ -n "$CHECK" ] || return 0
+	read -r at result <<<"$CHECK"
+	[ "$result" = failed ] || (($(date +%s) - at >= CHECK_EVERY))
+}
+
+check_repository() {
+	local code=0
+	log "reading $CHECK_SUBSET of the stored data back"
+	timed check --read-data-subset "$CHECK_SUBSET" || code=$?
+	if [ "$code" -eq 0 ]; then
+		CHECK="$(date +%s) ok"
+	elif out_of_time "$code"; then
+		log "the check did not finish tonight; the next run tries again"
+	else
+		CHECK="$(date +%s) failed"
+	fi
+}
+
+# Every way out of a run reports it, so the panel never keeps showing an earlier night.
+finish_run() {
+	set +e
+	RUN="$STARTED $(($(date +%s) - STARTED)) $RESULT $ADDED"
+	write_status
+	case $RESULT in
+	ok | stopped) exit 0 ;;
+	*) exit 1 ;;
+	esac
+}
+
+# systemctl stop counts as a stop, like the end of the window: restic got the same signal and stops cleanly.
+stop_run() {
+	case $RESULT in
+	prepare_failed | backup_failed) RESULT=stopped ;;
+	esac
+	exit 1
+}
+
+cmd_run() {
+	require_root
+	if ! private_namespace; then
+		[ -z "${FILEBOX_BACKUP_UNSHARED:-}" ] || die "could not get a private mount namespace"
+		export FILEBOX_BACKUP_UNSHARED=1
+		exec unshare --mount --propagation private -- "$0" run
+	fi
+	exec 9>"$LOCK"
+	if ! flock -n 9; then
+		log "a restore, a setup or another run is busy, so this run is skipped"
+		exit 0
+	fi
+	load_previous
+	if ! load_settings; then
+		STATE=unconfigured
+		write_status
+		log "not set up yet: run sudo filebox-backup setup"
+		exit 0
+	fi
+	STARTED=$(date +%s)
+	DEADLINE=$((STARTED + WINDOW))
+	RESULT=prepare_failed
+	trap finish_run EXIT
+	trap stop_run INT TERM
+	prepare_restic
+	prepare_view
+	RESULT=backup_failed
+	unlock_stale
+	back_up
+	if [ "$RESULT" = ok ] || [ "$RESULT" = incomplete ]; then
+		prune
+	fi
+	refresh_latest
+	if [ "$PRUNED" -eq 1 ]; then
+		measure
+	fi
+	if check_due; then
+		check_repository
+	fi
+}
+
+ask() {
+	local prompt=$1 default=${2:-}
+	if [ -n "$default" ]; then
+		prompt+=" [$default]"
+	fi
+	read -r -p "$prompt: " ANSWER || die "setup was cancelled"
+	ANSWER=${ANSWER:-$default}
+}
+
+ask_secret() {
+	read -r -s -p "$1: " ANSWER || die "setup was cancelled"
+	echo
+}
+
+# An extra setting restic needs for the destination, such as an access key, kept in the settings file.
+setting() {
+	[[ $1 =~ ^[A-Z][A-Z0-9_]*$ && -n $2 && $2 != *[[:cntrl:]]* ]] || die "that is not a usable value for $1"
+	export "$1=$2"
+	EXTRA+=("$1=$2")
+}
+
+ask_storage_box() {
+	local user host folder
+	ask "Storage Box user name (looks like u123456)"
+	user=$ANSWER
+	[[ $user =~ ^u[0-9]+(-sub[0-9]+)?$ ]] || die "that is not a Storage Box user name"
+	ask "Server" "$user.your-storagebox.de"
+	host=$ANSWER
+	[[ $host =~ ^[A-Za-z0-9.-]+$ ]] || die "that is not a host name"
+	ask "Folder on the Storage Box" filebox
+	folder=$ANSWER
+	[[ $folder =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$ ]] || die "use letters, digits, dots, dashes and slashes"
+	REPOSITORY="sftp://$user@$host:$STORAGE_BOX_PORT/$folder"
+	STORAGE_BOX=1
+}
+
+ask_repository() {
+	local line
+	ask "Repository URL"
+	REPOSITORY=$ANSWER
+	[[ -n $REPOSITORY && $REPOSITORY != *[[:space:][:cntrl:]]* ]] || die "that is not a repository URL"
+	case $REPOSITORY in
+	s3:*)
+		ask "AWS_ACCESS_KEY_ID"
+		setting AWS_ACCESS_KEY_ID "$ANSWER"
+		ask_secret "AWS_SECRET_ACCESS_KEY"
+		setting AWS_SECRET_ACCESS_KEY "$ANSWER"
+		;;
+	b2:*)
+		ask "B2_ACCOUNT_ID"
+		setting B2_ACCOUNT_ID "$ANSWER"
+		ask_secret "B2_ACCOUNT_KEY"
+		setting B2_ACCOUNT_KEY "$ANSWER"
+		;;
+	sftp:* | rest:* | /*) ;;
+	*)
+		echo "Enter the settings restic needs for it, one NAME=value per line, and an empty line to finish."
+		while ask "Setting" && [ -n "$ANSWER" ]; do
+			line=$ANSWER
+			[[ $line == *=* ]] || die "write NAME=value"
+			setting "${line%%=*}" "${line#*=}"
+		done
+		;;
+	esac
+}
+
+ask_destination() {
+	cat <<'TEXT'
+Where should the backup go?
+  1) A Hetzner Storage Box
+  2) Another restic repository: a URL such as sftp:, s3:, b2: or rest:, or a local folder
+TEXT
+	ask "Choose 1 or 2" 1
+	case $ANSWER in
+	1) ask_storage_box ;;
+	2) ask_repository ;;
+	*) die "choose 1 or 2" ;;
+	esac
+}
+
+# Trust on first use, with the fingerprints shown so they can be compared with what the provider publishes.
+record_host_key() {
+	local scanned
+	scanned=$(mktemp)
+	if ! ssh-keyscan -p "$SFTP_PORT" -t ed25519,ecdsa,rsa "$SFTP_HOST" >"$scanned" 2>/dev/null || [ ! -s "$scanned" ]; then
+		rm -f "$scanned"
+		die "could not reach $SFTP_HOST on port $SFTP_PORT"
+	fi
+	echo "$SFTP_HOST answered with these host keys:"
+	ssh-keygen -l -f "$scanned"
+	ask "Is this the right server? Compare with the fingerprints your provider publishes (yes/no)"
+	if [ "$ANSWER" != yes ]; then
+		rm -f "$scanned"
+		die "not set up: the host key was not confirmed"
+	fi
+	install -m 0600 "$scanned" "$KNOWN_HOSTS"
+	rm -f "$scanned"
+}
+
+# A Storage Box adds the key itself with install-ssh-key (port 23), which asks for the Storage Box password once.
+add_ssh_key() {
+	echo
+	echo "This box logs in to $SFTP_HOST with this SSH key:"
+	cat "$SSH_KEY.pub"
+	if [ "$STORAGE_BOX" -eq 1 ]; then
+		echo "Adding it to the Storage Box. Enter the Storage Box password when asked (SSH support must be on in the Hetzner Console)."
+		ssh -F none -p "$SFTP_PORT" -o UserKnownHostsFile="$KNOWN_HOSTS" -o StrictHostKeyChecking=yes -o PubkeyAuthentication=no \
+			-l "$SFTP_USER" "$SFTP_HOST" install-ssh-key <"$SSH_KEY.pub" ||
+			die "could not add the key. Check that SSH support is on and the password is right, then run setup again."
+	else
+		echo "Add it to the authorized keys of the account on $SFTP_HOST."
+		ask "Press Enter once the key is added" done
+	fi
+}
+
+prepare_ssh() {
+	parse_sftp "$REPOSITORY" || die "could not read the user, host and port from $REPOSITORY"
+	if [ ! -f "$SSH_KEY" ]; then
+		ssh-keygen -q -t ed25519 -N '' -C "filebox-backup@$(hostname)" -f "$SSH_KEY" || die "could not create the SSH key"
+	fi
+	record_host_key
+	add_ssh_key
+}
+
+new_password() {
+	local tmp
+	tmp=$(mktemp "$PASSWORD_FILE.XXXXXX")
+	head -c 24 /dev/urandom | od -An -vtx1 | tr -d ' \n' >"$tmp"
+	mv -f "$tmp" "$PASSWORD_FILE"
+}
+
+write_settings() {
+	local tmp line
+	tmp=$(mktemp "$SETTINGS.XXXXXX")
+	{
+		echo "# Written by filebox-backup setup. Secret: keep it root only."
+		echo "RESTIC_REPOSITORY=$REPOSITORY"
+		for line in "${EXTRA[@]}"; do
+			echo "$line"
+		done
+	} >"$tmp"
+	mv -f "$tmp" "$SETTINGS"
+}
+
+cmd_setup() {
+	require_root
+	command -v restic >/dev/null || die "restic is missing: install the backup add-on first (ADDONS=backup with setup.sh)"
+	exec 9>"$LOCK"
+	flock -n 9 || die "a backup run or a restore is busy; try again when it has finished"
+	[ ! -f "$SETTINGS" ] || die "the backup is already set up. To start over, see Offsite backup in the filebox guide."
+	install -d -m 0700 "$SECRETS"
+	ask_destination
+	export RESTIC_REPOSITORY=$REPOSITORY
+	prepare_restic
+	if [[ $REPOSITORY == sftp:* ]]; then
+		prepare_ssh
+	fi
+	new_password
+	echo "Creating the backup repository..."
+	if ! restic "${RESTIC_OPTS[@]}" init --repository-version 2; then
+		rm -f "$PASSWORD_FILE"
+		die "could not create the repository. If that folder already holds a backup, choose another one; to restore from it, see Offsite backup in the filebox guide."
+	fi
+	write_settings
+	load_previous
+	STATE=on
+	write_status
+	cat <<TEXT
+
+The backup is set up. Its password is:
+
+    $(cat "$PASSWORD_FILE")
+
+Store it in your password manager now. This box keeps a copy for the nightly runs, but if the box is lost, that copy
+is lost with it, and without the password nobody can read the backup. Whoever has it can read every family file in
+the backup.
+
+The first backup starts tonight at 01:00 and may take several nights. To start it now:
+  sudo systemctl start --no-block filebox-backup.service
+TEXT
+}
+
+cmd_restic() {
+	require_root
+	load_settings || die "the backup is not set up yet: run sudo filebox-backup setup"
+	prepare_restic
+	exec restic "${RESTIC_OPTS[@]}" "$@"
+}
+
+main() {
+	[ $# -ge 1 ] || usage
+	local command=$1
+	shift
+	case $command in
+	setup)
+		[ $# -eq 0 ] || usage
+		cmd_setup
+		;;
+	run)
+		[ $# -eq 0 ] || usage
+		cmd_run
+		;;
+	restic) cmd_restic "$@" ;;
+	*) usage ;;
+	esac
+}
+
+main "$@"
