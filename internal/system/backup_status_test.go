@@ -13,10 +13,13 @@ const goodBackupStatus = `filebox-backup 1
 checked 1794000000
 state on
 destination sftp u123456.your-storagebox.de
-run 1793926800 5400 ok 734003200
+setup 1791000000
+run 1793926800 5400 incomplete 734003200
+unreadable 1793754000 3
 latest 1793926805
 size 1793932300 412316860416
 check 1791334800 failed
+checkerror 1793840400 2
 something new 1 2 3
 `
 
@@ -29,8 +32,17 @@ func TestBackupStatusIsReadLineByLine(t *testing.T) {
 		t.Fatalf("got %+v", status)
 	}
 	if run := status.Run; run == nil || !run.Started.Equal(time.Unix(1793926800, 0)) || run.Duration != 90*time.Minute ||
-		run.Result != BackupOK || run.Added == nil || *run.Added != 734003200 {
+		run.Result != BackupIncomplete || run.Added == nil || *run.Added != 734003200 {
 		t.Fatalf("run %+v", status.Run)
+	}
+	if !status.Setup.Equal(time.Unix(1791000000, 0)) {
+		t.Fatalf("setup %v", status.Setup)
+	}
+	if streak := status.Unreadable; streak == nil || streak.Nights != 3 || !streak.Since.Equal(time.Unix(1793754000, 0)) {
+		t.Fatalf("unreadable %+v", status.Unreadable)
+	}
+	if streak := status.CheckErrors; streak == nil || streak.Nights != 2 || !streak.Since.Equal(time.Unix(1793840400, 0)) {
+		t.Fatalf("check errors %+v", status.CheckErrors)
 	}
 	if !status.Latest.Equal(time.Unix(1793926805, 0)) {
 		t.Fatalf("latest %v", status.Latest)
@@ -48,7 +60,8 @@ func TestBackupStatusBeforeSetupAndTheFirstBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Configured || status.Run != nil || !status.Latest.IsZero() || status.Size != nil || status.Check != nil {
+	if status.Configured || status.Run != nil || !status.Latest.IsZero() || status.Size != nil || status.Check != nil ||
+		!status.Setup.IsZero() || status.Unreadable != nil || status.CheckErrors != nil {
 		t.Fatalf("got %+v", status)
 	}
 
@@ -82,6 +95,10 @@ func TestBackupStatusRefusesWhatItDoesNotExpect(t *testing.T) {
 		"bad size":            head + "size 1793932300 big\n",
 		"bad check":           head + "check 1791334800 maybe\n",
 		"short check":         head + "check ok\n",
+		"bad setup":           head + "setup soon\n",
+		"zero nights":         head + "unreadable 1793754000 0\n",
+		"short streak":        head + "checkerror 2\n",
+		"bad streak":          head + "checkerror 1793840400 many\n",
 	} {
 		if _, err := ParseBackupStatus(strings.NewReader(text)); err == nil {
 			t.Errorf("%s: accepted %q", name, text)

@@ -23,7 +23,8 @@ const (
 	BackupOK = "ok"
 	// BackupStopped is a run that reached the end of the night's window first; the next night carries on.
 	BackupStopped = "stopped"
-	// BackupIncomplete is a run that made a backup without some files it could not read.
+	// BackupIncomplete is a run that made a backup without some files it could not read. One such night can be a file
+	// that changed while it was read; BackupStatus.Unreadable counts them.
 	BackupIncomplete = "incomplete"
 	// BackupFailed is a run that made no backup, for example because the destination could not be reached.
 	BackupFailed = "backup_failed"
@@ -50,14 +51,29 @@ type BackupStatus struct {
 	// Kind is the kind of storage, such as "sftp", "s3", "b2" or "local", and Host its host name, "" when it has none.
 	Kind string
 	Host string
+	// Setup is when "filebox-backup setup" created the repository, zero when the status does not say.
+	Setup time.Time
 	// Run is the last nightly run, nil before the first one.
 	Run *BackupRun
+	// Unreadable counts the nights in a row whose backup finished without some files it could not read, nil when the
+	// last backup read every file.
+	Unreadable *BackupStreak
 	// Latest is when the newest complete backup was started, zero until the first one has finished.
 	Latest time.Time
 	// Size is the size of the repository, nil until it was first measured after a complete backup.
 	Size *RepositorySize
-	// Check is the last monthly check that finished, nil before the first one.
+	// Check is the last monthly check that came to a verdict, nil before the first one. OK false means restic found
+	// damaged or missing data.
 	Check *RepositoryCheck
+	// CheckErrors counts the nights in a row the check could not run to the end, for example because the connection
+	// dropped, nil when the last check came to a verdict.
+	CheckErrors *BackupStreak
+}
+
+// BackupStreak is a run of nights in a row, from the first of them.
+type BackupStreak struct {
+	Since  time.Time
+	Nights int
 }
 
 type BackupRun struct {
@@ -131,17 +147,40 @@ func (s *BackupStatus) parseLine(fields []string) error {
 		err = s.parseState(fields[1:])
 	case "destination":
 		err = s.parseDestination(fields[1:])
+	case "setup":
+		s.Setup, err = unixField(fields[1:], 1)
 	case "run":
 		s.Run, err = parseBackupRun(fields[1:])
+	case "unreadable":
+		s.Unreadable, err = parseBackupStreak(fields[1:])
 	case "latest":
 		s.Latest, err = unixField(fields[1:], 1)
 	case "size":
 		s.Size, err = parseRepositorySize(fields[1:])
 	case "check":
 		s.Check, err = parseRepositoryCheck(fields[1:])
+	case "checkerror":
+		s.CheckErrors, err = parseBackupStreak(fields[1:])
 	}
 
 	return err
+}
+
+// <since> <nights>, at least one night.
+func parseBackupStreak(fields []string) (*BackupStreak, error) {
+	if len(fields) != 2 {
+		return nil, errors.New("streak")
+	}
+	since, err := unixField(fields[:1], 1)
+	if err != nil {
+		return nil, err
+	}
+	nights, ok := parseCanonical(fields[1])
+	if !ok || nights == 0 || nights > 1<<20 {
+		return nil, errors.New("streak nights")
+	}
+
+	return &BackupStreak{Since: since, Nights: int(nights)}, nil
 }
 
 func (s *BackupStatus) parseState(fields []string) error {

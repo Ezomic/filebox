@@ -14,10 +14,13 @@ const panelOffsiteStatus = `filebox-backup 1
 checked 1794000000
 state on
 destination sftp u123456.your-storagebox.de
+setup 1791000000
 run 1793926800 5400 incomplete 734003200
+unreadable 1793840400 2
 latest 1793926805
 size 1793932300 412316860416
 check 1791334800 ok
+checkerror 1793926900 1
 `
 
 func newOffsitePanel(t *testing.T, status func() (system.BackupStatus, error)) (*harness, *http.Cookie) {
@@ -55,6 +58,9 @@ func TestPanelShowsTheOffsiteBackup(t *testing.T) {
 	}
 	if view.Size == nil || view.Size.Bytes != 412316860416 || view.Check == nil || !view.Check.OK {
 		t.Fatalf("size %+v check %+v", view.Size, view.Check)
+	}
+	if view.Setup == nil || view.UnreadableNights != 2 || view.CheckErrorNights != 1 {
+		t.Fatalf("setup %v, unreadable %d, check errors %d", view.Setup, view.UnreadableNights, view.CheckErrorNights)
 	}
 	if strings.Contains(body, "u123456@") || strings.Contains(body, "password") {
 		t.Fatalf("the panel must not see more than the host: %s", body)

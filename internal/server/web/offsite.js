@@ -16,10 +16,10 @@
   const RESULTS = {
     ok: ['finished', 'detail'],
     stopped: ['stopped at the 6 hour limit; the next night carries on', 'detail'],
-    incomplete: [`finished, but some files could not be read. ${JOURNAL}`, 'error'],
+    incomplete: ['finished, but some files could not be read', 'error'],
     backup_failed: [`failed. ${JOURNAL}`, 'error'],
     prune_failed: [`backed up, but old backups could not be removed. ${JOURNAL}`, 'error'],
-    prepare_failed: [`could not start: the accounts or folders could not be read. ${JOURNAL}`, 'error'],
+    prepare_failed: [`could not start: no accounts, an account without its folder, or the backup disk not mounted. ${JOURNAL}`, 'error'],
   };
 
   const when = (value) => new Date(value).toLocaleString();
@@ -61,9 +61,12 @@
     return KINDS[view.kind] || view.kind || '-';
   }
 
-  function runRows(run) {
+  function runRows(view) {
+    const { run } = view;
     if (!run) return [row('Last run', 'none yet: the backup runs every night at 01:00')];
-    const [text, className] = RESULTS[run.result] || [run.result, 'error'];
+    let [text, className] = RESULTS[run.result] || [run.result, 'error'];
+    if (run.result === 'incomplete' && view.unreadableNights > 1) text += `, ${view.unreadableNights} nights in a row`;
+    if (run.result === 'incomplete') text += `. ${JOURNAL}`;
     return [
       row('Last run', `${when(run.started)}, ${text}`, className),
       row('Duration', duration(run.seconds)),
@@ -71,10 +74,26 @@
     ];
   }
 
-  function checkRow(check) {
-    if (!check) return row('Monthly check', 'not yet: the first one runs after the first complete backup');
-    if (check.ok) return row('Monthly check', `passed on ${day(check.at)}`);
-    return row('Monthly check', `failed on ${day(check.at)}; the next night checks again. ${JOURNAL}`, 'error');
+  function checkText(check) {
+    if (!check) return ['not yet: the first one runs after the first complete backup', 'detail'];
+    if (check.ok) return [`passed on ${day(check.at)}`, 'detail'];
+    return [`found damage on ${day(check.at)}; the next night checks again. ${JOURNAL}`, 'error'];
+  }
+
+  function checkRow(view) {
+    let [text, className] = checkText(view.check);
+    if (view.checkErrorNights > 0) {
+      const span = view.checkErrorNights === 1 ? 'last night' : `the last ${view.checkErrorNights} nights in a row`;
+      text += `. It could not run to the end ${span}, which says nothing about the data; it is tried every night.`;
+      if (view.checkErrorNights >= 3) className = 'error';
+    }
+    return row('Monthly check', text, className);
+  }
+
+  function summaryText(view) {
+    if (view.latest) return `Last complete backup: ${when(view.latest)}.`;
+    const since = view.setup ? ` It was set up on ${day(view.setup)}.` : '';
+    return `The first complete backup has not finished yet. A large first upload takes several nights.${since}`;
   }
 
   function render(view) {
@@ -85,14 +104,14 @@
       rows.replaceChildren();
       return;
     }
-    summary.textContent = view.latest
-      ? `Last complete backup: ${when(view.latest)}.`
-      : 'The first complete backup has not finished yet. A large first upload takes several nights.';
+    summary.textContent = summaryText(view);
     rows.replaceChildren(
       row('Destination', destination(view)),
-      ...runRows(view.run),
-      row('Repository size', view.size ? `${bytes(view.size.bytes)} on ${day(view.size.measured)}` : 'measured after the first complete backup'),
-      checkRow(view.check),
+      ...runRows(view),
+      row('Repository size', view.size
+        ? `${bytes(view.size.bytes)}, measured on ${day(view.size.measured)} (once a week)`
+        : 'measured after the first complete backup'),
+      checkRow(view),
     );
   }
 
@@ -103,6 +122,8 @@
       if (!response.ok) throw new Error('bad status');
       render(await response.json());
     } catch {
+      card.hidden = false;
+      rows.replaceChildren();
       summary.textContent = 'Could not load the status of the offsite backup.';
     }
   }

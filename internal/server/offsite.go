@@ -19,13 +19,18 @@ type offsiteView struct {
 	Configured bool       `json:"configured"`
 	Checked    *time.Time `json:"checked"`
 	// Kind is "sftp", "s3", "b2", "local" and so on; Host is "" for a kind without one.
-	Kind string          `json:"kind"`
-	Host string          `json:"host"`
-	Run  *offsiteRunView `json:"run"`
+	Kind  string          `json:"kind"`
+	Host  string          `json:"host"`
+	Setup *time.Time      `json:"setup"`
+	Run   *offsiteRunView `json:"run"`
+	// UnreadableNights is how many nights in a row the backup could not read some files, 0 when the last one read all.
+	UnreadableNights int `json:"unreadableNights"`
 	// Latest is when the newest complete backup was started, null before the first one has finished.
 	Latest *time.Time        `json:"latest"`
 	Size   *offsiteSizeView  `json:"size"`
 	Check  *offsiteCheckView `json:"check"`
+	// CheckErrorNights is how many nights in a row the monthly check could not run to the end.
+	CheckErrorNights int `json:"checkErrorNights"`
 }
 
 type offsiteRunView struct {
@@ -65,16 +70,22 @@ func (s *Server) offsite(w http.ResponseWriter, _ *http.Request) {
 func newBackupView(status system.BackupStatus) offsiteView {
 	view := offsiteView{
 		Installed: true, Reported: true, Configured: status.Configured, Checked: optionalTime(status.Checked),
-		Kind: status.Kind, Host: status.Host, Latest: optionalTime(status.Latest),
+		Kind: status.Kind, Host: status.Host, Setup: optionalTime(status.Setup), Latest: optionalTime(status.Latest),
 	}
 	if run := status.Run; run != nil {
 		view.Run = &offsiteRunView{Started: run.Started, Seconds: int64(run.Duration / time.Second), Result: run.Result, Added: run.Added}
+	}
+	if streak := status.Unreadable; streak != nil {
+		view.UnreadableNights = streak.Nights
 	}
 	if size := status.Size; size != nil {
 		view.Size = &offsiteSizeView{Measured: size.Measured, Bytes: size.Bytes}
 	}
 	if check := status.Check; check != nil {
 		view.Check = &offsiteCheckView{At: check.At, OK: check.OK}
+	}
+	if streak := status.CheckErrors; streak != nil {
+		view.CheckErrorNights = streak.Nights
 	}
 
 	return view
