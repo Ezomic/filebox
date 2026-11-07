@@ -138,7 +138,7 @@ convert_family() {
 		return 0
 	fi
 	if disk_at_least 95; then
-		echo "setup.sh: WARNING: the disk is at least 95% full, so the family folder was not converted and has no earlier versions. Free some space and run filebox-update again." >&2
+		echo "setup.sh: WARNING: the disk is at least 95% full, so the family folder was not converted and has no earlier versions yet. Free some space; the next update tries again." >&2
 		return 0
 	fi
 

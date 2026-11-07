@@ -50,6 +50,7 @@
     <a href="#install">Install</a>
     <a href="#portal">Web portal</a>
     <a href="#quotas">Quotas</a>
+    <a href="#versions">Earlier versions</a>
     <a href="#tv">TV add-on</a>
     <a href="#update">Update</a>
     <a href="#problems">Problems</a>
@@ -198,6 +199,24 @@ sudo systemctl start filebox-panel</code></pre>
     <li>Over the limit, the web portal says <em>you are over your storage quota</em>. An SFTP app shows its own failure message, usually "Failure" or "Disk quota exceeded", because the SFTP protocol has no special code for it.</li>
   </ul>
 
+  <h2 id="versions">Earlier versions (snapshots)</h2>
+  <p>Every night at 00:30 the box takes a read-only btrfs snapshot of each person's files folder and of the Family folder. The file browser in the web portal then offers <em>Earlier versions</em>: pick a date to see a folder as it was then, download from it, or put an item back with Restore. This also brings back files that were deleted or overwritten over SFTP, which the web Trash never sees. Restore puts the item back where it was, and whatever is there now goes to the Trash first, so a restore can be undone. Anyone can restore anything in the Family folder.</p>
+  <ul>
+    <li>Kept: every day for 14 days, then the last of each week for 8 weeks and the last of each month for 6 months. History starts on the first night after the update; nothing older can be restored.</li>
+    <li>Snapshots live in <code>/srv/sftp/.snapshots</code>, outside every SFTP folder, so nobody sees them over SFTP. They do not count toward anyone's quota.</li>
+    <li>When the disk reaches 95%, the oldest snapshots are deleted until it is below 95% again, but every folder keeps its last 7. This is checked every hour, and the Users page of the admin panel shows when it happened.</li>
+    <li>A restore is refused while the disk is full (98%), or when it would take the person over their quota.</li>
+    <li>Deleting an account moves its snapshots aside with the archived home folder, and they expire on the same schedule. A new account with the same name never sees them.</li>
+    <li>The Users page of the admin panel shows, for each person and for Family, whether they are protected, how many earlier versions there are, from when, roughly how much space they hold, and the last nightly run. It never shows file names.</li>
+  </ul>
+  <p>It needs the data partition on btrfs, as in the RAID1 section. On ext4 or xfs it stays off, and the admin panel says so. Setup and every update convert the Family folder into a btrfs subvolume once, keeping the old copy until the new one checks out. They skip that, with a warning, while the disk is 95% full; the next update tries again.</p>
+  <h3>Accounts that are not protected</h3>
+  <p>Accounts made before btrfs quotas have a plain files folder, which cannot be snapshotted, and the Users page marks them <em>not protected</em>. Convert each one once, as described under <a href="#quotas">Existing accounts</a> (this needs btrfs quotas turned on first):</p>
+<pre><code>sudo systemctl stop filebox-panel
+sudo filebox-user convert &lt;name&gt;
+sudo systemctl start filebox-panel</code></pre>
+  <p>Their first earlier version is taken the next night.</p>
+  <div class="warn"><strong>Not a backup.</strong> Earlier versions are on the same disk as the files. They help when something is deleted or overwritten, not when the disk dies. On a spinning disk with quotas on, deleting old snapshots costs extra work; it runs at low priority, at night and when the disk is nearly full.</div>
   <h2 id="update">Update</h2>
   <p>One command on the box:</p>
 <pre><code>sudo filebox-update</code></pre>
