@@ -10,9 +10,9 @@ SETUP=$DEPLOY/setup.sh
 T=$(mktemp -d)
 PIDS=()
 trap 'for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; rm -rf "$T"' EXIT
-mkdir -p "$T/stubs" "$T/etc/filebox" "$T/bin" "$T/deploy/systemd" "$T/srv"
-cp "$DEPLOY/systemd/streambox.service" "$T/deploy/systemd/"
-cp "$DEPLOY/streambox-version" "$T/deploy/"
+mkdir -p "$T/stubs" "$T/etc/filebox" "$T/bin" "$T/sbin" "$T/deploy/systemd" "$T/srv"
+cp "$DEPLOY/systemd/streambox.service" "$DEPLOY/systemd/filebox-backup.service" "$DEPLOY/systemd/filebox-backup.timer" "$T/deploy/systemd/"
+cp "$DEPLOY/streambox-version" "$DEPLOY/filebox-backup" "$DEPLOY/filebox-restore" "$T/deploy/"
 
 # A release the script can download: a real executable plus its checksum.
 RELDIR=$T/rel
@@ -34,7 +34,7 @@ BAD=http://127.0.0.1:$(serve "$RELDIR/bad")
 
 # Functions from setup.sh with every absolute path moved into the sandbox.
 sed -n '/^# The add-ons asked for/,/^print_next_steps() {/p' "$SETUP" | sed '$d' |
-	sed "s#/etc/systemd/system/#@@UNITDIR@@/#g; s#/etc/#$T/etc/#g; s#/srv/#$T/srv/#g; s#/usr/local/bin/#$T/bin/#g; s#/var/lib/#$T/var/lib/#g; s#@@UNITDIR@@#$T/etc/systemd-system#g" >"$T/funcs.sh"
+	sed "s#/etc/systemd/system/#@@UNITDIR@@/#g; s#/etc/#$T/etc/#g; s#/srv/#$T/srv/#g; s#/usr/local/bin/#$T/bin/#g; s#/usr/local/sbin/#$T/sbin/#g; s#/var/lib/#$T/var/lib/#g; s#@@UNITDIR@@#$T/etc/systemd-system#g" >"$T/funcs.sh"
 # Sanity: nothing outside the sandbox may be referenced.
 if grep -nE '(^|[ "=])/(etc|srv|usr|var)/' "$T/funcs.sh" | grep -v "$T" | grep -vE '^\s*[0-9]+:\s*#' | grep -vE 'systemd/system|/dev/|/usr/sbin/nologin|/etc/systemd'; then
 	echo "UNSANDBOXED PATH ABOVE"
@@ -99,7 +99,7 @@ run() { # run <extra env...> -- calls install_addons in a fresh shell, prints it
 		SRC="$T/deploy"
 		STREAMBOX_PORT=8090
 		STREAMBOX_RELEASES=${REL:-$GOOD}
-		KNOWN_ADDONS="streambox"
+		eval "$(grep '^KNOWN_ADDONS=' "$SETUP")"
 		die() { echo "die: $*" >&2; exit 1; }
 		log() { echo "==> $*"; }
 		# shellcheck disable=SC1090
@@ -172,6 +172,32 @@ echo "--- bad pinned version"
 echo 'v1.2' >"$T/deploy/streambox-version"
 out=$(ADDONS=streambox run)
 check "refuses a malformed tag" '[[ $out == *"bad streambox version"* && $out == *"install_addons returned 0"* ]]'
+
+echo "--- the backup add-on"
+rm -f "$T/etc/filebox/addons"
+: >"$T/calls.log"
+out=$(ADDONS=backup run)
+echo "$out" | sed 's/^/    /'
+check "reports success" '[[ $out == *"install_addons returned 0"* && $out != *"NOT installed"* ]]'
+check "restic comes from Debian" 'grep -q "apt-get install .*restic" "$T/calls.log"'
+check "the backup and restore helpers are installed for root only" '[ "$(stat -c %a "$T/sbin/filebox-backup")" = 750 ] && [ "$(stat -c %a "$T/sbin/filebox-restore")" = 750 ]'
+check "the secrets folder is root only, the status folder readable by the panel group" '[ "$(stat -c %a "$T/etc/filebox/backup")" = 700 ] && [ "$(stat -c %a "$T/var/lib/filebox-backup")" = 750 ]'
+check "the nightly timer is installed, enabled and started" '[ -f "$T/etc/systemd-system/filebox-backup.service" ] && [ -f "$T/etc/systemd-system/filebox-backup.timer" ] && grep -q "enable filebox-backup.timer" "$T/calls.log" && grep -q "restart filebox-backup.timer" "$T/calls.log"'
+check "the panel restarts to pick it up" 'grep -q "restart --no-block filebox-panel.service" "$T/calls.log"'
+check "addons file remembers backup, and nothing of streambox happened" '[ "$(cat "$T/etc/filebox/addons")" = backup ] && ! grep -q streambox "$T/calls.log"'
+
+echo "--- both add-ons, one of them broken"
+out=$(ADDONS=streambox run)
+check "the broken one is reported and the other still installs" '[[ $out == *"streambox add-on was NOT installed"* && $out == *"Installing the backup add-on"* && $out != *"backup add-on was NOT installed"* ]]'
+check "both are remembered" '[ "$(cat "$T/etc/filebox/addons")" = "backup
+streambox" ]'
+
+echo "--- restic cannot be installed"
+stub apt-get 'case "$*" in *restic*) exit 100 ;; esac'
+rm -f "$T/sbin/filebox-backup"
+out=$(ADDONS=backup run)
+check "it is reported, setup carries on" '[[ $out == *"backup add-on was NOT installed"* && $out == *"install_addons returned 0"* ]]'
+check "the helper was not installed" '[ ! -e "$T/sbin/filebox-backup" ]'
 
 echo
 [ "$fails" = 0 ] && echo "ALL PASSED" || echo "$fails FAILED"

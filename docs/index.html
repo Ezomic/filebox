@@ -51,6 +51,7 @@
     <a href="#portal">Web portal</a>
     <a href="#quotas">Quotas</a>
     <a href="#versions">Earlier versions</a>
+    <a href="#backup">Offsite backup</a>
     <a href="#tv">TV add-on</a>
     <a href="#update">Update</a>
     <a href="#problems">Problems</a>
@@ -216,7 +217,62 @@ sudo systemctl start filebox-panel</code></pre>
 sudo filebox-user convert &lt;name&gt;
 sudo systemctl start filebox-panel</code></pre>
   <p>Their first earlier version is taken the next night.</p>
-  <div class="warn"><strong>Not a backup.</strong> Earlier versions are on the same disk as the files. They help when something is deleted or overwritten, not when the disk dies. On a spinning disk with quotas on, deleting old snapshots costs extra work; it runs at low priority, at night and when the disk is nearly full.</div>
+  <div class="warn"><strong>Not a backup.</strong> Earlier versions are on the same disk as the files. They help when something is deleted or overwritten, not when the disk dies. For that, see <a href="#backup">Offsite backup</a>. On a spinning disk with quotas on, deleting old snapshots costs extra work; it runs at low priority, at night and when the disk is nearly full.</div>
+
+  <h2 id="backup">Offsite backup (optional)</h2>
+  <p>The backup add-on keeps an encrypted copy of the family's files away from the box, made with <a href="https://restic.net">restic</a>, so a fire, a theft, a power surge or a wrong command does not lose them. The mirror only covers a dead disk, and earlier versions live on the same disks as the files.</p>
+  <h3>Choose where it goes</h3>
+  <p>Any restic repository works. This guide uses a <a href="https://www.hetzner.com/storage/storage-box/">Hetzner Storage Box</a>: storage you rent in a data centre, reached over SFTP. Pick a size with room to grow: the backup is about as big as the files in it, plus a little for the older backups it keeps. In the Hetzner Console, turn on <em>SSH support</em> for the Storage Box (it takes a few minutes to start working), and note its user name (such as <code>u123456</code>) and password.</p>
+  <h3>Set it up</h3>
+  <p>Install the add-on (the Windows wizard does not offer it), then run setup on the box:</p>
+<pre><code>cd deploy
+sudo ADDONS=backup ./setup.sh ../filebox-panel
+sudo filebox-backup setup</code></pre>
+  <p>Setup asks where the backup goes. For a Storage Box it makes an SSH key for this box, shows the server's fingerprint so you can compare it with the one Hetzner publishes, adds the key to the Storage Box (it asks for the Storage Box password once) and creates the backup in the folder <code>filebox</code>. For another destination, pick the second choice and give a restic repository URL (<code>sftp:</code>, <code>s3:</code>, <code>b2:</code>, <code>rest:</code> or a folder); it asks for the keys S3 or B2 need. An <code>sftp:</code> URL must name the user, such as <code>sftp://name@host:22/filebox</code>. A folder must be on a disk of its own, such as a USB disk mounted at <code>/mnt/backup</code>: setup refuses a folder on the system or data disk, because a copy on the same disks is no backup, and a night when that disk is not mounted fails instead of filling the system disk.</p>
+  <p>At the end it prints the backup password, once. <strong>Store it in your password manager straight away.</strong> The box keeps a copy for the nightly runs, but if the box is lost, that copy is lost with it, and without the password nobody can read the backup. The destination, the password and the keys stay in <code>/etc/filebox/backup</code>, readable by root only; the admin panel only shows the host name.</p>
+  <div class="warn"><strong>Whoever has the backup password can read every family file in the backup</strong>, from anywhere the backup can be reached. That is the same as having root on the box today. Keep the password as safe as the admin password, and do not share it.</div>
+  <p>To move the backup to a new destination later, delete <code>/etc/filebox/backup/env</code> and run <code>sudo filebox-backup setup</code> again. That makes a new backup with a new password; the old one stays where it was, with its own password.</p>
+  <h3>What is in it</h3>
+  <ul>
+    <li>In: every account's files, the Family folder, the panel data in <code>/var/lib/filebox</code> (the admin login, portal roles, share links, contacts and alert settings) and <code>/etc/filebox</code>.</li>
+    <li>Not in: the web Trash, unfinished uploads, thumbnails, the TV add-on videos in <code>/srv/streambox/media</code>, and the archived home folders of deleted accounts. <strong>A deleted account's files stay in the offsite backup</strong> until the backups made before the delete expire, which takes up to 12 months. The accounts themselves (names and passwords) live in the system, not in the backup: on a new box, create them again.</li>
+    <li>The files come from that night's earlier versions, taken at 00:30, so each folder is backed up as it was at one moment. Accounts without earlier versions, and boxes without btrfs, are read from the live folders.</li>
+  </ul>
+  <h3>When it runs</h3>
+  <p>Every night at 01:00, at low priority and without a speed limit. A run stops after 6 hours and the next night carries on where it stopped, so the first backup of a few hundred GB takes several nights, on a slow home connection a week or more. After that a night usually takes minutes. If the box is off at 01:00, that night is skipped.</p>
+  <ul>
+    <li>Kept: the last 7 daily, 4 weekly and 12 monthly backups. Older ones are removed after each backup.</li>
+    <li>Once a month it reads 5% of the stored data back, to make sure the backup can really be restored. When the check cannot run to the end, for example because the connection drops, it tries again the next night.</li>
+    <li>The dashboard shows the destination, the last run, how long it took, how much it added, the size of the backup (measured once a week) and the last monthly check. It never shows file names.</li>
+    <li>You get an alert when a night fails; when some files could not be read 3 nights in a row (once can be a file that changed while it was read); when there has been no complete backup for 3 days, counted once the first one has finished; when the first backup has not finished 14 days after setup; when the monthly check finds damaged or missing data; and when the check could not run 3 nights in a row.</li>
+    <li>restic keeps an index of the backup in memory, and the nightly runs are set to use less of it at the cost of some CPU. On a PC with little memory, watch the first runs for out-of-memory errors.</li>
+  </ul>
+<pre><code>sudo systemctl start --no-block filebox-backup.service   # run now
+sudo systemctl stop filebox-backup.service               # stop a run; the next one carries on
+sudo journalctl -u filebox-backup                        # what the runs did</code></pre>
+  <h3>Restore</h3>
+  <p>Restore on the box with <code>filebox-restore</code>. It always restores into a new folder, never over the live files, and prints where it went. Without <code>--to</code> that is a folder in <code>/srv/sftp/.restored</code>, which only root can open. Check there is room first: <code>df -h /srv/sftp</code>.</p>
+  <table>
+    <tr><th>Command</th><th>What it restores</th></tr>
+    <tr><td><code>sudo filebox-restore list</code></td><td>Nothing: it lists the backups with their IDs and dates</td></tr>
+    <tr><td><code>sudo filebox-restore user amy</code></td><td>amy's files from the latest backup, also when her account was deleted since</td></tr>
+    <tr><td><code>sudo filebox-restore family 1a2b3c4d</code></td><td>The Family folder from backup <code>1a2b3c4d</code></td></tr>
+    <tr><td><code>sudo filebox-restore path /srv/sftp/amy/files/Photos/2024</code></td><td>One folder or file, by the path it had on the box</td></tr>
+    <tr><td>add <code>--to /root/restored</code></td><td>Into a folder of your choice, which must not exist yet</td></tr>
+  </table>
+  <p>To give restored files back, move them into place and make them the person's again (for Family use <code>filebox:filebox</code>):</p>
+<pre><code>sudo mv /srv/sftp/.restored/2026-11-08T101500-amy /srv/sftp/amy/files/Restored
+sudo chown -R amy:sftpusers /srv/sftp/amy/files/Restored</code></pre>
+  <h3>If the box is lost</h3>
+  <p>Any Linux computer with restic and the backup password can restore. For a Storage Box, give that computer its own key first (this asks for the Storage Box password), then restore; restic asks for the backup password:</p>
+<pre><code>sudo apt install restic
+ssh-keygen -t ed25519
+ssh -p 23 u123456@u123456.your-storagebox.de install-ssh-key &lt; ~/.ssh/id_ed25519.pub
+restic -r sftp://u123456@u123456.your-storagebox.de:23/filebox snapshots
+restic -r sftp://u123456@u123456.your-storagebox.de:23/filebox restore latest --target ~/restored</code></pre>
+  <p>The files end up in <code>~/restored/srv/sftp</code>, one folder per account. A new filebox makes its own backup in a new folder on the Storage Box (setup does not reuse a folder that already holds one), so the old backups stay as they are until you delete them.</p>
+  <h3>Remove it</h3>
+  <p>Run <code>sudo systemctl disable --now filebox-backup.timer</code>, remove the <code>backup</code> line from <code>/etc/filebox/addons</code> (otherwise the next update installs it again), delete <code>/var/lib/filebox-backup</code> and run <code>sudo systemctl restart filebox-panel</code>. <code>/etc/filebox/backup</code> still holds the password and keys; delete it once you no longer need the backup.</p>
 
   <h2 id="alerts">Alert emails</h2>
   <p>The panel checks the box every 10 minutes and lists open problems at the top of the dashboard. To get them by email as well, open Settings in the admin panel, enter your address, save it and press <em>Send test email</em>. The emails use the same mail setup as password reset (<code>mail.json</code> in <code>/var/lib/filebox</code>); without it, problems only show on the dashboard.</p>
@@ -227,6 +283,7 @@ sudo systemctl start filebox-panel</code></pre>
     <li>The mirror is missing a disk, the data disk is not mounted (see <a href="#disks">If a mirror disk dies</a>), or btrfs counts new read or write errors on it.</li>
     <li>The data disk is 95% full. That is over once it is below 90% again.</li>
     <li>The nightly earlier versions failed, or old ones were deleted to free space.</li>
+    <li>With the backup add-on: a nightly offsite backup failed, or some files could not be read for it 3 nights in a row, there has been no complete one for 3 days, the first one has not finished 14 days after setup, or the monthly check found damage or could not run 3 nights in a row (see <a href="#backup">Offsite backup</a>).</li>
     <li>The portal certificate expires within 14 days.</li>
     <li>The box restarted without a clean shutdown, for example after a power cut. This stays open for a day. To see what the box knows about the previous run: <code>sudo journalctl -b -1 _PID=1 UNIT=shutdown.target</code> shows a "Reached target shutdown.target" line after a clean shutdown, and nothing after a power cut.</li>
     <li>A check could not look for a whole day, for example because <code>filebox-health.timer</code>, which reads SMART and the data disk every 10 minutes, stopped. The dashboard lists such a check sooner, as <em>Could not check</em>.</li>
@@ -260,7 +317,7 @@ sudo systemctl start filebox-panel</code></pre>
     <tr><td>An update broke something</td><td><code>sudo filebox-update rollback</code></td></tr>
     <tr><td>Disk getting full or failing</td><td>The admin dashboard shows disk usage and drive health.</td></tr>
   </table>
-  <div class="warn"><strong>Backups.</strong> filebox does not back up the files. A copy of <code>/srv/sftp</code> on another disk is your responsibility.</div>
+  <div class="warn"><strong>Backups.</strong> filebox only backs up the files with the <a href="#backup">offsite backup add-on</a>. Without it, a copy of <code>/srv/sftp</code> somewhere else is your responsibility.</div>
 
   <h2 id="security">What is exposed</h2>
   <ul>
@@ -268,6 +325,7 @@ sudo systemctl start filebox-panel</code></pre>
     <li>Not public: the admin panel (Tailscale only) and SSH on port 22 (Tailscale, and your home network until you close it in step 8).</li>
     <li>Repeated wrong passwords are slowed by the portal itself and then banned at the firewall by fail2ban.</li>
     <li>With the TV add-on, the portal also serves the TV streams to anyone who has the playlist link (still on port 443).</li>
+    <li>With the backup add-on, the box connects out to the backup destination every night. Nothing new is opened in the router, and the backup is encrypted before it leaves the box.</li>
     <li>Passwords are never stored by the web portal. It asks the system to check the same password SFTP uses.</li>
     <li>Keep the box updated: run <code>sudo apt update &amp;&amp; sudo apt upgrade</code> now and then, and <code>sudo filebox-update</code> when there is a new release.</li>
   </ul>
