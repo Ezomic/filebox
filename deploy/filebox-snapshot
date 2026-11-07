@@ -39,6 +39,7 @@ QUOTAS=0
 TAKEN=0
 PRUNED=0
 USERS=()
+USERS_KNOWN=0
 declare -A ERRORS=()
 declare -A EXCL=()
 
@@ -90,6 +91,7 @@ load_users() {
 			USERS+=("$name")
 		fi
 	done
+	USERS_KNOWN=1
 }
 
 valid_stamp() {
@@ -282,8 +284,13 @@ held_by() {
 	echo "$total"
 }
 
+# Without the account list nobody can be called gone, except a folder moved aside when its account was deleted.
 protection_of() {
-	if [ "$1" != "$FAMILY" ] && ! is_current_user "$1"; then
+	if [[ $1 =~ $DELETED_RE ]]; then
+		echo gone
+	elif [ "$1" != "$FAMILY" ] && [ "$USERS_KNOWN" -eq 0 ]; then
+		echo unchecked
+	elif [ "$1" != "$FAMILY" ] && ! is_current_user "$1"; then
 		echo gone
 	elif is_subvolume "$(source_of "$1")"; then
 		echo yes
@@ -395,6 +402,13 @@ usage() {
 	die "usage: filebox-snapshot daily|check"
 }
 
+# A nightly run that stops halfway still reports, so the panel never keeps showing the previous good night.
+report_unfinished_daily() {
+	set +e
+	DAILY="$(date +%s) failed"
+	write_status
+}
+
 main() {
 	[ $# -eq 1 ] || usage
 	case $1 in
@@ -406,6 +420,7 @@ main() {
 	exec 9>"$LOCK"
 	if [ "$1" = daily ]; then
 		flock -w 3600 9 || die "an earlier run is still busy"
+		trap report_unfinished_daily EXIT
 	elif ! flock -n 9; then
 		exit 0
 	fi
@@ -419,6 +434,7 @@ main() {
 		load_quotas
 	fi
 	write_status
+	trap - EXIT
 }
 
 main "$@"

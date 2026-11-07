@@ -98,14 +98,20 @@ create_accounts() {
 	install -d -o root -g root -m 0755 /srv/sftp
 	# The shared Family folder sits beside the homes, so it is in nobody's quota. Only the panel touches it (SFTP users
 	# are chrooted elsewhere), and the panel cannot create it itself because it cannot write to /srv/sftp.
-	install -d -o filebox -g filebox -m 0770 /srv/sftp/_family
 	convert_family
+	install -d -o filebox -g filebox -m 0770 /srv/sftp/_family
 	install -d -o filebox -g filebox -m 0750 /var/lib/filebox
 	# filebox-snapshot writes its status here; root owned, so the panel can read it but never swap it.
 	install -d -o root -g filebox -m 0750 /var/lib/filebox-snapshot
 	install -d -o root -g root -m 0750 /etc/filebox
 	install -d -o root -g root -m 0755 /usr/local/libexec
 }
+
+# The family folder conversion builds the subvolume beside the live folder and swaps it in only once it checks out.
+FAMILY_DIR=/srv/sftp/_family
+FAMILY_NEW=/srv/sftp/_family.new
+FAMILY_OLD=/srv/sftp/_family.pre-snapshots
+PANEL_STOPPED=0
 
 # used*100 >= total*percent for the data disk, like the panel's storage levels.
 disk_at_least() {
@@ -114,57 +120,119 @@ disk_at_least() {
 	((total > 0 && (total - free) * 100 >= total * $1))
 }
 
-# Same columns for the old and the new family folder, so the copy can be checked before the old one goes.
+# A btrfs subvolume root always has inode number 256.
+is_subvolume() {
+	[ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c %i "$1")" = 256 ]
+}
+
+# Same columns for the live and the new family folder, so the copy can be checked before anything moves.
 tree_listing() {
 	(cd "$1" && find . -mindepth 1 \( -type d -printf 'd %m %u %g %p\n' \) -o \( ! -type d -printf '%y %m %u %g %s %T@ %p\n' \) | sort)
 }
 
-restore_family() {
-	mv -T /srv/sftp/_family.pre-snapshots /srv/sftp/_family
-	chown filebox:filebox /srv/sftp/_family
-	chmod 0770 /srv/sftp/_family
+family_warning() {
+	echo "setup.sh: WARNING: $*" >&2
 }
 
-# The family folder becomes a btrfs subvolume once, so filebox-snapshot can keep earlier versions of it. Like
-# filebox-user convert, the old folder is moved aside and locked, the new one is filled with reflinks (quick, and
-# almost no extra space), and the old one only goes once the copy checks out. Never on a nearly full disk.
-convert_family() {
-	local family=/srv/sftp/_family old=/srv/sftp/_family.pre-snapshots
-	if [ "$(stat -f -c %T /srv/sftp)" != btrfs ] || ! command -v btrfs >/dev/null || [ "$(stat -c %i "$family")" = 256 ]; then
+discard_new_family() {
+	if is_subvolume "$FAMILY_NEW"; then
+		btrfs subvolume delete "$FAMILY_NEW" >/dev/null
+	elif [ -e "$FAMILY_NEW" ] || [ -L "$FAMILY_NEW" ]; then
+		rm -rf --one-file-system "$FAMILY_NEW"
+	fi
+}
+
+put_family_back() {
+	mv -T "$FAMILY_OLD" "$FAMILY_DIR" && chown filebox:filebox "$FAMILY_DIR" && chmod 0770 "$FAMILY_DIR"
+}
+
+# The portal writes into the family folder, so it is stopped while the copy is made, checked and swapped in. Every way
+# out of convert_family starts it again, also when setup stops on an error halfway.
+stop_panel_for_family() {
+	systemctl is-active --quiet filebox-panel.service 2>/dev/null || return 0
+	systemctl stop filebox-panel.service
+	PANEL_STOPPED=1
+	trap 'systemctl start --no-block filebox-panel.service' EXIT
+}
+
+start_panel_after_family() {
+	[ "$PANEL_STOPPED" -eq 1 ] || return 0
+	trap - EXIT
+	PANEL_STOPPED=0
+	systemctl start --no-block filebox-panel.service
+}
+
+# The copy is checked before anything moves, so a run that stopped between the two moves of the swap left a complete
+# new folder, and the swap is finished. In any other case the old folder may be the only full copy.
+resume_family_conversion() {
+	if [ -e "$FAMILY_DIR" ] || [ -L "$FAMILY_DIR" ]; then
+		family_warning "$FAMILY_OLD is left over from converting the family folder and may hold files that $FAMILY_DIR lacks. Compare the two before removing anything by hand."
+	elif is_subvolume "$FAMILY_NEW"; then
+		log "Finishing the interrupted conversion of the family folder"
+		mv -T "$FAMILY_NEW" "$FAMILY_DIR"
+		rm -rf --one-file-system "$FAMILY_OLD"
+	else
+		put_family_back
+		family_warning "the family folder was found moved aside to $FAMILY_OLD and is put back; it is not converted yet"
+	fi
+}
+
+build_and_swap_family() {
+	if ! btrfs subvolume create "$FAMILY_NEW" >/dev/null; then
+		family_warning "could not create the family subvolume; the family folder is unchanged"
 		return 0
 	fi
-	if [ -e "$old" ]; then
-		echo "setup.sh: $old is left from an earlier conversion of the family folder. Compare it with $family, remove it by hand and run setup again." >&2
+	if ! cp -a --reflink=always "$FAMILY_DIR/." "$FAMILY_NEW/" || ! chown filebox:filebox "$FAMILY_NEW" || ! chmod 0770 "$FAMILY_NEW" ||
+		[ "$(tree_listing "$FAMILY_DIR")" != "$(tree_listing "$FAMILY_NEW")" ]; then
+		discard_new_family || true
+		family_warning "could not make a matching copy of the family folder; it is unchanged and the next update tries again"
+		return 0
+	fi
+	if ! mv -T "$FAMILY_DIR" "$FAMILY_OLD"; then
+		discard_new_family || true
+		family_warning "could not move the family folder aside; it is unchanged"
+		return 0
+	fi
+	if ! mv -T "$FAMILY_NEW" "$FAMILY_DIR"; then
+		put_family_back
+		discard_new_family || true
+		family_warning "could not swap in the converted family folder; it is unchanged"
+		return 0
+	fi
+	rm -rf --one-file-system "$FAMILY_OLD"
+}
+
+# The family folder becomes a btrfs subvolume once, so filebox-snapshot can keep earlier versions of it. The copy is
+# built as _family.new with reflinks (quick, and almost no extra space) while the live folder stays as it is, checked
+# against it, and only then swapped in; the old folder goes last. Never on a nearly full disk.
+convert_family() {
+	if [ "$(stat -f -c %T /srv/sftp)" != btrfs ] || ! command -v btrfs >/dev/null; then
+		return 0
+	fi
+	if [ -e "$FAMILY_OLD" ] || [ -L "$FAMILY_OLD" ]; then
+		resume_family_conversion
+		return 0
+	fi
+	if ! discard_new_family; then
+		family_warning "could not delete the leftover $FAMILY_NEW; the family folder is not converted"
+		return 0
+	fi
+	if [ ! -e "$FAMILY_DIR" ] && [ ! -L "$FAMILY_DIR" ]; then
+		btrfs subvolume create "$FAMILY_DIR" >/dev/null || family_warning "could not create the family folder as a subvolume"
+		return 0
+	fi
+	if is_subvolume "$FAMILY_DIR"; then
 		return 0
 	fi
 	if disk_at_least 95; then
-		echo "setup.sh: WARNING: the disk is at least 95% full, so the family folder was not converted and has no earlier versions yet. Free some space; the next update tries again." >&2
+		family_warning "the disk is at least 95% full, so the family folder was not converted and has no earlier versions yet. Free some space; the next update tries again."
 		return 0
 	fi
 
 	log "Converting the family folder to a btrfs subvolume"
-	systemctl stop filebox-panel.service 2>/dev/null || true
-	mv -T "$family" "$old"
-	chown root:root "$old"
-	chmod 0700 "$old"
-	if ! btrfs subvolume create "$family" >/dev/null; then
-		restore_family
-		echo "setup.sh: WARNING: could not create the family subvolume, the family folder is unchanged" >&2
-		return 0
-	fi
-	if ! cp -a --reflink=always "$old/." "$family/"; then
-		btrfs subvolume delete "$family" >/dev/null || true
-		restore_family
-		echo "setup.sh: WARNING: could not copy the family folder, it is unchanged" >&2
-		return 0
-	fi
-	chown filebox:filebox "$family"
-	chmod 0770 "$family"
-	if [ "$(tree_listing "$old")" = "$(tree_listing "$family")" ]; then
-		rm -rf --one-file-system "$old"
-	else
-		echo "setup.sh: WARNING: the converted family folder does not match the old one, which is kept at $old (root only). Compare them, then remove it by hand." >&2
-	fi
+	stop_panel_for_family
+	build_and_swap_family
+	start_panel_after_family
 }
 
 configure_sshd() {
