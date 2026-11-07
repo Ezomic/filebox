@@ -228,8 +228,10 @@ sudo systemctl start filebox-panel</code></pre>
     <li>The data disk is 95% full. That is over once it is below 90% again.</li>
     <li>The nightly earlier versions failed, or old ones were deleted to free space.</li>
     <li>The portal certificate expires within 14 days.</li>
-    <li>The box restarted without a clean shutdown, for example after a power cut. This stays open for a day.</li>
+    <li>The box restarted without a clean shutdown, for example after a power cut. This stays open for a day. To see what the box knows about the previous run: <code>sudo journalctl -b -1 _PID=1 UNIT=shutdown.target</code> shows a "Reached target shutdown.target" line after a clean shutdown, and nothing after a power cut.</li>
+    <li>A check could not look for a whole day, for example because <code>filebox-health.timer</code>, which reads SMART and the data disk every 10 minutes, stopped. The dashboard lists such a check sooner, as <em>Could not check</em>.</li>
   </ul>
+  <p>A problem that goes away is over once it has stayed away for an hour, so one that comes and goes stays one alert.</p>
   <h3>Outside monitor</h3>
   <p><code>https://files.thijssensoftware.nl/healthz</code> answers <code>200 ok</code> while nothing is wrong and a bare <code>503</code> while any problem is open, so an uptime monitor notices a problem as well as a box that is down. It never says which problem, and it is rate limited per address, so check it at most once a minute. On a status page, keep it private (in the status app: <code>is_public</code> off), so a disk warning never shows in public.</p>
   <p>A share link named <code>healthz</code> that was made before this update no longer opens; the panel log names it when the panel starts.</p>
