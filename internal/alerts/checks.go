@@ -223,7 +223,7 @@ func ioErrorProblems(devices []system.BtrfsDevice, counters *Counters, now time.
 	if !counter.Rising(now) {
 		return nil
 	}
-	detail := fmt.Sprintf("btrfs counted %d new read, write or flush errors on the data disk since %s, %d in all",
+	detail := fmt.Sprintf("btrfs counted %d new read, write or flush errors on the data disk, the last ones on %s, %d in all",
 		counter.Count-counter.From, when(counter.RoseAt), counter.Count)
 	if len(perDevice) > 0 {
 		detail += " (" + strings.Join(perDevice, ", ") + ")"
