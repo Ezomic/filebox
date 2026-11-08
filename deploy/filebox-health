@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# Reads the disk health for the admin panel: SMART for every physical disk, and for the btrfs data disk whether it is
+# mounted, which disks of a mirror are missing, the read, write and flush errors btrfs counted per disk, and what the
+# last scrub found. Installed as /usr/local/sbin/filebox-health and run as root by filebox-health.timer every 10
+# minutes, never by the panel: the panel's sandbox hides the disks. It writes /var/lib/filebox-health/status for the
+# panel: models, serial numbers, disk IDs, counts and dates, never a file name. Read-only towards the disks: it never
+# starts a self-test or a scrub, and -n standby keeps a sleeping disk asleep.
+set -uo pipefail
+
+export LC_ALL=C
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+umask 022
+
+readonly BASE=/srv/sftp
+readonly SYSFS=/sys/fs/btrfs
+readonly STATE_DIR=/var/lib/filebox-health
+readonly STATUS=$STATE_DIR/status
+readonly PANEL_GROUP=filebox
+readonly DEVICE_RE='^/dev/(sd[a-z]+|hd[a-z]+|nvme[0-9]+)$'
+readonly UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+die() {
+	echo "filebox-health: $*" >&2
+	exit 1
+}
+
+# One compact smartctl JSON document per disk.
+report_smart() {
+	local dev line
+	if ! command -v smartctl >/dev/null || ! command -v jq >/dev/null; then
+		echo "smart unavailable"
+		return
+	fi
+	while IFS= read -r dev; do
+		[[ $dev =~ $DEVICE_RE ]] || continue
+		# smartctl sets exit bits for warnings and failing disks; the JSON is still what we want.
+		line=$(smartctl -j -H -A -n standby "$dev" | jq -c . 2>/dev/null) || true
+		if [ -n "$line" ]; then
+			echo "smart $line"
+		fi
+	done < <(smartctl --scan -j | jq -r '.devices[].name')
+}
+
+# error_stats holds one "<kind>_errs <count>" line per kind; corruption and generation errors are the scrub's business.
+io_errors() {
+	if [ -r "$1/error_stats" ]; then
+		awk '$1 == "write_errs" || $1 == "read_errs" || $1 == "flush_errs" { sum += $2 } END { print sum + 0 }' "$1/error_stats"
+	else
+		echo -
+	fi
+}
+
+# Every line is collected first, so a half-read list never reaches the panel.
+report_devices() {
+	local uuid dir missing state
+	local -a lines=()
+	uuid=$(findmnt -n -o UUID --target "$BASE" 2>/dev/null | head -n 1)
+	if ! [[ $uuid =~ $UUID_RE ]] || [ ! -d "$SYSFS/$uuid/devinfo" ]; then
+		echo "devices unknown"
+		return
+	fi
+	for dir in "$SYSFS/$uuid/devinfo"/*; do
+		[[ ${dir##*/} =~ ^[1-9][0-9]*$ ]] || continue
+		missing=$(cat "$dir/missing" 2>/dev/null)
+		case $missing in
+		0) state=ok ;;
+		1) state=missing ;;
+		*)
+			echo "devices unknown"
+			return
+			;;
+		esac
+		lines+=("device ${dir##*/} $state $(io_errors "$dir")")
+	done
+	if [ ${#lines[@]} -eq 0 ]; then
+		echo "devices unknown"
+		return
+	fi
+	printf '%s\n' "${lines[@]}"
+}
+
+# "btrfs scrub status" prints "no stats available" before the first scrub, and otherwise lines such as
+#   Scrub started:    Sun Nov  1 03:00:01 2026
+#   Status:           finished
+#   Error summary:    read=1 csum=3          (or: no errors found)
+#     Uncorrectable:  1
+report_scrub() {
+	local out status when started=- summary pair errors=0 uncorrectable=0
+	if ! out=$(btrfs scrub status "$BASE" 2>/dev/null); then
+		echo "scrub unknown"
+		return
+	fi
+	if grep -q "no stats available" <<<"$out"; then
+		echo "scrub none - 0 0"
+		return
+	fi
+	status=$(sed -n 's/^Status:[[:space:]]*\([a-z]*\).*/\1/p' <<<"$out" | head -n 1)
+	case $status in
+	running | finished | aborted | interrupted) ;;
+	*)
+		echo "scrub unknown"
+		return
+		;;
+	esac
+	when=$(sed -n 's/^Scrub \(started\|resumed\):[[:space:]]*//p' <<<"$out" | head -n 1)
+	if [ -n "$when" ] && when=$(date -d "$when" +%s 2>/dev/null) && [[ $when =~ ^[0-9]+$ ]]; then
+		started=$when
+	fi
+	summary=$(sed -n 's/^Error summary:[[:space:]]*//p' <<<"$out" | head -n 1)
+	if [[ $summary != *"no errors found"* ]]; then
+		for pair in $summary; do
+			if [[ $pair =~ ^[a-z_]+=([0-9]+)$ ]]; then
+				errors=$((errors + 10#${BASH_REMATCH[1]}))
+			fi
+		done
+		uncorrectable=$(sed -n 's/^[[:space:]]*Uncorrectable:[[:space:]]*\([0-9][0-9]*\).*/\1/p' <<<"$out" | head -n 1)
+		uncorrectable=$((10#${uncorrectable:-0}))
+		if [ "$uncorrectable" -gt "$errors" ]; then
+			errors=$uncorrectable
+		fi
+	fi
+	echo "scrub $status $started $errors $uncorrectable"
+}
+
+# The data disk is "nofail" in /etc/fstab, so a mirror with a dead disk leaves /srv/sftp unmounted and the box running,
+# with files landing on the system disk. That shows as /srv/sftp being listed as btrfs but not on btrfs.
+report_btrfs() {
+	local fstype
+	fstype=$(stat -f -c %T -- "$BASE" 2>/dev/null)
+	if [ "$(findmnt --fstab -n -o FSTYPE "$BASE" 2>/dev/null)" = btrfs ] && [ "$fstype" != btrfs ]; then
+		echo "state unmounted"
+	elif [ "$fstype" != btrfs ]; then
+		echo "state off not_btrfs"
+	elif ! command -v btrfs >/dev/null; then
+		echo "state off no_btrfs_progs"
+	else
+		echo "state on"
+		report_devices
+		report_scrub
+	fi
+}
+
+status_lines() {
+	echo "filebox-health 1"
+	echo "checked $(date +%s)"
+	report_smart
+	report_btrfs
+}
+
+# The status directory belongs to root, so the panel can read the file but nobody else can swap it underneath.
+write_status() {
+	local content tmp
+	content=$(status_lines)
+	install -d -o root -g "$PANEL_GROUP" -m 0750 "$STATE_DIR" || die "could not create $STATE_DIR"
+	tmp=$(mktemp "$STATUS.XXXXXX") || die "could not write $STATUS"
+	if ! printf '%s\n' "$content" >"$tmp" || ! chown "root:$PANEL_GROUP" "$tmp" || ! chmod 0640 "$tmp" || ! mv -f "$tmp" "$STATUS"; then
+		rm -f "$tmp"
+		die "could not write $STATUS"
+	fi
+}
+
+[ $# -eq 0 ] || die "usage: filebox-health"
+[ "$(id -u)" -eq 0 ] || die "must run as root"
+write_status

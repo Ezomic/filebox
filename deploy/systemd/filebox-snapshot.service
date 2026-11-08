@@ -1,0 +1,8 @@
+[Unit]
+Description=Take and prune the filebox earlier versions (btrfs snapshots)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/filebox-snapshot daily
+Nice=19
+IOSchedulingClass=idle

@@ -27,16 +27,21 @@
       </nav>
     </header>
     <p class="error" id="status" role="status"></p>
+    <p class="notice" id="version-notice" role="status" hidden></p>
     <p class="detail" data-i18n="family.intro">Everyone with an account can see, add, rename and delete files here. They do not count towards anyone's storage quota, and they are only available on the website, not over SFTP.</p>
     <p><a class="link" href="/family/trash" data-i18n="family.trashLink">Family trash</a></p>
     <section class="card">
+      <div class="toolbar" id="versions" hidden>
+        <label for="version-pick" data-i18n="versions.label">Earlier versions</label>
+        <select id="version-pick"></select>
+      </div>
       <nav class="crumbs" id="crumbs" aria-label="Folder path" data-i18n-attr="aria-label:files.path"></nav>
       <table id="files">
         <tbody id="file-rows"></tbody>
       </table>
       <p class="detail" id="empty" data-i18n="files.empty" hidden>This folder is empty.</p>
     </section>
-    <section class="card stacked">
+    <section class="card stacked" id="upload-card">
       <div class="label" data-i18n="upload.heading">Upload to this folder</div>
       <div class="toolbar">
         <label class="picker"><span data-i18n="upload.pickFiles">Choose files</span> <input type="file" id="upload-input" multiple></label>
