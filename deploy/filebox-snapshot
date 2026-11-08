@@ -1,0 +1,440 @@
+#!/usr/bin/env bash
+# Takes and prunes the read-only btrfs snapshots behind "Earlier versions" in the web portal. Installed as
+# /usr/local/sbin/filebox-snapshot and run as root by systemd timers, never by the panel:
+#   filebox-snapshot daily   snapshot every covered folder (once a day), prune by age, then check the free space
+#   filebox-snapshot check   while the disk is 95% full, delete the oldest snapshots; then refresh the status
+# Covered: every user whose files folder is a btrfs subvolume, and the family folder once it is one. Snapshots live in
+# /srv/sftp/.snapshots/<user or _family>/<YYYY-MM-DDTHHMM>, outside every SFTP chroot. Each is kept for 14 days, the
+# last of each week for 8 weeks and the last of each month for 6 months. On a 95% full disk the oldest go first, but
+# every folder keeps its newest 7. The admin panel reads /var/lib/filebox-snapshot/status: account names, counts,
+# dates and sizes, never file names.
+set -euo pipefail
+
+export LC_ALL=C
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+umask 022
+
+readonly BASE=/srv/sftp
+readonly SNAPSHOTS=$BASE/.snapshots
+readonly STATE_DIR=/var/lib/filebox-snapshot
+readonly STATUS=$STATE_DIR/status
+readonly LOCK=/run/filebox-snapshot.lock
+readonly USER_TOOL=/usr/local/sbin/filebox-user
+readonly FAMILY=_family
+readonly PANEL_GROUP=filebox
+readonly NAME_RE='^[a-z][a-z0-9_-]{2,31}$'
+readonly DELETED_RE='^[a-z][a-z0-9_-]{2,31}\.deleted-[0-9]{14}$'
+readonly STAMP_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T([01][0-9]|2[0-3])[0-5][0-9]$'
+readonly DAILY_DAYS=14
+readonly WEEKS=8
+readonly MONTHS=6
+readonly FULL_PERCENT=95
+readonly KEEP_NEWEST=7
+
+STATE=on
+STAMP=""
+DAILY=""
+LOWSPACE=""
+QUOTAS=0
+TAKEN=0
+PRUNED=0
+USERS=()
+USERS_KNOWN=0
+declare -A ERRORS=()
+declare -A EXCL=()
+
+log() {
+	echo "filebox-snapshot: $*" >&2
+}
+
+die() {
+	log "$*"
+	exit 1
+}
+
+on_btrfs() {
+	[ "$(stat -f -c %T -- "$1" 2>/dev/null)" = btrfs ]
+}
+
+# A btrfs subvolume root always has inode number 256.
+is_subvolume() {
+	[ -d "$1" ] && [ ! -L "$1" ] && on_btrfs "$1" && [ "$(stat -c %i -- "$1")" = 256 ]
+}
+
+source_of() {
+	if [ "$1" = "$FAMILY" ]; then
+		echo "$BASE/$FAMILY"
+	else
+		echo "$BASE/$1/files"
+	fi
+}
+
+is_current_user() {
+	local name
+	for name in "${USERS[@]}"; do
+		if [ "$name" = "$1" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+load_users() {
+	local list name
+	USERS=()
+	list=$("$USER_TOOL" list) || {
+		log "could not list the accounts"
+		return 1
+	}
+	for name in $list; do
+		if [[ $name =~ $NAME_RE ]]; then
+			USERS+=("$name")
+		fi
+	done
+	USERS_KNOWN=1
+}
+
+valid_stamp() {
+	[[ $1 =~ $STAMP_RE ]] && [ "$(date -u -d "${1:0:10}" +%F 2>/dev/null)" = "${1:0:10}" ]
+}
+
+# The snapshots of one folder, oldest first. Anything that is not a snapshot with a proper name is left alone.
+stamps_of() {
+	local path name
+	for path in "$SNAPSHOTS/$1"/*; do
+		name=${path##*/}
+		if valid_stamp "$name" && is_subvolume "$path"; then
+			echo "$name"
+		fi
+	done | sort
+}
+
+valid_scope() {
+	[[ $1 =~ $NAME_RE || $1 =~ $DELETED_RE || $1 == "$FAMILY" ]]
+}
+
+# Folders that hold snapshots: current accounts, the family folder, and accounts deleted earlier.
+scope_dirs() {
+	local path
+	for path in "$SNAPSHOTS"/*; do
+		if [ -d "$path" ] && [ ! -L "$path" ] && valid_scope "${path##*/}"; then
+			echo "${path##*/}"
+		fi
+	done
+}
+
+day_number() {
+	echo $(($(date -u -d "$1" +%s) / 86400))
+}
+
+# Prints the snapshots (given oldest first) that the retention no longer keeps on day $1. Within a week or a month the
+# newest one is the one that stays.
+expired() {
+	local today=$1 now stamp day week i
+	shift
+	local -A keep=() week_last=() month_last=() weeks=() months=()
+	now=$(day_number "$today")
+	for ((i = 0; i < WEEKS; i++)); do
+		weeks[$(date -u -d "$today -$((i * 7)) days" +%G-%V)]=1
+	done
+	for ((i = 0; i < MONTHS; i++)); do
+		months[$(date -u -d "${today:0:7}-01 -$i months" +%Y-%m)]=1
+	done
+	for stamp in "$@"; do
+		day=${stamp:0:10}
+		if ((now - $(day_number "$day") < DAILY_DAYS)); then
+			keep[$stamp]=1
+		fi
+		week=$(date -u -d "$day" +%G-%V)
+		if [ -n "${weeks[$week]:-}" ]; then
+			week_last[$week]=$stamp
+		fi
+		if [ -n "${months[${day:0:7}]:-}" ]; then
+			month_last[${day:0:7}]=$stamp
+		fi
+	done
+	for stamp in "${week_last[@]}" "${month_last[@]}"; do
+		keep[$stamp]=1
+	done
+	for stamp in "$@"; do
+		if [ -z "${keep[$stamp]:-}" ]; then
+			echo "$stamp"
+		fi
+	done
+}
+
+delete_snapshot() {
+	btrfs subvolume delete "$SNAPSHOTS/$1/$2" >/dev/null
+}
+
+taken_today() {
+	local stamp
+	for stamp in $(stamps_of "$1"); do
+		if [ "${stamp:0:10}" = "${STAMP:0:10}" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+snapshot_scope() {
+	local scope=$1 source
+	source=$(source_of "$scope")
+	if ! is_subvolume "$source" || taken_today "$scope"; then
+		return 0
+	fi
+	install -d -o root -g "$PANEL_GROUP" -m 0750 "$SNAPSHOTS/$scope"
+	if ! btrfs subvolume snapshot -r "$source" "$SNAPSHOTS/$scope/$STAMP" >/dev/null; then
+		ERRORS[$scope]=snapshot_failed
+		return 1
+	fi
+	TAKEN=$((TAKEN + 1))
+}
+
+prune_scope() {
+	local scope=$1 stamp failed=0
+	local -a stamps=()
+	mapfile -t stamps < <(stamps_of "$scope")
+	for stamp in $(expired "${STAMP:0:10}" "${stamps[@]}"); do
+		if delete_snapshot "$scope" "$stamp"; then
+			PRUNED=$((PRUNED + 1))
+		else
+			failed=1
+		fi
+	done
+	if [[ $scope =~ $DELETED_RE ]] && [ -z "$(ls -A "$SNAPSHOTS/$scope")" ]; then
+		rmdir "$SNAPSHOTS/$scope"
+	fi
+	if [ "$failed" -eq 1 ]; then
+		ERRORS[$scope]=prune_failed
+		return 1
+	fi
+}
+
+# The same measure as the panel's storage levels: used blocks against all blocks.
+disk_full() {
+	local total free
+	read -r total free <<<"$(stat -f -c '%b %f' -- "$BASE")"
+	[[ $total =~ ^[0-9]+$ && $free =~ ^[0-9]+$ ]] && ((total > 0 && (total - free) * 100 >= total * FULL_PERCENT))
+}
+
+# Prints "<folder> <snapshot>" for the oldest snapshot that is not among its folder's newest ones, if there is one.
+oldest_spare() {
+	local scope
+	for scope in $(scope_dirs); do
+		stamps_of "$scope" | head -n -"$KEEP_NEWEST" | sed "s/\$/ $scope/"
+	done | sort | awk 'NR == 1 { print $2, $1 }'
+}
+
+# btrfs frees the space of a deleted snapshot in the background, so each delete is waited for before measuring again.
+free_space() {
+	local deleted=0 still=no victim
+	disk_full || return 0
+	while disk_full; do
+		victim=$(oldest_spare)
+		[ -n "$victim" ] || break
+		# shellcheck disable=SC2086 # two words on purpose: folder and snapshot
+		delete_snapshot $victim || break
+		deleted=$((deleted + 1))
+		btrfs subvolume sync "$BASE" >/dev/null 2>&1 || true
+	done
+	if disk_full; then
+		still=yes
+	fi
+	LOWSPACE="$(date +%s) $deleted $still"
+	if [ "$still" = yes ]; then
+		log "the disk is ${FULL_PERCENT}% full: deleted the $deleted oldest earlier versions, and every folder is down to its newest $KEEP_NEWEST"
+	else
+		log "the disk was ${FULL_PERCENT}% full: deleted the $deleted oldest earlier versions"
+	fi
+}
+
+# Deleted snapshots leave their quota group behind; clearing them keeps the quota bookkeeping small.
+forget_stale_qgroups() {
+	if btrfs qgroup show "$BASE" >/dev/null 2>&1; then
+		btrfs qgroup clear-stale "$BASE" >/dev/null 2>&1 || true
+	fi
+}
+
+load_quotas() {
+	local id excl
+	btrfs qgroup show "$BASE" >/dev/null 2>&1 || return 0
+	QUOTAS=1
+	while read -r id _ excl _; do
+		if [[ $id =~ ^0/[0-9]+$ && $excl =~ ^[0-9]+$ ]]; then
+			EXCL[${id#0/}]=$excl
+		fi
+	done < <(btrfs qgroup show --raw "$BASE" 2>/dev/null)
+}
+
+# What the snapshots of a folder hold on their own. Data that several snapshots share is in no single one's exclusive
+# count, so this is a lower bound; the exact figure would need a quota group hierarchy and its rescans.
+held_by() {
+	local scope=$1 stamp id total=0
+	shift
+	if [ "$QUOTAS" -eq 0 ]; then
+		echo -
+		return
+	fi
+	for stamp in "$@"; do
+		if id=$(btrfs inspect-internal rootid "$SNAPSHOTS/$scope/$stamp" 2>/dev/null) && [[ $id =~ ^[0-9]+$ ]]; then
+			total=$((total + ${EXCL[$id]:-0}))
+		fi
+	done
+	echo "$total"
+}
+
+# Without the account list nobody can be called gone, except a folder moved aside when its account was deleted.
+protection_of() {
+	if [[ $1 =~ $DELETED_RE ]]; then
+		echo gone
+	elif [ "$1" != "$FAMILY" ] && [ "$USERS_KNOWN" -eq 0 ]; then
+		echo unchecked
+	elif [ "$1" != "$FAMILY" ] && ! is_current_user "$1"; then
+		echo gone
+	elif is_subvolume "$(source_of "$1")"; then
+		echo yes
+	else
+		echo no
+	fi
+}
+
+scope_line() {
+	local scope=$1 count oldest=- newest=-
+	local -a stamps=()
+	mapfile -t stamps < <(stamps_of "$scope")
+	count=${#stamps[@]}
+	if [ "$count" -gt 0 ]; then
+		oldest=${stamps[0]}
+		newest=${stamps[count - 1]}
+	fi
+	echo "scope $scope $(protection_of "$scope") $count $oldest $newest $(held_by "$scope" "${stamps[@]}") ${ERRORS[$scope]:--}"
+}
+
+report_scopes() {
+	{
+		echo "$FAMILY"
+		printf '%s\n' "${USERS[@]}"
+		scope_dirs
+	} | sed '/^$/d' | sort -u
+}
+
+status_lines() {
+	local scope
+	echo "filebox-snapshot 1"
+	echo "state $STATE"
+	echo "checked $(date +%s)"
+	if [ -n "$DAILY" ]; then
+		echo "daily $DAILY"
+	fi
+	if [ -n "$LOWSPACE" ]; then
+		echo "lowspace $LOWSPACE"
+	fi
+	if [ "$STATE" = on ]; then
+		for scope in $(report_scopes); do
+			scope_line "$scope"
+		done
+	fi
+}
+
+# The status directory belongs to root, so the panel can read the file but nobody else can swap it underneath.
+write_status() {
+	local content tmp
+	content=$(status_lines)
+	install -d -o root -g "$PANEL_GROUP" -m 0750 "$STATE_DIR"
+	tmp=$(mktemp "$STATUS.XXXXXX")
+	if ! printf '%s\n' "$content" >"$tmp" || ! chown "root:$PANEL_GROUP" "$tmp" || ! chmod 0640 "$tmp" || ! mv -f "$tmp" "$STATUS"; then
+		rm -f "$tmp"
+		die "could not write $STATUS"
+	fi
+}
+
+# Results carried over from earlier runs: the last daily run, the last low-space prune and each folder's last error.
+load_previous() {
+	local kind a b c g
+	[ -f "$STATUS" ] || return 0
+	while read -r kind a b c _ _ _ g _; do
+		case $kind in
+		daily)
+			if [[ $a =~ ^[0-9]+$ && $b =~ ^(ok|failed)$ ]]; then DAILY="$a $b"; fi
+			;;
+		lowspace)
+			if [[ $a =~ ^[0-9]+$ && $b =~ ^[0-9]+$ && $c =~ ^(yes|no)$ ]]; then LOWSPACE="$a $b $c"; fi
+			;;
+		scope)
+			if valid_scope "${a:-}" && [[ ${g:-} =~ ^(snapshot_failed|prune_failed)$ ]]; then ERRORS[$a]=$g; fi
+			;;
+		esac
+	done <"$STATUS"
+}
+
+cmd_daily() {
+	local scope failed=0
+	ERRORS=()
+	STAMP=$(date +%Y-%m-%dT%H%M)
+	install -d -o root -g "$PANEL_GROUP" -m 0710 "$SNAPSHOTS"
+	load_users || failed=1
+	for scope in "$FAMILY" "${USERS[@]}"; do
+		snapshot_scope "$scope" || failed=1
+	done
+	for scope in $(scope_dirs); do
+		prune_scope "$scope" || failed=1
+	done
+	free_space
+	forget_stale_qgroups
+	log "took $TAKEN earlier versions, removed $PRUNED by age"
+	if [ "$failed" -eq 0 ]; then
+		DAILY="$(date +%s) ok"
+	else
+		DAILY="$(date +%s) failed"
+	fi
+}
+
+cmd_check() {
+	load_users || true
+	if [ -d "$SNAPSHOTS" ]; then
+		free_space
+		forget_stale_qgroups
+	fi
+}
+
+usage() {
+	die "usage: filebox-snapshot daily|check"
+}
+
+# A nightly run that stops halfway still reports, so the panel never keeps showing the previous good night.
+report_unfinished_daily() {
+	set +e
+	DAILY="$(date +%s) failed"
+	write_status
+}
+
+main() {
+	[ $# -eq 1 ] || usage
+	case $1 in
+	daily | check) ;;
+	*) usage ;;
+	esac
+	[ "$(id -u)" -eq 0 ] || die "must run as root"
+
+	exec 9>"$LOCK"
+	if [ "$1" = daily ]; then
+		flock -w 3600 9 || die "an earlier run is still busy"
+		trap report_unfinished_daily EXIT
+	elif ! flock -n 9; then
+		exit 0
+	fi
+	load_previous
+	if ! on_btrfs "$BASE"; then
+		STATE="off not_btrfs"
+	elif ! command -v btrfs >/dev/null; then
+		STATE="off no_btrfs_progs"
+	else
+		"cmd_$1"
+		load_quotas
+	fi
+	write_status
+	trap - EXIT
+}
+
+main "$@"

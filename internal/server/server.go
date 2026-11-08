@@ -43,6 +43,8 @@ type Deps struct {
 	Version          string
 	// TV is the streambox add-on; nil when it is not installed.
 	TV *TV
+	// Snapshots reads what filebox-snapshot last reported about the earlier versions; nil when there is nothing to read.
+	Snapshots func() (system.SnapshotStatus, error)
 }
 
 type Server struct {
@@ -63,6 +65,7 @@ type Server struct {
 	portalCertExpiry func() time.Time
 	version          string
 	tv               *TV
+	snapshotStatus   func() (system.SnapshotStatus, error)
 }
 
 func New(store *auth.Store, deps Deps) http.Handler {
@@ -89,6 +92,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 		portalCertExpiry: deps.PortalCertExpiry,
 		version:          deps.Version,
 		tv:               deps.TV,
+		snapshotStatus:   deps.Snapshots,
 	}
 
 	mux := http.NewServeMux()
@@ -118,6 +122,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	mux.HandleFunc("DELETE /api/users/{name}", s.requireSession(s.deleteUser))
 	mux.HandleFunc("GET /api/disks", s.requireSession(s.disks))
 	mux.HandleFunc("GET /api/storage", s.requireSession(s.storage))
+	mux.HandleFunc("GET /api/snapshots", s.requireSession(s.snapshots))
 	mux.HandleFunc("GET /api/logs", s.requireSession(s.readLogs))
 	mux.HandleFunc("POST /api/system/restart-sshd", s.requireSession(s.powerAction(system.RestartSSHD)))
 	mux.HandleFunc("POST /api/system/shutdown", s.requireSession(s.powerAction(system.Shutdown)))
@@ -153,7 +158,7 @@ type adminAssets struct{ fs.FS }
 
 func (a adminAssets) Open(name string) (fs.File, error) {
 	switch name {
-	case "style.css", "auth.js", "dashboard.js", "users.js", "logs.js", "tv.js", "tvlink.js", "diskalert.js":
+	case "style.css", "auth.js", "dashboard.js", "users.js", "snapshots.js", "logs.js", "tv.js", "tvlink.js", "diskalert.js":
 		return a.FS.Open(name)
 	}
 
