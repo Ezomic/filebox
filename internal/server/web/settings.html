@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Filebox settings</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <header class="bar">
+      <h1>Settings</h1>
+      <nav class="actions">
+        <a class="link" href="/">Dashboard</a>
+        <a class="link" href="/users">Users</a>
+        <a class="link" href="/logs">Logs</a>
+        <a class="link" id="tv-link" href="/tv" hidden>TV</a>
+        <a class="link" href="/settings" aria-current="page">Settings</a>
+        <button class="link" id="logout" type="button">Sign out</button>
+      </nav>
+    </header>
+    <form class="card stacked" id="alert-form" autocomplete="off">
+      <div class="label">Alert emails</div>
+      <p class="detail">Every 10 minutes filebox checks the disks, the disk mirror, the earlier versions, the portal certificate and whether it restarted without a clean shutdown. When something is wrong it emails this address once, again every 7 days while it lasts, and once more when it is over. The dashboard always lists the open problems.</p>
+      <p class="error" id="mail-off" hidden>Email is not set up on this box, so no alert email can go out. Open problems still show on the dashboard.</p>
+      <label for="alert-address">Email address (leave empty to stop the emails)</label>
+      <input type="text" id="alert-address" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" maxlength="254" placeholder="you@example.com">
+      <p class="error" id="alert-error" role="alert"></p>
+      <button type="submit">Save</button>
+      <div class="stacked">
+        <button class="link" type="button" id="alert-test" disabled>Send test email</button>
+      </div>
+      <p class="detail" id="alert-status" role="status"></p>
+    </form>
+  </main>
+  <script src="/static/diskalert.js"></script>
+  <script src="/static/settings.js"></script>
+  <script src="/static/tvlink.js"></script>
+</body>
+</html>
