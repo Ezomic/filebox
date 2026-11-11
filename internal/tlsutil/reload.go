@@ -3,6 +3,8 @@ package tlsutil
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -17,6 +19,7 @@ type Reloader struct {
 	mu       sync.Mutex
 	current  *tls.Certificate
 	notAfter time.Time
+	host     string
 	checked  time.Time
 }
 
@@ -52,6 +55,19 @@ func (r *Reloader) NotAfter() time.Time {
 	return r.notAfter
 }
 
+// Host is the first plain DNS name of the certificate in service, the name visitors reach the portal by. A
+// wildcard name says nothing about which name that is, so it is skipped.
+func (r *Reloader) Host() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if time.Since(r.checked) > recheckEvery {
+		_ = r.load()
+	}
+
+	return r.host
+}
+
 func (r *Reloader) load() error {
 	r.checked = time.Now()
 
@@ -65,6 +81,10 @@ func (r *Reloader) load() error {
 	}
 	r.current = &pair
 	r.notAfter = leaf.NotAfter
+	r.host = ""
+	if i := slices.IndexFunc(leaf.DNSNames, func(name string) bool { return !strings.HasPrefix(name, "*") }); i >= 0 {
+		r.host = leaf.DNSNames[i]
+	}
 
 	return nil
 }

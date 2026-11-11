@@ -66,7 +66,7 @@ func main() {
 	var tv *server.TV
 	if *streamboxURL != "" {
 		// A broken add-on must never take the admin panel down with it.
-		if tv, err = server.NewTV(*streamboxURL, *streamboxEnv); err != nil {
+		if tv, err = openTV(*streamboxURL, *streamboxEnv, *dataDir); err != nil {
 			log.Printf("streambox add-on disabled: %v", err)
 			tv = nil
 		} else {
@@ -102,12 +102,14 @@ func main() {
 	snapshots := func() (system.SnapshotStatus, error) { return system.ReadSnapshotStatus(*snapshotStatus) }
 	var portalCerts *tlsutil.Reloader
 	var certExpiry func() time.Time
+	var portalHost func() string
 	if *portalListen != "" {
 		portalCerts, err = tlsutil.NewReloader(*portalCert, *portalKey)
 		if err != nil {
 			log.Fatalf("load portal certificate: %v", err)
 		}
 		certExpiry = portalCerts.NotAfter
+		portalHost = portalCerts.Host
 	}
 	monitor := openAlerts(*dataDir, sender, space, health, snapshots, certExpiry)
 	portalDeps.Healthy = monitor.Healthy
@@ -125,6 +127,7 @@ func main() {
 
 		OnUserChanged:    portal.EndSessions,
 		PortalCertExpiry: certExpiry,
+		PortalHost:       portalHost,
 		Version:          version,
 		TV:               tv,
 		Snapshots:        snapshots,
@@ -172,6 +175,15 @@ func main() {
 	for _, s := range servers {
 		_ = s.Shutdown(shutdown)
 	}
+}
+
+func openTV(url, envFile, dataDir string) (*server.TV, error) {
+	shares, err := auth.OpenTVShares(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("open TV share links: %w", err)
+	}
+
+	return server.NewTV(url, envFile, shares)
 }
 
 func portalServer(addr string, certs *tlsutil.Reloader, portal http.Handler) *http.Server {
