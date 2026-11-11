@@ -1,0 +1,14 @@
+[Unit]
+Description=Back up the filebox files offsite with restic
+After=filebox-snapshot.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/filebox-backup run
+Nice=19
+IOSchedulingClass=idle
+# restic stops cleanly on SIGINT and removes its lock from the repository.
+KillSignal=SIGINT
+# The helper stops restic itself after 6 hours; this only ends a run that hangs after that.
+TimeoutStartSec=6h30min

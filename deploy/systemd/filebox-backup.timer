@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up the filebox files offsite every night
+
+[Timer]
+OnCalendar=*-*-* 01:00:00
+# No catch-up run after the box was off at 01:00: a run sends without a speed limit, which only suits the night.
+
+[Install]
+WantedBy=timers.target

@@ -357,6 +357,124 @@ func TestSnapshotCheckWithoutSnapshots(t *testing.T) {
 	}
 }
 
+func backupStatus(status system.BackupStatus, err error) func() (system.BackupStatus, error) {
+	return func() (system.BackupStatus, error) { return status, err }
+}
+
+func TestBackupCheckReportsAFailedNight(t *testing.T) {
+	night := start.Add(-8 * time.Hour)
+	cases := map[string]string{
+		system.BackupFailed:        "The offsite backup failed",
+		system.BackupPrepareFailed: "The offsite backup failed",
+		system.BackupPruneFailed:   "Old offsite backups could not be removed",
+		system.BackupIncomplete:    "",
+		system.BackupOK:            "",
+		system.BackupStopped:       "",
+	}
+	for result, want := range cases {
+		status := system.BackupStatus{Configured: true, Latest: night, Run: &system.BackupRun{Started: night, Result: result}}
+		got := BackupCheck(backupStatus(status, nil))(start)
+		if !got.Known || (want == "" && keys(got) != "") || (want != "" && (keys(got) != "backup-failed" || got.Problems[0].Subject != want)) {
+			t.Errorf("%s: got %+v", result, got.Problems)
+			continue
+		}
+		if want != "" && !strings.Contains(got.Problems[0].Detail, when(night)) {
+			t.Errorf("%s: the detail does not say which night: %q", result, got.Problems[0].Detail)
+		}
+	}
+}
+
+func TestBackupCheckReportsThreeDaysWithoutABackup(t *testing.T) {
+	last := start.Add(-backupOverdue)
+	status := system.BackupStatus{Configured: true, Latest: last, Run: &system.BackupRun{Started: start.Add(-time.Hour), Result: system.BackupStopped}}
+	result := BackupCheck(backupStatus(status, nil))(start)
+	if keys(result) != "backup-overdue" || result.Problems[0].Subject != "No offsite backup for 3 days" ||
+		!strings.Contains(result.Problems[0].Detail, when(last)) || !strings.Contains(result.Problems[0].Detail, "6 hour limit") {
+		t.Fatalf("got %+v", result.Problems)
+	}
+	if result := BackupCheck(backupStatus(status, nil))(start.Add(-time.Minute)); keys(result) != "" {
+		t.Fatalf("just under 3 days is fine: %q", keys(result))
+	}
+	status.Latest = time.Time{}
+	if result := BackupCheck(backupStatus(status, nil))(start.Add(30 * 24 * time.Hour)); keys(result) != "" {
+		t.Fatalf("before the first complete backup nothing counts: %q", keys(result))
+	}
+}
+
+func TestBackupCheckReportsUnreadableFilesOnlyNightAfterNight(t *testing.T) {
+	since := start.Add(-50 * time.Hour)
+	status := system.BackupStatus{Configured: true, Latest: start, Run: &system.BackupRun{Started: start, Result: system.BackupIncomplete},
+		Unreadable: &system.BackupStreak{Since: since, Nights: 2}}
+	if result := BackupCheck(backupStatus(status, nil))(start); keys(result) != "" {
+		t.Fatalf("two nights are not a problem yet: %q", keys(result))
+	}
+	status.Unreadable.Nights = 3
+	result := BackupCheck(backupStatus(status, nil))(start)
+	if keys(result) != "backup-unreadable" || result.Problems[0].Subject != "Some files could not be read for the offsite backup" ||
+		!strings.Contains(result.Problems[0].Detail, "The last 3 nightly offsite backups, since "+when(since)) ||
+		strings.Contains(result.Problems[0].Detail, "disk") {
+		t.Fatalf("got %+v", result.Problems)
+	}
+}
+
+func TestBackupCheckReportsAFirstBackupThatDoesNotFinish(t *testing.T) {
+	setup := start.Add(-firstBackupDue)
+	status := system.BackupStatus{Configured: true, Setup: setup, Run: &system.BackupRun{Started: start, Result: system.BackupStopped}}
+	result := BackupCheck(backupStatus(status, nil))(start)
+	if keys(result) != "backup-first" || result.Problems[0].Subject != "The first offsite backup has not finished after 14 days" ||
+		!strings.Contains(result.Problems[0].Detail, when(setup)) {
+		t.Fatalf("got %+v", result.Problems)
+	}
+	if result := BackupCheck(backupStatus(status, nil))(start.Add(-time.Minute)); keys(result) != "" {
+		t.Fatalf("just under 14 days is fine: %q", keys(result))
+	}
+	status.Latest = start.Add(-time.Hour)
+	if result := BackupCheck(backupStatus(status, nil))(start); keys(result) != "" {
+		t.Fatalf("once the first backup has finished: %q", keys(result))
+	}
+	status.Latest, status.Setup = time.Time{}, time.Time{}
+	if result := BackupCheck(backupStatus(status, nil))(start); keys(result) != "" {
+		t.Fatalf("without a setup time nothing counts: %q", keys(result))
+	}
+}
+
+func TestBackupCheckTellsDamageFromACheckThatCouldNotRun(t *testing.T) {
+	status := system.BackupStatus{Configured: true, Latest: start, Check: &system.RepositoryCheck{At: start, OK: false}}
+	result := BackupCheck(backupStatus(status, nil))(start)
+	if keys(result) != "backup-check" || !strings.Contains(result.Problems[0].Detail, "damaged or missing data") {
+		t.Fatalf("got %+v", result.Problems)
+	}
+	status.Check.OK = true
+	if result := BackupCheck(backupStatus(status, nil))(start); keys(result) != "" {
+		t.Fatalf("got %q", keys(result))
+	}
+
+	since := start.Add(-50 * time.Hour)
+	status.CheckErrors = &system.BackupStreak{Since: since, Nights: 2}
+	if result := BackupCheck(backupStatus(status, nil))(start); keys(result) != "" {
+		t.Fatalf("two nights are not a problem yet: %q", keys(result))
+	}
+	status.CheckErrors.Nights = 3
+	result = BackupCheck(backupStatus(status, nil))(start)
+	if keys(result) != "backup-check-unrun" || result.Problems[0].Subject != "The monthly check of the offsite backup could not run" ||
+		!strings.Contains(result.Problems[0].Detail, when(since)) || strings.Contains(result.Problems[0].Detail, "damage") {
+		t.Fatalf("got %+v", result.Problems)
+	}
+}
+
+func TestBackupCheckBeforeSetupAndWhenItCannotLook(t *testing.T) {
+	unconfigured := system.BackupStatus{Run: &system.BackupRun{Started: start, Result: system.BackupFailed}, Latest: start.Add(-30 * 24 * time.Hour)}
+	if result := BackupCheck(backupStatus(unconfigured, nil))(start); !result.Known || keys(result) != "" {
+		t.Fatalf("a backup that is not set up is no problem: %q", keys(result))
+	}
+	if result := BackupCheck(backupStatus(system.BackupStatus{}, system.ErrNoBackupStatus))(start); !result.Known || keys(result) != "" {
+		t.Fatal("no report yet is not a problem")
+	}
+	if result := BackupCheck(backupStatus(system.BackupStatus{}, errors.New("unreadable")))(start); result.Known || result.Name != "the offsite backup" {
+		t.Fatalf("an unreadable status must hold the alerts: %+v", result)
+	}
+}
+
 func TestCertCheckWarnsTwoWeeksAhead(t *testing.T) {
 	cases := map[time.Duration]string{
 		15 * 24 * time.Hour:           "",
@@ -419,6 +537,12 @@ func TestNoTextUsesAnEmDash(t *testing.T) {
 		SnapshotCheck(snapshotStatus(system.SnapshotStatus{Enabled: true, Daily: start, LowSpace: &system.SnapshotLowSpace{At: start, Deleted: 1}}, nil))(start),
 		CertCheck(func() time.Time { return start })(start),
 		RestartCheck(func() (system.Boot, error) { return system.Boot{ID: "x", Started: start, CleanBefore: ptr(false)}, nil })(start),
+		BackupCheck(backupStatus(system.BackupStatus{
+			Configured: true, Latest: start.Add(-4 * 24 * time.Hour), Run: &system.BackupRun{Started: start, Result: system.BackupPrepareFailed},
+			Check: &system.RepositoryCheck{At: start}, Unreadable: &system.BackupStreak{Since: start, Nights: 3},
+			CheckErrors: &system.BackupStreak{Since: start, Nights: 3},
+		}, nil))(start),
+		BackupCheck(backupStatus(system.BackupStatus{Configured: true, Setup: start.Add(-firstBackupDue)}, nil))(start),
 	}
 	results = append(results, Result{Source: "unchecked-test", Name: "the test check"})
 	_, state := Decide(State{}, results, start.Add(-UncheckedAfter))
