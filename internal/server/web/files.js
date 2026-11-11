@@ -67,22 +67,81 @@ function go(path) {
   }
 }
 
+// The earlier version on show, or null for the files as they are now.
+let currentVersion = null;
+let versions = [];
+const versionBox = byId('versions');
+const versionPick = byId('version-pick');
+const versionNotice = byId('version-notice');
+
+function versionRoot() {
+  return `${apiRoot}/versions/${encodeURIComponent(currentVersion.id)}`;
+}
+
+function versionLabel(version) {
+  return new Date(version.taken).toLocaleString(i18n.locale(), { dateStyle: 'full', timeStyle: 'short' });
+}
+
+function listUrl() {
+  const base = currentVersion ? `${versionRoot()}/files` : `${apiRoot}/files`;
+  return `${base}?path=${encodeURIComponent(currentPath)}`;
+}
+
 async function load() {
   closeViewer();
   currentPath = pathFromHash();
   try {
-    const { entries } = await api('GET', `${apiRoot}/files?path=${encodeURIComponent(currentPath)}`);
+    const { entries } = await api('GET', listUrl());
     showError(null);
     renderCrumbs();
     render(entries);
   } catch (error) {
     if (error.message === 'signed out') return;
-    showError(error);
+    if (currentVersion && error.code === 'not_found') {
+      const shown = currentVersion;
+      i18n.msg(statusBox, () => t('versions.folderMissing', { when: versionLabel(shown) }));
+    } else {
+      showError(error);
+    }
     renderCrumbs();
     rows.replaceChildren();
     byId('empty').hidden = true;
   }
 }
+
+function fillVersionPick() {
+  const options = versions.map((version) => new Option(versionLabel(version), version.id));
+  versionPick.replaceChildren(new Option(t('versions.now'), ''), ...options);
+  versionPick.value = currentVersion ? currentVersion.id : '';
+}
+
+async function loadVersions() {
+  try {
+    versions = (await api('GET', `${apiRoot}/versions`)).versions;
+  } catch {
+    versions = [];
+  }
+  versionBox.hidden = versions.length === 0;
+  fillVersionPick();
+}
+
+function showVersion(version) {
+  currentVersion = version;
+  versionPick.value = version ? version.id : '';
+  byId('upload-card').hidden = version !== null;
+  byId('folder-form').hidden = version !== null;
+  versionNotice.hidden = version === null;
+  if (version) {
+    const text = el('span');
+    i18n.msg(text, () => t('versions.viewing', { when: versionLabel(version) }));
+    versionNotice.replaceChildren(text, i18n.label(button('', () => showVersion(null), 'link'), 'versions.backToNow'));
+  }
+  load();
+}
+
+versionPick.addEventListener('change', () => {
+  showVersion(versions.find((version) => version.id === versionPick.value) || null);
+});
 
 function renderCrumbs() {
   const crumbs = byId('crumbs');
@@ -101,7 +160,7 @@ let shown = null;
 function render(entries) {
   closeViewer();
   shown = entries;
-  previewable = entries.filter((entry) => !entry.isDir && viewKind(entry.name) !== null);
+  previewable = currentVersion ? [] : entries.filter((entry) => !entry.isDir && viewKind(entry.name) !== null);
   rows.replaceChildren(...entries.map(fileRow));
   byId('empty').hidden = entries.length > 0;
 }
@@ -117,7 +176,7 @@ function fileRow(entry) {
   const nameCell = el('td', undefined, 'name');
   if (entry.isDir) {
     nameCell.append(button(`${entry.name}/`, () => go(path), 'folder'));
-  } else if (viewKind(entry.name) !== null) {
+  } else if (!currentVersion && viewKind(entry.name) !== null) {
     nameCell.append(button(entry.name, (event) => openPreview(entry, event.currentTarget), 'folder file'));
   } else {
     nameCell.textContent = entry.name;
@@ -129,8 +188,38 @@ function fileRow(entry) {
     el('td', i18n.dateTime(entry.modified), 'meta'),
     actions,
   );
-  showActions(actions, entry, path);
+  if (currentVersion) showVersionActions(actions, entry, path);
+  else showActions(actions, entry, path);
   return row;
+}
+
+// An earlier version is read-only: it can be downloaded from, and each item put back where it was.
+function showVersionActions(cell, entry, path) {
+  const nodes = [];
+  if (!entry.isDir) {
+    const link = el('a', t('common.download'), 'link');
+    link.href = `${versionRoot()}/files/download?path=${encodeURIComponent(path)}`;
+    link.download = entry.name;
+    nodes.push(link);
+  }
+  nodes.push(button(t('versions.restore'), (event) => restoreEntry(event.currentTarget, entry, path), 'link'));
+  cell.replaceChildren(...nodes);
+}
+
+async function restoreEntry(control, entry, path) {
+  control.disabled = true;
+  control.textContent = t('versions.restoring');
+  try {
+    const { replaced } = await api('POST', `${versionRoot()}/restore`, { path });
+    showError(null);
+    showUndo(() => t(replaced ? 'versions.restoredReplaced' : 'versions.restored', { name: entry.name }));
+    window.refreshStorage?.();
+  } catch (error) {
+    if (error.message !== 'signed out') showError(error);
+  } finally {
+    control.disabled = false;
+    control.textContent = t('versions.restore');
+  }
 }
 
 function showActions(cell, entry, path) {
@@ -713,9 +802,11 @@ byId('logout').addEventListener('click', async () => {
 
 i18n.onChange(() => {
   renderCrumbs();
+  fillVersionPick();
   if (shown && !document.querySelector('#file-rows form')) render(shown);
   if (pending) relabelPreview();
 });
 
 window.addEventListener('hashchange', load);
 load();
+loadVersions();

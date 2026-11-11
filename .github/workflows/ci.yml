@@ -21,6 +21,10 @@ jobs:
       - run: go vet ./...
       - name: add-on installer script
         run: deploy/test/addons.sh
+      - name: snapshot helper script
+        run: deploy/test/snapshots.sh
+      - name: disk health helper script
+        run: deploy/test/health.sh
       - run: go test -race ./...
       - name: fuzz (short)
         run: |
@@ -35,5 +39,6 @@ jobs:
           go test ./internal/server -run '^$' -fuzz '^FuzzPortalEmailRequests$' -fuzztime 20s
           go test ./internal/server -run '^$' -fuzz '^FuzzShareRoutesStayConfined$' -fuzztime 30s
           go test ./internal/server -run '^$' -fuzz '^FuzzShareName$' -fuzztime 15s
+          go test ./internal/server -run '^$' -fuzz '^FuzzVersionRoutesStayConfined$' -fuzztime 30s
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

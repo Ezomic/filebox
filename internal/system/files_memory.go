@@ -206,6 +206,23 @@ func (f *FakeFiles) writeAllowed(path string, overwrite bool) error {
 	return nil
 }
 
+func (f *FakeFiles) RemoveAll(path string) error {
+	path, err := cleanNonRoot(path)
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for other := range f.entries {
+		if other == path || isInside(other, path) {
+			delete(f.entries, other)
+		}
+	}
+
+	return nil
+}
+
 func (f *FakeFiles) Mkdir(path string) error {
 	path, err := cleanNonRoot(path)
 	if err != nil {

@@ -113,13 +113,21 @@ func (f *FakeFiles) OpenPhoto(name string) (File, Photo, error) {
 	return memoryFile{bytes.NewReader(entry.data)}, fakePhoto(name, kind, entry), nil
 }
 
-// SetModified lets a demo or a test place a file at a chosen time.
-func (f *FakeFiles) SetModified(name string, modified time.Time) {
+func (f *FakeFiles) SetModified(name string, modified time.Time) error {
+	name, err := cleanNonRoot(name)
+	if err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if entry, ok := f.entries[name]; ok {
-		entry.modified = modified
+
+	entry, ok := f.entries[name]
+	if !ok {
+		return ErrNotFound
 	}
+	entry.modified = modified
+
+	return nil
 }
 
 func (f *FakeFiles) ReadThumb(name string) (File, error) {

@@ -15,10 +15,17 @@
         <a class="link" href="/users">Users</a>
         <a class="link" href="/logs">Logs</a>
         <a class="link" id="tv-link" href="/tv" hidden>TV</a>
+        <a class="link" href="/settings">Settings</a>
         <button class="link" id="logout" type="button">Sign out</button>
       </nav>
     </header>
     <p class="error" id="status" role="status"></p>
+    <section class="card problems" id="problems">
+      <div class="label">Problems</div>
+      <p class="detail" id="problems-summary">Checking...</p>
+      <div id="problem-rows"></div>
+      <p class="detail" id="problems-mail"></p>
+    </section>
     <div class="grid">
       <section class="card">
         <div class="label">CPU</div>
@@ -70,6 +77,7 @@
   </main>
   <script src="/static/diskalert.js"></script>
   <script src="/static/dashboard.js"></script>
+  <script src="/static/problems.js"></script>
   <script src="/static/tvlink.js"></script>
 </body>
 </html>

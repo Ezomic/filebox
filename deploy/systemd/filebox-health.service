@@ -1,0 +1,8 @@
+[Unit]
+Description=Read the filebox disk health (SMART and the btrfs data disk) for the admin panel
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/filebox-health
+Nice=19
+IOSchedulingClass=idle
