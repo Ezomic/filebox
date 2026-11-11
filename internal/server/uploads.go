@@ -90,6 +90,10 @@ func (a fileHandlers) uploadStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a fileHandlers) appendChunk(w http.ResponseWriter, r *http.Request) {
+	a.appendChunkTo(w, r, r.PathValue("id"))
+}
+
+func (a fileHandlers) appendChunkTo(w http.ResponseWriter, r *http.Request, id string) {
 	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/octet-stream" {
 		writeError(w, http.StatusUnsupportedMediaType, "expected application/octet-stream")
 		return
@@ -99,7 +103,6 @@ func (a fileHandlers) appendChunk(w http.ResponseWriter, r *http.Request) {
 		writeCoded(w, http.StatusBadRequest, codeUploadInvalid, "invalid Content-Range")
 		return
 	}
-	id := r.PathValue("id")
 	info, err := a.files.UploadStatus(id)
 	if err != nil {
 		fileError(w, "upload chunk", id, err)

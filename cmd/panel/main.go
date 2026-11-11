@@ -120,6 +120,7 @@ func main() {
 	monitor := openAlerts(*dataDir, sender, space, health, snapshots, backup, certExpiry)
 	portalDeps.Healthy = monitor.Healthy
 	portal := server.NewPortal(portalDeps)
+	portal.ResumeUploadSummaries()
 
 	deps := server.Deps{
 		Host:       system.NewHost(*disk),
@@ -158,7 +159,7 @@ func main() {
 
 	stop, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	go system.RunUploadSweeper(stop, *filesDir, 24*time.Hour, time.Now)
+	go system.RunUploadSweeper(stop, *filesDir, time.Hour, time.Now)
 	go system.RunTrashSweeper(stop, *filesDir, 24*time.Hour, time.Now)
 	go system.RunThumbSweeper(stop, *filesDir, 24*time.Hour, time.Now)
 	go monitor.Run(stop, alertEvery)

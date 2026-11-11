@@ -1,10 +1,12 @@
 package auth
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -217,5 +219,193 @@ func TestSharesFailedWriteChangesNothing(t *testing.T) {
 	}
 	if _, found := shares.Get("never-saved"); found {
 		t.Fatal("a link that could not be saved must not exist in memory either")
+	}
+}
+
+func newUploadLink(name, owner string) Share {
+	link := newShare(name, owner)
+	link.Kind, link.Cap, link.Expires, link.Lang = UploadLink, 100, shareEpoch.Add(24*time.Hour), "nl"
+
+	return link
+}
+
+func TestUploadLinksShareTheNamesAndTheLimitWithShareLinks(t *testing.T) {
+	shares, _ := OpenShares(t.TempDir())
+	if err := shares.Create(newShare("taken-name", "amy"), 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := shares.Create(newUploadLink("TAKEN-NAME", "bob"), 2); !errors.Is(err, ErrShareTaken) {
+		t.Fatalf("one name is one link whatever its kind: %v", err)
+	}
+	if err := shares.Create(newUploadLink("drop-box", "amy"), 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := shares.Create(newShare("third-one", "amy"), 2); !errors.Is(err, ErrShareLimit) {
+		t.Fatalf("upload links count toward the same limit: %v", err)
+	}
+}
+
+func TestUploadLinksKeepTheirExpiry(t *testing.T) {
+	shares, _ := OpenShares(t.TempDir())
+	if err := shares.Create(newUploadLink("drop-box", "amy"), 5); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shares.SetExpiry("amy", "drop-box", time.Time{}); !errors.Is(err, ErrShareMissing) {
+		t.Fatalf("an upload link must never become permanent: %v", err)
+	}
+	if link, _ := shares.Get("drop-box"); !link.Expires.Equal(shareEpoch.Add(24 * time.Hour)) {
+		t.Fatalf("got %v", link.Expires)
+	}
+}
+
+func TestUploadLinkUpdatesSaveACopyAndSurviveAReload(t *testing.T) {
+	dir := t.TempDir()
+	shares, _ := OpenShares(dir)
+	if err := shares.Create(newUploadLink("drop-box", "amy"), 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := shares.Create(newShare("plain-share", "amy"), 5); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shares.UpdateUploadLink("plain-share", func(*Share) error { return nil }); !errors.Is(err, ErrShareMissing) {
+		t.Fatalf("a share link takes no uploads: %v", err)
+	}
+	if err := shares.Record("drop-box", shareEpoch); !errors.Is(err, ErrShareMissing) {
+		t.Fatalf("an upload link has no downloads: %v", err)
+	}
+	_, err := shares.UpdateUploadLink("drop-box", func(link *Share) error {
+		link.Pending = map[string]PendingUpload{"a": {Size: 10, Key: "k", Path: "docs/a.txt"}}
+		link.Visits = map[string]Visit{"v": {Folder: "docs/Anna"}}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := shares.Get("drop-box")
+	finished, err := shares.UpdateUploadLink("drop-box", func(link *Share) error {
+		delete(link.Pending, "a")
+		link.Visits["v"] = Visit{Folder: "docs/Anna", Made: true}
+		link.Received, link.ReceivedBytes, link.Charged, link.Unreported = 1, 10, 1<<20, 1
+		return nil
+	})
+	if err != nil || finished.Received != 1 {
+		t.Fatalf("got %+v %v", finished, err)
+	}
+	if len(before.Pending) != 1 || before.Visits["v"].Made {
+		t.Fatalf("a link read earlier must not change under its reader: %+v", before)
+	}
+	if _, err := shares.UpdateUploadLink("drop-box", func(link *Share) error {
+		link.Received = 99
+		return errors.New("changed my mind")
+	}); err == nil {
+		t.Fatal("a failed change must say so")
+	}
+	if link, _ := shares.Get("drop-box"); link.Received != 1 {
+		t.Fatalf("a failed change must not stick: %+v", link)
+	}
+
+	reopened, _ := OpenShares(dir)
+	link, _ := reopened.Get("drop-box")
+	if !link.IsUploadLink() || link.Cap != 100 || link.Lang != "nl" || link.Received != 1 || link.Charged != 1<<20 || link.Unreported != 1 ||
+		len(link.Pending) != 0 || !link.Visits["v"].Made {
+		t.Fatalf("got %+v after reopening", link)
+	}
+	if plain, _ := reopened.Get("plain-share"); plain.IsUploadLink() {
+		t.Fatal("a share link stays a share link")
+	}
+}
+
+// legacyShare is the share link as the release before upload links reads it.
+type legacyShare struct {
+	Name  string `json:"name"`
+	Owner string `json:"owner"`
+	Path  string `json:"path"`
+	Dir   bool   `json:"dir"`
+}
+
+func TestAnOlderReleaseNeverSeesUploadLinks(t *testing.T) {
+	dir := t.TempDir()
+	shares, _ := OpenShares(dir)
+	for _, link := range []Share{newShare("plain-share", "amy"), newUploadLink("drop-box", "amy"), newUploadLink("bobs-drop", "bob")} {
+		if err := shares.Create(link, 5); err != nil {
+			t.Fatal(err)
+		}
+	}
+	content, err := os.ReadFile(filepath.Join(dir, sharesFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old struct {
+		Shares []legacyShare `json:"shares"`
+	}
+	if err := json.Unmarshal(content, &old); err != nil {
+		t.Fatal(err)
+	}
+	if len(old.Shares) != 1 || old.Shares[0].Name != "plain-share" {
+		t.Fatalf("shares.json must hold the share links only, an older release reads %+v", old.Shares)
+	}
+	for _, word := range []string{"drop-box", "bobs-drop", "upload", "kind"} {
+		if strings.Contains(string(content), word) {
+			t.Fatalf("shares.json mentions %q: %s", word, content)
+		}
+	}
+	if links, err := os.ReadFile(filepath.Join(dir, uploadLinksFile)); err != nil || !strings.Contains(string(links), "drop-box") {
+		t.Fatalf("the upload links live in their own file: %s %v", links, err)
+	}
+}
+
+func TestALegacySharesFileLoadsAsShareLinks(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"shares":[{"name":"Old-Link","owner":"amy","path":"docs","dir":true,"created":"2026-11-01T10:00:00Z","downloads":4},` +
+		`{"name":"note","owner":"bob","path":"n.txt","dir":false,"created":"2026-11-02T10:00:00Z","downloads":0}]}`
+	if err := os.WriteFile(filepath.Join(dir, sharesFile), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	shares, err := OpenShares(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, found := shares.Get("old-link")
+	if !found || link.IsUploadLink() || !link.Dir || link.Path != "docs" || link.Downloads != 4 {
+		t.Fatalf("got %+v %v", link, found)
+	}
+	if note, _ := shares.Get("note"); note.IsUploadLink() || note.Owner != "bob" {
+		t.Fatalf("got %+v", note)
+	}
+	if err := shares.Create(newUploadLink("OLD-LINK", "cleo"), 5); !errors.Is(err, ErrShareTaken) {
+		t.Fatalf("a legacy name is still taken for upload links: %v", err)
+	}
+}
+
+func TestADamagedUploadLinksFileLeavesTheShareLinks(t *testing.T) {
+	dir := t.TempDir()
+	shares, _ := OpenShares(dir)
+	if err := shares.Create(newShare("plain-share", "amy"), 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, uploadLinksFile), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenShares(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all := reopened.All(); len(all) != 1 || all[0].Name != "plain-share" {
+		t.Fatalf("got %+v", all)
+	}
+}
+
+func TestForgettingAnOwnerAlsoRemovesTheirUploadLinks(t *testing.T) {
+	shares, _ := OpenShares(t.TempDir())
+	for _, link := range []Share{newUploadLink("amy-drop", "amy"), newShare("amy-share", "amy"), newUploadLink("bob-drop", "bob")} {
+		if err := shares.Create(link, 5); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := shares.ForgetOwner("amy"); err != nil {
+		t.Fatal(err)
+	}
+	if all := shares.All(); len(all) != 1 || all[0].Name != "bob-drop" {
+		t.Fatalf("got %+v", all)
 	}
 }

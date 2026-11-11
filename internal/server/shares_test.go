@@ -53,6 +53,12 @@ type shareHarness struct {
 func newShareHarness(t *testing.T) *shareHarness {
 	t.Helper()
 
+	return newShareHarnessWith(t, func(*PortalDeps) {})
+}
+
+func newShareHarnessWith(t *testing.T, configure func(*PortalDeps)) *shareHarness {
+	t.Helper()
+
 	base := t.TempDir()
 	for _, user := range []string{"amy", "bob", "cleo"} {
 		if err := os.MkdirAll(filepath.Join(base, user, "files"), 0o755); err != nil {
@@ -74,14 +80,16 @@ func newShareHarness(t *testing.T) *shareHarness {
 	if err := roles.Promote("amy"); err != nil {
 		t.Fatal(err)
 	}
-	portal := NewPortal(PortalDeps{
+	deps := PortalDeps{
 		Verifier:  verifier,
 		Users:     h.users,
 		Roles:     roles,
 		OpenFiles: func(user string) (system.Files, error) { return system.OpenUserFiles(base, user) },
 		MaxUpload: 1 << 20,
 		Shares:    shares,
-	})
+	}
+	configure(&deps)
+	portal := NewPortal(deps)
 	portal.now = h.now
 	h.portalHarness = &portalHarness{portal: portal, verifier: verifier, roles: roles}
 	h.amy = h.signedIn(t, "amy", amyPassword)
@@ -1278,7 +1286,7 @@ func TestShareVisitorResponsesCarryNoSessionOrOwnerDetails(t *testing.T) {
 }
 
 func TestSharePagesRenderNamesAsText(t *testing.T) {
-	for _, name := range []string{"web/portal/share.js", "web/portal/shares.js", "web/portal/shareui.js", "web/portal/admin.js", "web/files.js"} {
+	for _, name := range []string{"web/portal/share.js", "web/portal/shares.js", "web/portal/shareui.js", "web/portal/admin.js", "web/files.js", "web/portal/receive.js"} {
 		bytes, err := fs.ReadFile(webFiles, name)
 		if err != nil {
 			t.Fatal(err)

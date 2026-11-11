@@ -31,10 +31,10 @@ const (
 	shareActionZip      = "zip"
 )
 
-// catchAll answers every path no route claims: a share link when the first segment names a live one, the usual
-// not-found page otherwise. Both outcomes of a failed lookup are that same page.
+// catchAll answers every path no route claims: a share or upload link when the first segment names a live one, the
+// usual not-found page otherwise. Both outcomes of a failed lookup are that same page.
 func (p *Portal) catchAll(w http.ResponseWriter, r *http.Request) {
-	if p.shares != nil && (r.Method == http.MethodGet || r.Method == http.MethodHead) && p.serveShare(w, r) {
+	if p.shares != nil && p.serveShare(w, r) {
 		return
 	}
 	p.notFound(w, r)
@@ -69,7 +69,7 @@ func (p *Portal) serveShare(w http.ResponseWriter, r *http.Request) bool {
 		return p.tooManyShareRequests(w)
 	}
 	defer p.shareMiss.end(ip)
-	if !p.shareFlood.reserve(ip) {
+	if !p.continuesUpload(r, name, action) && !p.shareFlood.reserve(ip) {
 		return p.tooManyShareRequests(w)
 	}
 	if !p.answerShare(w, r, name, action) {
@@ -88,17 +88,20 @@ func (p *Portal) tooManyShareRequests(w http.ResponseWriter) bool {
 }
 
 func (p *Portal) answerShare(w http.ResponseWriter, r *http.Request, name, action string) bool {
+	share, found := p.shares.Get(name)
+	if !found || share.Expired(p.now()) {
+		return p.answerClosedUpload(w, r, name, action, share, found)
+	}
+	if share.IsUploadLink() {
+		return p.answerUploadLink(w, r, share, action)
+	}
 	switch action {
 	case shareActionPage, shareActionList, shareActionDownload, shareActionPreview, shareActionZip:
 	default:
 		return false
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		return false
-	}
-	share, found := p.shares.Get(name)
-	if !found || share.Expired(p.now()) {
+	if err != nil || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 		return false
 	}
 	files, err := p.openFiles(share.Owner)
@@ -112,16 +115,16 @@ func (p *Portal) answerShare(w http.ResponseWriter, r *http.Request, name, actio
 		return false
 	}
 	if action == shareActionPage {
-		p.sharePage(w, r)
+		p.linkPage(w, r, "share.html")
 		return true
 	}
 
 	return visit.serve(w, r, action, query.Get("path"))
 }
 
-func (p *Portal) sharePage(w http.ResponseWriter, r *http.Request) {
+func (p *Portal) linkPage(w http.ResponseWriter, r *http.Request, page string) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
-	http.ServeFileFS(w, r, p.pages, "share.html")
+	http.ServeFileFS(w, r, p.pages, page)
 }
 
 type sharedItem struct {

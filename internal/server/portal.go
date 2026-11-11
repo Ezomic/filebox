@@ -84,6 +84,7 @@ type Portal struct {
 	now        func() time.Time
 	shareMiss  *loginLimiter
 	shareFlood *loginLimiter
+	receive    *receiving
 	email      *emailFlow
 	tv         *TV
 	tvLimit    *loginLimiter
@@ -128,6 +129,7 @@ func NewPortal(deps PortalDeps) *Portal {
 		now:        time.Now,
 		shareMiss:  newLoginLimiter(shareMissLimit, failWindow),
 		shareFlood: newLoginLimiter(shareFloodLimit, shareFloodSpan),
+		receive:    newReceiving(),
 
 		healthy:     deps.Healthy,
 		healthLimit: newLoginLimiter(healthzLimit, healthzSpan),

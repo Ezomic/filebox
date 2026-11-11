@@ -565,3 +565,106 @@ func TestUploadSweeperRunsAtStartupAndOnEveryTick(t *testing.T) {
 	<-done
 	t.Fatal("the stale partial was never swept")
 }
+
+func TestVisitorUploadsNeverOverwriteAndAreSweptOnTheirOwn(t *testing.T) {
+	eachFiles(t, func(t *testing.T, files Files) {
+		put(t, files, "taken.txt", "mine")
+		if _, err := files.CreateVisitorUpload("taken.txt", 3); !errors.Is(err, ErrExists) {
+			t.Fatalf("a visitor upload must not start over an existing file: %v", err)
+		}
+		late, err := files.CreateVisitorUpload("late.txt", 3)
+		if err != nil || !late.Visitor || late.Overwrite {
+			t.Fatalf("got %+v %v", late, err)
+		}
+		appendAll(t, files, late.ID, 0, "new")
+		put(t, files, "late.txt", "owner")
+		if err := files.FinishUpload(late.ID); !errors.Is(err, ErrExists) {
+			t.Fatalf("a visitor upload must not finish over a file that appeared meanwhile: %v", err)
+		}
+		if info, err := files.Stat("late.txt"); err != nil || info.Size != int64(len("owner")) {
+			t.Fatalf("the owner's file changed: %+v %v", info, err)
+		}
+
+		visitor, err := files.CreateVisitorUpload("guest.bin", 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status, err := files.UploadStatus(visitor.ID); err != nil || !status.Visitor {
+			t.Fatalf("got %+v %v", status, err)
+		}
+		owner := newUpload(t, files, "own.bin", 3, false)
+		if status, _ := files.UploadStatus(owner.ID); status.Visitor {
+			t.Fatal("the owner's own upload is no visitor upload")
+		}
+
+		if n, err := files.SweepVisitorUploads(time.Now().Add(-time.Minute)); err != nil || n != 0 {
+			t.Fatalf("fresh visitor uploads swept: %d %v", n, err)
+		}
+		if n, err := files.SweepVisitorUploads(time.Now().Add(time.Minute)); err != nil || n != 2 {
+			t.Fatalf("idle visitor uploads not swept: %d %v", n, err)
+		}
+		if _, err := files.UploadStatus(visitor.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("visitor upload survived: %v", err)
+		}
+		if _, err := files.UploadStatus(owner.ID); err != nil {
+			t.Fatalf("the visitor sweep must leave the owner's own upload: %v", err)
+		}
+	})
+}
+
+func TestVisitorUploadMayStartBeforeItsFolderExists(t *testing.T) {
+	eachFiles(t, func(t *testing.T, files Files) {
+		put(t, files, "file.txt", "x")
+		if _, err := files.CreateVisitorUpload("file.txt/a.bin", 1); err == nil {
+			t.Fatal("a folder that is a file must still be refused")
+		}
+		if _, err := files.CreateUpload("later/a.bin", 1, false); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("the owner's own upload still needs its folder: %v", err)
+		}
+		visitor, err := files.CreateVisitorUpload("later/a.bin", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		appendAll(t, files, visitor.ID, 0, "a")
+		if err := files.FinishUpload(visitor.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("finishing needs the folder: %v", err)
+		}
+		if err := files.Mkdir("later"); err != nil {
+			t.Fatal(err)
+		}
+		if err := files.FinishUpload(visitor.ID); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestSweepAllVisitorUploadsWaitsADay(t *testing.T) {
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "amy", "files"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files, err := OpenUserFiles(base, "amy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.(interface{ Close() error }).Close()
+	visitor, err := files.CreateVisitorUpload("guest.bin", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := newUpload(t, files, "own.bin", 1, false)
+
+	now := time.Now()
+	if n, err := SweepAllVisitorUploads(base, now.Add(23*time.Hour)); err != nil || n != 0 {
+		t.Fatalf("23 hours idle must survive: %d %v", n, err)
+	}
+	if n, err := SweepAllVisitorUploads(base, now.Add(25*time.Hour)); err != nil || n != 1 {
+		t.Fatalf("25 hours idle must go: %d %v", n, err)
+	}
+	if _, err := files.UploadStatus(visitor.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("visitor upload survived: %v", err)
+	}
+	if _, err := files.UploadStatus(owner.ID); err != nil {
+		t.Fatalf("the owner's upload keeps its week: %v", err)
+	}
+}

@@ -24,6 +24,11 @@ function shareExpiryText(share) {
   return share.expired ? t('shares.expiredOn', { when }) : t('shares.expiresOn', { when });
 }
 
+function uploadUsageText(link) {
+  const received = `${t('uploadLinks.received', { count: link.received })}, ${t('uploadLinks.size', { size: i18n.size(link.receivedBytes), cap: i18n.size(link.cap) })}`;
+  return link.lastUpload === null ? received : `${received}, ${t('uploadLinks.lastUpload', { when: i18n.dateTime(link.lastUpload) })}`;
+}
+
 async function copyShareUrl(url, report) {
   try {
     await navigator.clipboard.writeText(url);

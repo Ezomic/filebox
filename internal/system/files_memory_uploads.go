@@ -1,6 +1,7 @@
 package system
 
 import (
+	"errors"
 	"io"
 	"time"
 )
@@ -35,11 +36,19 @@ func (f *FakeFiles) Lstat(path string) (FileInfo, error) {
 }
 
 func (f *FakeFiles) CreateUpload(path string, size int64, overwrite bool) (UploadInfo, error) {
-	path, err := cleanNonRoot(path)
+	return f.createUpload(UploadInfo{Path: path, Size: size, Overwrite: overwrite})
+}
+
+func (f *FakeFiles) CreateVisitorUpload(path string, size int64) (UploadInfo, error) {
+	return f.createUpload(UploadInfo{Path: path, Size: size, Visitor: true})
+}
+
+func (f *FakeFiles) createUpload(info UploadInfo) (UploadInfo, error) {
+	path, err := cleanNonRoot(info.Path)
 	if err != nil {
 		return UploadInfo{}, err
 	}
-	if size < 0 {
+	if info.Size < 0 {
 		return UploadInfo{}, ErrInvalidPath
 	}
 	id, err := newUploadID()
@@ -49,10 +58,10 @@ func (f *FakeFiles) CreateUpload(path string, size int64, overwrite bool) (Uploa
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if err := f.writeAllowed(path, overwrite); err != nil {
+	if err := f.writeAllowed(path, info.Overwrite); err != nil && !(info.Visitor && errors.Is(err, ErrNotFound)) {
 		return UploadInfo{}, err
 	}
-	info := UploadInfo{ID: id, Path: path, Size: size, Overwrite: overwrite}
+	info.ID, info.Path = id, path
 	if f.uploads == nil {
 		f.uploads = map[string]*memoryUpload{}
 	}
@@ -168,12 +177,20 @@ func (f *FakeFiles) FinishUpload(id string) error {
 }
 
 func (f *FakeFiles) SweepUploads(cutoff time.Time) (int, error) {
+	return f.sweepUploads(cutoff, false)
+}
+
+func (f *FakeFiles) SweepVisitorUploads(cutoff time.Time) (int, error) {
+	return f.sweepUploads(cutoff, true)
+}
+
+func (f *FakeFiles) sweepUploads(cutoff time.Time, visitorsOnly bool) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	swept := 0
 	for id, upload := range f.uploads {
-		if upload.touched.Before(cutoff) {
+		if upload.touched.Before(cutoff) && (upload.info.Visitor || !visitorsOnly) {
 			delete(f.uploads, id)
 			swept++
 		}

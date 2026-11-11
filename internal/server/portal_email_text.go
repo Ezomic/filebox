@@ -1,5 +1,7 @@
 package server
 
+import "strconv"
+
 type mailLang uint8
 
 const (
@@ -71,5 +73,34 @@ func (l mailLang) signIn(user, link string) mailText {
 		body: "Hello,\n\nSomeone asked for a link to sign in to the Filebox account \"" + user +
 			"\". Open this link within 15 minutes and press the button to sign in:\n\n" + link +
 			"\n\nThe link works once and does not change your password. If you did not ask for this, ignore this email.\n",
+	}
+}
+
+// uploadSummary names no file and no visitor: those are chosen by strangers, the count and the owner's own folder are not.
+func (l mailLang) uploadSummary(count int, folder, link string) mailText {
+	number := strconv.Itoa(count)
+	if l == mailDutch {
+		files, verb, them := number+" bestanden", "zijn", "ze"
+		if count == 1 {
+			files, verb, them = "1 bestand", "is", "het"
+		}
+
+		return mailText{
+			subject: files + " ontvangen in " + folder,
+			body: "Hallo,\n\nVia je uploadlink " + verb + " " + files + " binnengekomen in de map \"" + folder +
+				"\" op Filebox. Open de map om " + them + " te bekijken:\n\n" + link +
+				"\n\nZolang er bestanden binnenkomen, krijg je over deze link hoogstens een e-mail per uur. Wil je niets meer ontvangen, trek de link dan in onder Gedeelde links.\n",
+		}
+	}
+	files, them := number+" files", "them"
+	if count == 1 {
+		files, them = "1 file", "it"
+	}
+
+	return mailText{
+		subject: files + " arrived in " + folder,
+		body: "Hello,\n\n" + files + " arrived through your upload link in the folder \"" + folder +
+			"\" on Filebox. Open the folder to see " + them + ":\n\n" + link +
+			"\n\nWhile files keep arriving, you get at most one email an hour about this link. To stop receiving files, revoke the link under Shared links.\n",
 	}
 }

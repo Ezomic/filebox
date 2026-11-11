@@ -40,6 +40,7 @@ jobs:
           go test ./internal/server -run '^$' -fuzz '^FuzzPortalAdminRequests$' -fuzztime 20s
           go test ./internal/server -run '^$' -fuzz '^FuzzPortalEmailRequests$' -fuzztime 20s
           go test ./internal/server -run '^$' -fuzz '^FuzzShareRoutesStayConfined$' -fuzztime 30s
+          go test ./internal/server -run '^$' -fuzz '^FuzzUploadLinkRoutesStayConfined$' -fuzztime 30s
           go test ./internal/server -run '^$' -fuzz '^FuzzShareName$' -fuzztime 15s
           go test ./internal/server -run '^$' -fuzz '^FuzzVersionRoutesStayConfined$' -fuzztime 30s
       - name: govulncheck
