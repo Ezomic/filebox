@@ -163,10 +163,13 @@ function showShareActions(cell, share) {
     try {
       await navigator.clipboard.writeText(share.url);
       copy.textContent = 'Copied';
-      setTimeout(() => { copy.textContent = 'Copy link'; }, 2000);
     } catch {
-      showError('Copying did not work. Select the link and copy it by hand.');
+      // The 5 second refresh clears the status line, so the selected link is what the admin is left with.
+      getSelection().selectAllChildren(cell.closest('tr').querySelector('.share-url'));
+      copy.textContent = 'Link selected';
+      showError('Copying did not work. The link is selected: copy it by hand.');
     }
+    setTimeout(() => { copy.textContent = 'Copy link'; }, 3000);
   }, 'link');
   copy.hidden = !share.url;
   cell.replaceChildren(copy, button('Revoke', () => showRevokeConfirm(cell, share), 'link danger'));
