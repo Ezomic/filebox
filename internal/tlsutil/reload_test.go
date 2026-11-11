@@ -36,6 +36,39 @@ func TestReloaderPicksUpRenewalAndKeepsOldOnBadFile(t *testing.T) {
 	}
 }
 
+func TestReloaderReportsTheNameOfTheCertificateInService(t *testing.T) {
+	dir := t.TempDir()
+	cert, key := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
+	if err := generate(cert, key, []string{"files.example.com", "192.0.2.1"}, 24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewReloader(cert, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Host(); got != "files.example.com" {
+		t.Fatalf("host %q", got)
+	}
+
+	if err := generate(cert, key, []string{"*.example.com", "files.example.net"}, 24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	r.checked = time.Time{}
+	if got := r.Host(); got != "files.example.net" {
+		t.Fatalf("with a wildcard first: %q", got)
+	}
+
+	for _, names := range [][]string{{"192.0.2.1"}, {"*.example.com"}} {
+		if err := generate(cert, key, names, 24*time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		r.checked = time.Time{}
+		if got := r.Host(); got != "" {
+			t.Fatalf("a certificate for %v gave %q", names, got)
+		}
+	}
+}
+
 func TestReloaderFailsWithoutCertificate(t *testing.T) {
 	if _, err := NewReloader("/no/cert.pem", "/no/key.pem"); err == nil {
 		t.Fatal("missing files must fail at startup")

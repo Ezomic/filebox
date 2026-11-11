@@ -41,7 +41,9 @@ type Deps struct {
 	OnUserChanged func(name string)
 	// PortalCertExpiry reports when the public portal certificate expires; nil when the portal is off.
 	PortalCertExpiry func() time.Time
-	Version          string
+	// PortalHost is the public name of the portal, which TV share links point at; nil when the portal is off.
+	PortalHost func() string
+	Version    string
 	// TV is the streambox add-on; nil when it is not installed.
 	TV *TV
 	// Snapshots reads what filebox-snapshot last reported about the earlier versions; nil when there is nothing to read.
@@ -68,6 +70,7 @@ type Server struct {
 
 	onUserChanged    func(name string)
 	portalCertExpiry func() time.Time
+	portalHost       func() string
 	version          string
 	tv               *TV
 	snapshotStatus   func() (system.SnapshotStatus, error)
@@ -97,6 +100,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 
 		onUserChanged:    deps.OnUserChanged,
 		portalCertExpiry: deps.PortalCertExpiry,
+		portalHost:       deps.PortalHost,
 		version:          deps.Version,
 		tv:               deps.TV,
 		snapshotStatus:   deps.Snapshots,
@@ -122,6 +126,7 @@ func New(store *auth.Store, deps Deps) http.Handler {
 	if s.tv != nil {
 		mux.HandleFunc("GET /tv", s.tvPage)
 		mux.HandleFunc("/api/tv/", s.requireSession(s.tvAdminProxy))
+		s.tvShareRoutes(mux)
 	}
 	mux.HandleFunc("GET /api/users", s.requireSession(s.listUsers))
 	mux.HandleFunc("POST /api/users", s.requireSession(s.createUser))

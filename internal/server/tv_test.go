@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/xml"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,28 +28,49 @@ type seen struct {
 	header                                   http.Header
 }
 
-// fakeStreambox records what reaches it and answers like the real one would.
+type fakeChannel struct {
+	id, name, logo, group string
+	programmes            []string
+}
+
+// fakeStreambox records what reaches it and answers like the real one would. The playlist and
+// guide are written the way streambox writes them (internal/server/guide.go in Ezomic/streambox),
+// so every stream URL in them carries the view token.
 type fakeStreambox struct {
-	srv  *httptest.Server
-	mu   sync.Mutex
-	seen []seen
+	srv      *httptest.Server
+	mu       sync.Mutex
+	seen     []seen
+	channels []fakeChannel
+	// beforeLookup, when set, runs before a channel lookup through the admin API is answered.
+	beforeLookup func()
 }
 
 func newFakeStreambox(t *testing.T) *fakeStreambox {
 	t.Helper()
-	f := &fakeStreambox{}
-	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		f.mu.Lock()
-		f.seen = append(f.seen, seen{r.Method, r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Cookie"), r.Header.Get("Origin"), string(body), r.Header.Clone()})
-		f.mu.Unlock()
-		w.Header().Set("Cache-Control", "no-cache")
+	f := &fakeStreambox{channels: []fakeChannel{
+		{id: "news", name: "News", programmes: []string{"Morning news"}},
+		{id: "sports", name: "Sports & More", logo: "https://logo.example/sports.png", group: "Sport", programmes: []string{"Match of the day"}},
+	}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /s/{token}/playlist.m3u", f.viewer(f.playlist))
+	mux.HandleFunc("GET /s/{token}/epg.xml", f.viewer(f.guide))
+	mux.HandleFunc("GET /s/{token}/hls/{id}/{file}", f.viewer(f.hls))
+	mux.HandleFunc("GET /api/channels/{id}", f.channel)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"from":"streambox"}`))
 			return
 		}
 		_, _ = w.Write([]byte("#EXTM3U"))
+	})
+	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		f.mu.Lock()
+		f.seen = append(f.seen, seen{r.Method, r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Cookie"), r.Header.Get("Origin"), string(body), r.Header.Clone()})
+		f.mu.Unlock()
+		w.Header().Set("Cache-Control", "no-cache")
+		mux.ServeHTTP(w, r)
 	}))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -59,13 +82,141 @@ func (f *fakeStreambox) requests() []seen {
 	return append([]seen(nil), f.seen...)
 }
 
+func (f *fakeStreambox) list() []fakeChannel {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fakeChannel(nil), f.channels...)
+}
+
+func (f *fakeStreambox) setChannels(channels ...fakeChannel) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.channels = channels
+}
+
+func (f *fakeStreambox) viewer(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("token") != tvViewToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"wrong token"}`))
+			return
+		}
+		next(w, r)
+	}
+}
+
+func fakeBaseURL(r *http.Request) string {
+	scheme, host, prefix := "http", r.Host, ""
+	if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
+		scheme = v
+	}
+	if v := r.Header.Get("X-Forwarded-Host"); v != "" {
+		host = v
+	}
+	if v := r.Header.Get("X-Forwarded-Prefix"); v != "" {
+		prefix = v
+	}
+	return scheme + "://" + host + prefix
+}
+
+func (f *fakeStreambox) playlist(w http.ResponseWriter, r *http.Request) {
+	base := fakeBaseURL(r) + "/s/" + r.PathValue("token")
+	var b strings.Builder
+	fmt.Fprintf(&b, "#EXTM3U x-tvg-url=\"%s/epg.xml\"\n", base)
+	for _, c := range f.list() {
+		fmt.Fprintf(&b, "#EXTINF:-1 tvg-id=\"%s\" tvg-name=\"%s\" tvg-logo=\"%s\" group-title=\"%s\",%s\n%s/hls/%s/index.m3u8\n",
+			c.id, c.name, c.logo, c.group, c.name, base, c.id)
+	}
+	w.Header().Set("Content-Type", "audio/x-mpegurl")
+	_, _ = w.Write([]byte(b.String()))
+}
+
+type fakeGuide struct {
+	XMLName    xml.Name          `xml:"tv"`
+	Generator  string            `xml:"generator-info-name,attr"`
+	Channels   []fakeGuideItem   `xml:"channel"`
+	Programmes []fakeGuideListed `xml:"programme"`
+}
+
+type fakeGuideItem struct {
+	ID          string `xml:"id,attr"`
+	DisplayName string `xml:"display-name"`
+	Icon        *struct {
+		Src string `xml:"src,attr"`
+	} `xml:"icon,omitempty"`
+}
+
+type fakeGuideListed struct {
+	Start   string `xml:"start,attr"`
+	Stop    string `xml:"stop,attr"`
+	Channel string `xml:"channel,attr"`
+	Title   string `xml:"title"`
+}
+
+func (f *fakeStreambox) guide(w http.ResponseWriter, _ *http.Request) {
+	doc := fakeGuide{Generator: "streambox"}
+	for _, c := range f.list() {
+		item := fakeGuideItem{ID: c.id, DisplayName: c.name}
+		if c.logo != "" {
+			item.Icon = &struct {
+				Src string `xml:"src,attr"`
+			}{Src: c.logo}
+		}
+		doc.Channels = append(doc.Channels, item)
+		for _, title := range c.programmes {
+			doc.Programmes = append(doc.Programmes, fakeGuideListed{Start: "20261106180000 +0000", Stop: "20261106190000 +0000", Channel: c.id, Title: title})
+		}
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	_, _ = w.Write([]byte(xml.Header))
+	enc := xml.NewEncoder(w)
+	enc.Indent("", "  ")
+	_ = enc.Encode(doc)
+}
+
+func (f *fakeStreambox) hls(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.PathValue("file"), ".m3u8") {
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		_, _ = w.Write([]byte("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\nseg_00001.ts\n"))
+		return
+	}
+	w.Header().Set("Content-Type", "video/mp2t")
+	_, _ = w.Write([]byte("segment of " + r.PathValue("id")))
+}
+
+func (f *fakeStreambox) channel(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "Bearer "+tvAdminToken {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	f.mu.Lock()
+	hook := f.beforeLookup
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	for _, c := range f.list() {
+		if c.id == r.PathValue("id") {
+			_, _ = fmt.Fprintf(w, `{"id":%q,"name":%q,"from":"streambox"}`, c.id, c.name)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write([]byte(`{"error":"channel not found"}`))
+}
+
 func (f *fakeStreambox) tv(t *testing.T) *TV {
 	t.Helper()
 	u, err := url.Parse(f.srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newTV(u, tvAdminToken, tvViewToken)
+	shares, err := auth.OpenTVShares(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newTV(u, tvAdminToken, tvViewToken, shares)
 }
 
 type tvAdmin struct {
@@ -75,11 +226,17 @@ type tvAdmin struct {
 
 func newTVAdmin(t *testing.T, tv *TV) *tvAdmin {
 	t.Helper()
+	return newTVAdminWith(t, Deps{TV: tv})
+}
+
+func newTVAdminWith(t *testing.T, deps Deps) *tvAdmin {
+	t.Helper()
 	store, err := auth.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := New(store, Deps{Host: &system.Fake{}, TV: tv})
+	deps.Host = &system.Fake{}
+	h := New(store, deps)
 	if err := store.SetInitialPassword(store.SetupToken(), testPassword); err != nil {
 		t.Fatal(err)
 	}
@@ -288,8 +445,9 @@ func TestPortalStreamsRejectWrongLinksAndBlockGuessers(t *testing.T) {
 	fake := newFakeStreambox(t)
 	h := newTVPortal(t, fake.tv(t))
 
+	// These guesses look like a view token. Guesses shaped like a share link code answer 404 instead, see tv_shares_test.go.
 	for i := 0; i < tvIPFails; i++ {
-		if rec := h.stream("/tv/s/wrong-token-"+strings.Repeat("x", i)+"/playlist.m3u", "192.0.2.50"); rec.Code != http.StatusUnauthorized {
+		if rec := h.stream("/tv/s/wrongtoken"+strings.Repeat("x", i)+"/playlist.m3u", "192.0.2.50"); rec.Code != http.StatusUnauthorized {
 			t.Fatalf("guess %d: %d", i, rec.Code)
 		}
 	}
@@ -380,8 +538,12 @@ func TestNewTV(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tv, err := NewTV("http://127.0.0.1:8090", good)
-	if err != nil || tv.adminToken != tvAdminToken || tv.viewToken != tvViewToken {
+	shares, err := auth.OpenTVShares(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tv, err := NewTV("http://127.0.0.1:8090", good, shares)
+	if err != nil || tv.adminToken != tvAdminToken || tv.viewToken != tvViewToken || tv.shares != shares {
 		t.Fatalf("good config: %v %+v", err, tv)
 	}
 	for name, c := range map[string][2]string{
@@ -394,11 +556,11 @@ func TestNewTV(t *testing.T) {
 		"missing file":  {"http://127.0.0.1:8090", filepath.Join(dir, "nope.env")},
 		"short tokens":  {"http://127.0.0.1:8090", short},
 	} {
-		if _, err := NewTV(c[0], c[1]); err == nil {
+		if _, err := NewTV(c[0], c[1], shares); err == nil {
 			t.Errorf("%s accepted", name)
 		}
 	}
-	if _, err := NewTV("http://localhost:8090", good); err != nil {
+	if _, err := NewTV("http://localhost:8090", good, shares); err != nil {
 		t.Errorf("localhost: %v", err)
 	}
 }

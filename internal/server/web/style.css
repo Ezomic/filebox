@@ -180,10 +180,12 @@ td.row-actions .error { min-height: 0; }
 #backup td.error { min-height: 0; margin: 0; }
 
 #files, #files tbody,
-#users, #users tbody { display: block; }
+#users, #users tbody,
+#shares, #shares tbody { display: block; }
 
 #files tr,
-#users tr {
+#users tr,
+#shares tr {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -193,15 +195,21 @@ td.row-actions .error { min-height: 0; }
 }
 
 #files td,
-#users td { border-top: 0; padding: 0; }
+#users td,
+#shares td { border-top: 0; padding: 0; }
 #files td.name,
-#users td.name { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; word-break: normal; }
+#users td.name,
+#shares td.name { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; word-break: normal; }
 #files td.meta { flex: 1 1 auto; padding-left: 0; text-align: left; }
 #files td.meta:empty { display: none; }
 #files td.row-actions,
-#users td.row-actions { flex: 1 1 100%; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px; text-align: left; }
+#users td.row-actions,
+#shares td.row-actions { flex: 1 1 100%; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px; text-align: left; }
 #files td.row-actions > *,
-#users td.row-actions > * { margin: 0; }
+#users td.row-actions > *,
+#shares td.row-actions > * { margin: 0; }
+#shares .detail { font-weight: 400; }
+.share-url { font-family: ui-monospace, monospace; user-select: all; }
 #files td.row-actions .error { display: block; flex: 1 1 100%; margin: 0; }
 #files td.row-actions .error:empty { display: none; }
 #files td.row-actions a.link,
@@ -398,6 +406,14 @@ button.folder::before {
   #users td.row-actions { display: table-cell; text-align: right; white-space: nowrap; }
   #users td.row-actions form.inline { white-space: normal; max-width: 26rem; justify-content: flex-end; }
   #users td.row-actions > * { margin-left: 8px; }
+
+  #shares { display: table; }
+  #shares tbody { display: table-row-group; }
+  #shares tr { display: table-row; padding: 0; }
+  #shares td { display: table-cell; padding: 10px 0; border-top: 1px solid var(--border); }
+  #shares td.row-actions { display: table-cell; padding-left: 12px; text-align: right; white-space: nowrap; }
+  #shares td.row-actions > * { margin-left: 8px; }
+  #shares td.row-actions > .error { display: block; white-space: normal; }
 
   form.inline { display: inline-flex; justify-content: flex-end; width: auto; }
   form.inline input { width: 14rem; }

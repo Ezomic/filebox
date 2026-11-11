@@ -13,7 +13,10 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/Ezomic/filebox/internal/auth"
 )
 
 const (
@@ -31,12 +34,17 @@ type TV struct {
 	viewToken  string
 	admin      *httputil.ReverseProxy
 	public     *httputil.ReverseProxy
+	client     *http.Client
+	shares     *auth.TVShares
+	newSuffix  func() (string, error)
+	// channelLinks keeps a channel delete and the creation of a link to that channel from interleaving.
+	channelLinks sync.Mutex
 }
 
 // NewTV reads streambox's tokens from its env file (the one its systemd unit uses) and
 // talks to the API at target, which must be a loopback http address so the tokens never
 // leave the machine.
-func NewTV(target, envFile string) (*TV, error) {
+func NewTV(target, envFile string, shares *auth.TVShares) (*TV, error) {
 	u, err := url.Parse(target)
 	if err != nil || u.Scheme != "http" || u.Hostname() == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.User != nil {
 		return nil, fmt.Errorf("streambox url must look like http://127.0.0.1:8090")
@@ -52,11 +60,16 @@ func NewTV(target, envFile string) (*TV, error) {
 	if len(admin) < 24 || len(view) < 24 {
 		return nil, fmt.Errorf("%s needs STREAMBOX_ADMIN_TOKEN and STREAMBOX_VIEW_TOKEN of 24+ characters", envFile)
 	}
-	return newTV(u, admin, view), nil
+	return newTV(u, admin, view, shares), nil
 }
 
-func newTV(target *url.URL, admin, view string) *TV {
-	t := &TV{target: target, adminToken: admin, viewToken: view}
+func newTV(target *url.URL, admin, view string, shares *auth.TVShares) *TV {
+	t := &TV{target: target, adminToken: admin, viewToken: view, shares: shares, newSuffix: randomTVShareSuffix}
+	t.client = &http.Client{
+		Transport:     tvTransport(),
+		Timeout:       20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	t.admin = t.proxy(func(pr *httputil.ProxyRequest) {
 		pr.Out.URL.Path = "/api/" + strings.TrimPrefix(pr.In.URL.Path, "/api/tv/")
 		pr.Out.Header.Set("Authorization", "Bearer "+t.adminToken)
@@ -82,16 +95,20 @@ func (t *TV) proxy(rewrite func(*httputil.ProxyRequest)) *httputil.ReverseProxy 
 			}
 			rewrite(pr)
 		},
-		Transport: &http.Transport{
-			DialContext:           (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
-			ResponseHeaderTimeout: 20 * time.Second,
-			MaxIdleConns:          4,
-			IdleConnTimeout:       30 * time.Second,
-		},
+		Transport: tvTransport(),
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			log.Printf("tv: streambox: %v", err)
 			writeError(w, http.StatusBadGateway, "streambox is not reachable")
 		},
+	}
+}
+
+func tvTransport() *http.Transport {
+	return &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
+		ResponseHeaderTimeout: 20 * time.Second,
+		MaxIdleConns:          4,
+		IdleConnTimeout:       30 * time.Second,
 	}
 }
 
@@ -152,6 +169,17 @@ func (s *Server) tvAdminProxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	// The links go first, so a delete that fails halfway leaves a channel without links rather than links
+	// that would come back to life with a later channel of the same id.
+	if id, found := strings.CutPrefix(r.URL.Path, "/api/tv/channels/"); found && r.Method == http.MethodDelete && tvChannelID.MatchString(id) {
+		s.tv.channelLinks.Lock()
+		defer s.tv.channelLinks.Unlock()
+		if err := s.tv.shares.ForgetChannel(id); err != nil {
+			log.Printf("tv: remove share links of channel %s: %v", id, err)
+			writeError(w, http.StatusInternalServerError, "could not remove the channel's share links")
+			return
+		}
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, tvMaxBody)
 	s.tv.admin.ServeHTTP(w, r)
 }
@@ -177,31 +205,74 @@ func (p *Portal) tvPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, p.pages, "tv.html")
 }
 
-// tvStream serves what streambox hands to players. Access is the token in the path, so
-// guesses are rate limited per address and logged for fail2ban like failed logins are.
-func (p *Portal) tvStream(w http.ResponseWriter, r *http.Request, rest string) {
-	ip := ipKey(r)
-	if p.tvLimit.blocked(ip) {
-		log.Printf("portal: tv blocked ip=%s", ip)
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+// tvStream serves what streambox hands to players. Access is the token in the path: the view token opens
+// every channel, a share link code opens one. Guesses are rate limited per address and logged for fail2ban
+// like failed logins are.
+func (p *Portal) tvStream(w http.ResponseWriter, r *http.Request, rest string, shared func(http.ResponseWriter, *http.Request, auth.TVShare)) {
+	share, global, ok := p.tvAccess(w, r)
+	if !ok {
 		return
 	}
-	if !sameToken(r.PathValue("token"), p.tv.viewToken) {
-		p.tvLimit.fail(ip)
-		log.Printf("portal: tv failed ip=%s", ip)
-		writeError(w, http.StatusUnauthorized, "wrong link")
-		return
-	}
-
-	r.URL.Path = "/s/" + p.tv.viewToken + "/" + rest
 	// streambox sets its own caching headers, and the portal default would be added to them.
 	w.Header().Del("Cache-Control")
-	p.tv.public.ServeHTTP(w, r)
+	if !global {
+		shared(w, r, share)
+		return
+	}
+	p.tv.serveView(w, r, rest)
 }
 
-func (p *Portal) tvPlaylist(w http.ResponseWriter, r *http.Request) { p.tvStream(w, r, "playlist.m3u") }
+// tvAccess writes the refusal itself when the token opens nothing. A slot is held while the token is checked,
+// so a burst of parallel guesses cannot all slip past the limit before the first miss is counted.
+func (p *Portal) tvAccess(w http.ResponseWriter, r *http.Request) (share auth.TVShare, global, ok bool) {
+	ip := ipKey(r)
+	if !p.tvLimit.begin(ip) {
+		log.Printf("portal: tv blocked ip=%s", ip)
+		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return auth.TVShare{}, false, false
+	}
+	defer p.tvLimit.end(ip)
 
-func (p *Portal) tvGuide(w http.ResponseWriter, r *http.Request) { p.tvStream(w, r, "epg.xml") }
+	token := r.PathValue("token")
+	if sameToken(token, p.tv.viewToken) {
+		return auth.TVShare{}, true, true
+	}
+	if share, found := p.tv.share(token); found {
+		return share, false, true
+	}
+	p.tvLimit.fail(ip)
+	log.Printf("portal: tv failed ip=%s", ip)
+	// A revoked share link, or one whose channel was deleted, is gone; a wrong view token is unauthorized as before.
+	status := http.StatusUnauthorized
+	if tvShareCode.MatchString(normalizeShareName(token)) {
+		status = http.StatusNotFound
+	}
+	writeError(w, status, "wrong link")
+
+	return auth.TVShare{}, false, false
+}
+
+func (t *TV) share(token string) (auth.TVShare, bool) {
+	code := normalizeShareName(token)
+	if t.shares == nil || !tvShareCode.MatchString(code) {
+		return auth.TVShare{}, false
+	}
+
+	return t.shares.Get(code)
+}
+
+func (t *TV) serveView(w http.ResponseWriter, r *http.Request, rest string) {
+	r.URL.Path = "/s/" + t.viewToken + "/" + rest
+	t.public.ServeHTTP(w, r)
+}
+
+func (p *Portal) tvPlaylist(w http.ResponseWriter, r *http.Request) {
+	p.tvStream(w, r, "playlist.m3u", p.sharedPlaylist)
+}
+
+func (p *Portal) tvGuide(w http.ResponseWriter, r *http.Request) {
+	p.tvStream(w, r, "epg.xml", p.sharedGuide)
+}
 
 func (p *Portal) tvSegment(w http.ResponseWriter, r *http.Request) {
 	id, file := r.PathValue("id"), r.PathValue("file")
@@ -209,5 +280,12 @@ func (p *Portal) tvSegment(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	p.tvStream(w, r, "hls/"+id+"/"+file)
+	rest := "hls/" + id + "/" + file
+	p.tvStream(w, r, rest, func(w http.ResponseWriter, r *http.Request, share auth.TVShare) {
+		if id != share.Channel {
+			http.NotFound(w, r)
+			return
+		}
+		p.tv.serveView(w, r, rest)
+	})
 }
