@@ -15,13 +15,12 @@ import (
 )
 
 const (
-	shareNameMin     = 3
-	shareNameMax     = 40
-	sharesPerOwner   = 100
-	randomShareName  = 10
-	randomNameTries  = 8
-	randomAlphabet   = "abcdefghijklmnopqrstuvwxyz0123456789"
-	randomByteCutoff = 256 - 256%len(randomAlphabet)
+	shareNameMin    = 3
+	shareNameMax    = 40
+	sharesPerOwner  = 100
+	randomShareName = 10
+	randomNameTries = 8
+	randomAlphabet  = "abcdefghijklmnopqrstuvwxyz0123456789"
 )
 
 var shareNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
@@ -52,20 +51,27 @@ func (p *Portal) shareNameProblem(name string) string {
 }
 
 func randomShareNameCandidate() (string, error) {
-	name := make([]byte, 0, randomShareName)
+	return randomFrom(randomAlphabet, randomShareName)
+}
+
+// randomFrom draws length characters from alphabet. Bytes past the last whole multiple of the alphabet are
+// skipped, so every character is equally likely.
+func randomFrom(alphabet string, length int) (string, error) {
+	cutoff := 256 - 256%len(alphabet)
+	out := make([]byte, 0, length)
 	buf := make([]byte, 32)
-	for len(name) < randomShareName {
+	for len(out) < length {
 		if _, err := rand.Read(buf); err != nil {
 			return "", err
 		}
 		for _, b := range buf {
-			if int(b) < randomByteCutoff && len(name) < randomShareName {
-				name = append(name, randomAlphabet[int(b)%len(randomAlphabet)])
+			if int(b) < cutoff && len(out) < length {
+				out = append(out, alphabet[int(b)%len(alphabet)])
 			}
 		}
 	}
 
-	return string(name), nil
+	return string(out), nil
 }
 
 type shareView struct {
