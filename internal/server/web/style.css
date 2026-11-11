@@ -175,6 +175,9 @@ td.name { font-weight: 650; word-break: break-all; }
 td.row-actions { text-align: right; }
 td.row-actions > * { margin-left: 8px; }
 td.row-actions .error { min-height: 0; }
+#backup td.name { width: 1%; padding-right: 16px; white-space: nowrap; word-break: normal; vertical-align: top; }
+#backup td { vertical-align: top; overflow-wrap: break-word; }
+#backup td.error { min-height: 0; margin: 0; }
 
 #files, #files tbody,
 #upload-links, #upload-links tbody,

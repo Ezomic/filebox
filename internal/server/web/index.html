@@ -63,6 +63,13 @@
       <p class="detail" id="disks-empty">Checking...</p>
       <div id="disk-rows"></div>
     </section>
+    <section class="card stacked" id="backup-card" hidden>
+      <div class="label">Offsite backup</div>
+      <p class="detail" id="backup-summary">Checking...</p>
+      <table id="backup">
+        <tbody id="backup-rows"></tbody>
+      </table>
+    </section>
     <section class="card stacked">
       <div class="label">Machine</div>
       <p class="detail">Restarting sshd keeps existing SFTP sessions. Shutdown and reboot take the panel offline; after a shutdown you must power the machine on by hand.</p>
@@ -78,6 +85,7 @@
   <script src="/static/diskalert.js"></script>
   <script src="/static/dashboard.js"></script>
   <script src="/static/problems.js"></script>
+  <script src="/static/offsite.js"></script>
   <script src="/static/tvlink.js"></script>
 </body>
 </html>
