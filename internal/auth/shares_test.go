@@ -409,3 +409,37 @@ func TestForgettingAnOwnerAlsoRemovesTheirUploadLinks(t *testing.T) {
 		t.Fatalf("got %+v", all)
 	}
 }
+
+func TestSharesOwnerChangesExpiryAndItSurvivesAReload(t *testing.T) {
+	dir := t.TempDir()
+	shares, _ := OpenShares(dir)
+	share := newShare("holiday", "amy")
+	share.Expires = shareEpoch.Add(24 * time.Hour)
+	if err := shares.Create(share, 5); err != nil {
+		t.Fatal(err)
+	}
+
+	later := shareEpoch.Add(30 * 24 * time.Hour)
+	changed, err := shares.SetExpiry("amy", "HOLIDAY", later)
+	if err != nil || changed.Name != "holiday" || !changed.Expires.Equal(later) {
+		t.Fatalf("got %+v %v", changed, err)
+	}
+	reopened, _ := OpenShares(dir)
+	if got, _ := reopened.Get("holiday"); !got.Expires.Equal(later) {
+		t.Fatalf("expiry %v after reopening", got.Expires)
+	}
+
+	if _, err := shares.SetExpiry("amy", "holiday", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := shares.Get("holiday"); !got.Expires.IsZero() {
+		t.Fatalf("a zero time must make it permanent, got %v", got.Expires)
+	}
+}
+
+func TestSharesExpiryOfAMissingLinkIsMissing(t *testing.T) {
+	shares, _ := OpenShares(t.TempDir())
+	if _, err := shares.SetExpiry("amy", "nothing-here", shareEpoch); !errors.Is(err, ErrShareMissing) {
+		t.Fatalf("got %v", err)
+	}
+}
